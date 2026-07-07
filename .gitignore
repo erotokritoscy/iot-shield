@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environments
+.venv/
+.env
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# Local artifacts (generated models, run outputs)
+artifacts/
+logs/
+
+# OS noise
+.DS_Store
+Thumbs.db
