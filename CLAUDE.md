@@ -8,8 +8,8 @@ CYENS internship project, July 2026 (intern: Andreas Tziakouris).
 ## Golden rules
 
 1. **Contracts are law.** `src/iotshield/contracts/` defines the shared objects (NormalizedEvent,
-   DetectionResult, PrioritizedAlert, Asset). Any change to a contract requires a new ADR in
-   `docs/adr/` explaining what breaks and why it's worth it.
+   MalformedRecord, DetectionResult, PrioritizedAlert, Asset). Any change to a contract requires
+   a new ADR in `docs/adr/` explaining what breaks and why it's worth it.
 2. **Ports and adapters.** Modules never talk to each other directly — only through contracts.
    A new detector/normalizer/prioritizer = a new adapter that passes the *same* port contract
    test suite as every other adapter of that port. If an adapter needs a contract change, that's

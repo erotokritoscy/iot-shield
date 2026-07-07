@@ -91,6 +91,21 @@ class NormalizedEvent(_ContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class MalformedRecord(_ContractModel):
+    """An input record that failed normalization — captured, never dropped (ADR-0004).
+
+    Normalization is the trust boundary: unparseable input is expected, frequent,
+    and disproportionately suspicious, so failure is modeled as data, not as logs.
+    """
+
+    record_id: UUID = Field(default_factory=uuid4)
+    raw: str = Field(description="Original record verbatim")
+    error: str = Field(min_length=1, description="Why normalization rejected it")
+    source_format: str = Field(min_length=1)
+    origin: str = Field(min_length=1, description="Provenance, e.g. file path or stream name")
+    created_at: UtcDatetime = Field(default_factory=_utc_now)
+
+
 class DetectionResult(_WindowedContract):
     """A detector's positive judgment about an asset over a time window.
 

@@ -1,8 +1,9 @@
-"""Frozen data contracts: NormalizedEvent, DetectionResult, PrioritizedAlert, Asset.
+"""Frozen data contracts: NormalizedEvent, MalformedRecord, DetectionResult,
+PrioritizedAlert, Asset.
 
 These are the product's load-bearing walls. Every port speaks only these objects.
 Changing anything here requires an ADR in docs/adr/ (see CLAUDE.md golden rule 1).
-Contract v1 rationale: docs/adr/0003-data-contracts-v1.md.
+Rationale: docs/adr/0003-data-contracts-v1.md and docs/adr/0004-ports-and-malformed-record.md.
 """
 
 from iotshield.contracts.enums import (
@@ -16,6 +17,7 @@ from iotshield.contracts.enums import (
 from iotshield.contracts.models import (
     Asset,
     DetectionResult,
+    MalformedRecord,
     NormalizedEvent,
     PrioritizedAlert,
     UtcDatetime,
@@ -29,6 +31,7 @@ __all__ = [
     "DetectionResult",
     "EventKind",
     "Lane",
+    "MalformedRecord",
     "NormalizedEvent",
     "PrioritizedAlert",
     "Severity",
