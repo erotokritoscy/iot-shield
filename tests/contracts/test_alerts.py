@@ -21,7 +21,7 @@ def make_alert(**overrides: object) -> PrioritizedAlert:
         "detection_ids": [uuid4(), uuid4()],
     }
     defaults.update(overrides)
-    return PrioritizedAlert(**defaults)  # type: ignore[arg-type]
+    return PrioritizedAlert.model_validate(defaults)
 
 
 @pytest.mark.parametrize("score", [-0.1, 100.1])

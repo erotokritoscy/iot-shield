@@ -11,7 +11,7 @@ def make_asset(**overrides: object) -> Asset:
         "asset_type": "pump",
     }
     defaults.update(overrides)
-    return Asset(**defaults)  # type: ignore[arg-type]
+    return Asset.model_validate(defaults)
 
 
 def test_criticality_defaults_to_medium() -> None:

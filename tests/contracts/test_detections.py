@@ -20,7 +20,7 @@ def make_detection(**overrides: object) -> DetectionResult:
         "threshold": 0.42,
     }
     defaults.update(overrides)
-    return DetectionResult(**defaults)  # type: ignore[arg-type]
+    return DetectionResult.model_validate(defaults)
 
 
 def test_window_end_before_start_rejected() -> None:

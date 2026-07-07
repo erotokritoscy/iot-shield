@@ -7,7 +7,7 @@ Design rules enforced here, not merely documented:
 """
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
@@ -42,6 +42,24 @@ class _ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class _WindowedContract(_ContractModel):
+    """A claim about a time interval on an asset's timeline.
+
+    The shared "window" concept for detections and alerts: ordered UTC bounds,
+    where a point anomaly is a zero-length window (start == end). Window rules
+    live here, once.
+    """
+
+    window_start: UtcDatetime
+    window_end: UtcDatetime
+
+    @model_validator(mode="after")
+    def _window_ordered(self) -> Self:
+        if self.window_end < self.window_start:
+            raise ValueError("window_end must not precede window_start")
+        return self
+
+
 class Asset(_ContractModel):
     """A monitored device or system — the 'who' everything is correlated on."""
 
@@ -73,7 +91,7 @@ class NormalizedEvent(_ContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class DetectionResult(_ContractModel):
+class DetectionResult(_WindowedContract):
     """A detector's positive judgment about an asset over a time window.
 
     ``score`` and ``threshold`` are the method's raw values; scores are not
@@ -84,8 +102,6 @@ class DetectionResult(_ContractModel):
 
     detection_id: UUID = Field(default_factory=uuid4)
     asset_id: str = Field(min_length=1)
-    window_start: UtcDatetime
-    window_end: UtcDatetime
     lane: Lane
     method: str = Field(min_length=1, description='Detector name, e.g. "lstm_ae"')
     score: float
@@ -94,14 +110,8 @@ class DetectionResult(_ContractModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def _window_ordered(self) -> "DetectionResult":
-        if self.window_end < self.window_start:
-            raise ValueError("window_end must not precede window_start")
-        return self
 
-
-class PrioritizedAlert(_ContractModel):
+class PrioritizedAlert(_WindowedContract):
     """The analyst-facing decision: ranked, labeled, explained.
 
     ``detection_ids`` is the lineage; more than one entry means corroboration.
@@ -111,8 +121,6 @@ class PrioritizedAlert(_ContractModel):
 
     alert_id: UUID = Field(default_factory=uuid4)
     asset_id: str = Field(min_length=1)
-    window_start: UtcDatetime
-    window_end: UtcDatetime
     severity: AlertSeverity
     priority_score: float = Field(ge=0.0, le=100.0)
     threat_class: str = "unknown"
@@ -122,9 +130,3 @@ class PrioritizedAlert(_ContractModel):
     recommended_action: str | None = None
     status: AlertStatus = AlertStatus.NEW
     created_at: UtcDatetime = Field(default_factory=_utc_now)
-
-    @model_validator(mode="after")
-    def _window_ordered(self) -> "PrioritizedAlert":
-        if self.window_end < self.window_start:
-            raise ValueError("window_end must not precede window_start")
-        return self

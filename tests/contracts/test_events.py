@@ -17,7 +17,7 @@ def make_event(**overrides: object) -> NormalizedEvent:
         "raw": "2026-07-07 12:00:00;0.38",
     }
     defaults.update(overrides)
-    return NormalizedEvent(**defaults)  # type: ignore[arg-type]
+    return NormalizedEvent.model_validate(defaults)
 
 
 def test_naive_timestamp_rejected() -> None:

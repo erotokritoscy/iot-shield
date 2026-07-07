@@ -2,6 +2,7 @@ name: checks
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -10,8 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
-      - run: uv run pyright
-      - run: uv run pytest
+      - run: uv sync --frozen
+      # scripts/check.sh is the single source of truth for what the gate is.
+      - run: bash scripts/check.sh

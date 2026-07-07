@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iotshield"
-version = "0.1.0"
+dynamic = ["version"]
 description = "iotshield.ai modular detection pipeline MVP (CYENS internship, July 2026)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/iotshield"]
+
+[tool.hatch.version]
+path = "src/iotshield/__init__.py"
 
 [tool.ruff]
 line-length = 100
