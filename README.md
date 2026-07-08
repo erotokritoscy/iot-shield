@@ -36,5 +36,16 @@ Read-side endpoints over whatever the pipeline stored: `/health`, `/assets`,
 `/summary` — interactive docs at `/docs`. Responses are the data contracts,
 serialized as-is.
 
+## Open the dashboard
+
+```
+$env:IOTSHIELD_API_URL = "http://127.0.0.1:8000"   # optional, this is the default
+uv run streamlit run src/iotshield/dashboard/streamlit_app.py
+```
+
+Three pages against the API: Triage (ranked alert queue + drill-down to
+evidence), Assets & telemetry (per-asset timeline with detection overlays),
+Data health (counts + the malformed-input audit).
+
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).
