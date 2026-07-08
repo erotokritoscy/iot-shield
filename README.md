@@ -24,5 +24,17 @@ One atomic run: normalize → detect → correlate/prioritize → store (SQLite 
 Postgres via the same config's `database_url` in compose). The end-of-run report
 prints counts and the top alerts with their rationales.
 
+## Serve the API
+
+```
+$env:IOTSHIELD_DATABASE_URL = "sqlite:///demo.db"   # or the Postgres URL
+uv run python -m iotshield.api
+```
+
+Read-side endpoints over whatever the pipeline stored: `/health`, `/assets`,
+`/events`, `/detections`, `/alerts`, `/alerts/{id}/detections`, `/malformed`,
+`/summary` — interactive docs at `/docs`. Responses are the data contracts,
+serialized as-is.
+
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).

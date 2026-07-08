@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from iotshield.contracts import (
@@ -172,3 +172,48 @@ def get_alerts(
         # The junction's reverse direction: which alert covers this detection?
         stmt = stmt.join(AlertDetectionRow).where(AlertDetectionRow.detection_id == detection_id)
     return [row.to_contract() for row in session.scalars(stmt)]
+
+
+def get_alert_by_id(session: Session, alert_id: UUID) -> PrioritizedAlert | None:
+    stmt = (
+        select(AlertRow)
+        .options(selectinload(AlertRow.detection_links))
+        .where(AlertRow.alert_id == alert_id)
+    )
+    row = session.scalars(stmt).one_or_none()
+    return row.to_contract() if row is not None else None
+
+
+def get_detections_by_ids(session: Session, detection_ids: Sequence[UUID]) -> list[DetectionResult]:
+    """Resolve an alert's lineage list into its detections (drill-down)."""
+    if not detection_ids:
+        return []
+    stmt = (
+        select(DetectionRow)
+        .where(DetectionRow.detection_id.in_(detection_ids))
+        .order_by(DetectionRow.window_start, DetectionRow.detection_id)
+    )
+    return [row.to_contract() for row in session.scalars(stmt)]
+
+
+def count_summary(session: Session) -> dict[str, int]:
+    """Per-table row counts (the /summary endpoint's KPI numbers).
+
+    One round-trip via scalar subqueries: /summary is the dashboard's polled
+    endpoint, so this is the one place recurring round-trips would add up.
+    """
+    tables = {
+        "assets": AssetRow,
+        "events": EventRow,
+        "malformed_records": MalformedRow,
+        "detections": DetectionRow,
+        "alerts": AlertRow,
+    }
+    stmt = select(
+        *(
+            select(func.count()).select_from(row_type).scalar_subquery().label(name)
+            for name, row_type in tables.items()
+        )
+    )
+    counts = session.execute(stmt).one()
+    return {name: int(count) for name, count in zip(tables, counts, strict=True)}
