@@ -14,5 +14,15 @@ uv sync
 uv run pytest
 ```
 
+## Run the demo pipeline
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo.csv --config config/demo.yaml
+```
+
+One atomic run: normalize → detect → correlate/prioritize → store (SQLite here;
+Postgres via the same config's `database_url` in compose). The end-of-run report
+prints counts and the top alerts with their rationales.
+
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).

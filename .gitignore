@@ -14,9 +14,10 @@ build/
 .ruff_cache/
 .pyright/
 
-# Local artifacts (generated models, run outputs)
+# Local artifacts (generated models, run outputs, local demo databases)
 artifacts/
 logs/
+*.db
 
 # OS noise
 .DS_Store
