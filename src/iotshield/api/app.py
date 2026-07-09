@@ -30,7 +30,7 @@ from iotshield.contracts import (
     PrioritizedAlert,
     UtcDatetime,
 )
-from iotshield.storage import create_schema, make_session_factory, repository
+from iotshield.storage import make_session_factory, repository
 
 # Query-param bounds: generous for an MVP, but never unbounded.
 LimitParam = Annotated[int, Query(ge=1, le=10_000)]
@@ -65,10 +65,9 @@ class Summary(BaseModel):
 
 
 def create_app(engine: Engine) -> FastAPI:
-    # Idempotent; the runner also creates the schema. Dual ownership is an
-    # accepted MVP trade so compose start order never matters (ADR-0007).
-    create_schema(engine)
-
+    # The API is read-only and never creates the schema: the compose init step
+    # (iotshield.storage.init) owns it, and the pipeline runner creates it for
+    # standalone use. create_app assumes the tables already exist (ADR-0010).
     app = FastAPI(title="iotshield API", version=iotshield.__version__)
     app.state.session_factory = make_session_factory(engine)
 

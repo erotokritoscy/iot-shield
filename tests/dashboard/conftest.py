@@ -21,7 +21,7 @@ from iotshield.contracts import (
     PrioritizedAlert,
 )
 from iotshield.dashboard.client import ApiClient
-from iotshield.storage import make_engine, make_session_factory, repository
+from iotshield.storage import create_schema, make_engine, make_session_factory, repository
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -35,6 +35,7 @@ class SeededDashboard:
 
 def _client_for(tmp_path: Path) -> tuple[ApiClient, Engine]:
     engine = make_engine(f"sqlite:///{(tmp_path / 'dash.db').as_posix()}")
+    create_schema(engine)  # the API no longer self-creates it (ADR-0010)
     return ApiClient(TestClient(create_app(engine))), engine
 
 

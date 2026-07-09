@@ -7,7 +7,27 @@ alert prioritization → PostgreSQL → FastAPI → dashboard.
 CYENS Centre of Excellence internship project (July 2026), integrating existing
 graduate-student modules as swappable adapters behind frozen data contracts.
 
-## Quick start (dev)
+## Quick start (compose)
+
+The whole stack on real Postgres, reproducibly, in two commands:
+
+```
+docker compose up -d           # postgres -> schema init -> API -> dashboard
+docker compose run --rm runner # run the demo pipeline to populate the database
+```
+
+Then open the dashboard at http://localhost:8501 and the API at
+http://localhost:8000/docs. Services find each other by name on the compose
+network (the API reaches Postgres at `postgres`, the dashboard reaches the API
+at `api`); credentials come from `.env` (copy `.env.example`), with defaults that
+run out of the box. `docker compose down -v` tears it all down, volume included.
+
+The `runner` is a job, not a long-lived service — it runs once and exits, so it
+sits behind the `jobs` profile and is invoked with `docker compose run`, not
+`up`. Point it at other data with `docker compose run --rm runner --input
+data/demo/demo.csv --config config/demo.yaml`.
+
+## Quick start (dev, no Docker)
 
 ```
 uv sync

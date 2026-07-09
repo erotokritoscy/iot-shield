@@ -65,8 +65,10 @@ def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
 
     engine = make_engine(config.database_url)
     try:
-        # Schema ownership question deferred: once a second service (API) shares
-        # this database in compose, creation moves to a dedicated init step.
+        # The runner is a self-contained batch job: it creates the schema so a
+        # standalone run works against a fresh database in one command. In compose
+        # the dedicated init step (iotshield.storage.init) has already run, so this
+        # is a harmless no-op; the read-side API never creates the schema.
         create_schema(engine)
         factory = make_session_factory(engine)
         with factory() as session, session.begin():

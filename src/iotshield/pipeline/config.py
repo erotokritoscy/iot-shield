@@ -3,8 +3,14 @@
 The config file is the module-selection mechanism the internship plan requires:
 swapping a module = editing a name here, never touching runner code. Unknown
 keys are rejected (typos in YAML fail loudly, same policy as the contracts).
+
+The one value that also reads from the environment is ``database_url``:
+``IOTSHIELD_DATABASE_URL`` overrides it when set, so a single config file runs
+both on the host (its SQLite default) and in compose (Postgres, injected per
+12-factor) — matching how the API and dashboard already resolve their wiring.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +18,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from iotshield.contracts import Asset
+from iotshield.storage.db import DATABASE_URL_ENV
 
 
 class _ConfigModel(BaseModel):
@@ -46,4 +53,10 @@ def load_config(path: Path) -> PipelineConfig:
         raise ValueError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"config file {path} must contain a YAML mapping")
+    # Env wins over the file for the DB location (compose injects Postgres; the
+    # file keeps its SQLite default for host runs). It may also supply the value
+    # for a config that omits it entirely.
+    env_url = os.environ.get(DATABASE_URL_ENV)
+    if env_url:
+        raw = {**raw, "database_url": env_url}
     return PipelineConfig.model_validate(raw)

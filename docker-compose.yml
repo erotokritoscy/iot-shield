@@ -1,0 +1,107 @@
+# Full-compose MVP: Postgres + a one-shot schema init + the read API + the
+# dashboard, plus the pipeline runner as an on-demand job (profile "jobs").
+#
+#   docker compose up                 # postgres -> init -> api -> dashboard
+#   docker compose run --rm runner    # populate the DB (uses config/demo.yaml)
+#
+# Services address each other by service name on the default network: the API
+# and runner reach Postgres at host `postgres`, the dashboard reaches the API at
+# host `api`. Credentials come from .env (see .env.example); the defaults below
+# make the stack run out of the box for local use.
+name: iotshield
+
+# The same image for every app service; each overrides `command`. The shared
+# `image` tag makes compose build and export it once, not once per service.
+x-app: &app
+  build: .
+  image: iotshield-app
+
+# The DB URL, assembled from the Postgres credentials, injected via env so
+# load_config / the services pick it up (12-factor). `postgres` is the hostname.
+x-db-env: &db-env
+  IOTSHIELD_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-iotshield}:${POSTGRES_PASSWORD:-iotshield}@postgres:5432/${POSTGRES_DB:-iotshield}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-iotshield}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iotshield}
+      POSTGRES_DB: ${POSTGRES_DB:-iotshield}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # "container started" != "accepting connections"; gate dependents on this.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iotshield} -d ${POSTGRES_DB:-iotshield}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  init:
+    <<: *app
+    command: ["python", "-m", "iotshield.storage.init"]
+    environment:
+      <<: *db-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["python", "-m", "iotshield.api"]
+    environment:
+      <<: *db-env
+      IOTSHIELD_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
+      IOTSHIELD_API_PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dashboard:
+    <<: *app
+    command:
+      - streamlit
+      - run
+      - src/iotshield/dashboard/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    environment:
+      IOTSHIELD_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Batch job, not a service: runs once and exits. Profile-gated so `up` never
+  # starts it; invoke on demand with `docker compose run --rm runner ...`.
+  runner:
+    <<: *app
+    profiles: ["jobs"]
+    command:
+      - python
+      - -m
+      - iotshield.pipeline
+      - --input=data/demo/demo.csv
+      - --config=config/demo.yaml
+    environment:
+      <<: *db-env
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    # Bind-mount inputs/config so you can point the runner at new data without a
+    # rebuild; IOTSHIELD_DATABASE_URL still overrides the file's SQLite default.
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+
+volumes:
+  pgdata:

@@ -45,6 +45,20 @@ scripts/check.sh        # all of the above (CI runs the same)
 
 Run all four before considering any task done.
 
+```
+docker compose up -d            # postgres -> schema init -> API (:8000) -> dashboard (:8501)
+docker compose run --rm runner  # batch job (profile "jobs"): populate the DB
+docker compose down -v          # stop and drop the Postgres volume
+```
+
+The DB location is injected via `IOTSHIELD_DATABASE_URL` (compose → Postgres),
+which overrides the config file's `database_url` (ADR-0010); the config file
+keeps its SQLite default for host runs. Schema creation is owned by the one-shot
+`python -m iotshield.storage.init` step (which the API, dashboard, and runner
+depend on in compose); the read-only API never creates the schema, and the
+runner still creates it for standalone host runs. The image is intentionally
+unhardened until the first real detector (team3) settles the dependency surface.
+
 ## Layout
 
 ```

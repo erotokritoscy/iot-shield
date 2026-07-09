@@ -8,14 +8,18 @@ speak contract objects only.
 
 from iotshield.storage import repository
 from iotshield.storage.db import (
+    DATABASE_URL_ENV,
     create_schema,
+    database_url_from_env,
     describe_location,
     make_engine,
     make_session_factory,
 )
 
 __all__ = [
+    "DATABASE_URL_ENV",
     "create_schema",
+    "database_url_from_env",
     "describe_location",
     "make_engine",
     "make_session_factory",

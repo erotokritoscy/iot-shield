@@ -12,13 +12,12 @@ import sys
 import uvicorn
 
 from iotshield.api.app import create_app
-from iotshield.storage import describe_location, make_engine
+from iotshield.storage import database_url_from_env, describe_location, make_engine
 
 
 def main() -> int:
-    url = os.environ.get("IOTSHIELD_DATABASE_URL")
-    if not url:
-        print("error: IOTSHIELD_DATABASE_URL is not set", file=sys.stderr)
+    url = database_url_from_env()
+    if url is None:
         return 2
     host = os.environ.get("IOTSHIELD_API_HOST", "127.0.0.1")
     port = int(os.environ.get("IOTSHIELD_API_PORT", "8000"))

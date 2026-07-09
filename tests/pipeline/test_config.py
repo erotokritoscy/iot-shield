@@ -71,3 +71,36 @@ def test_load_config_reads_yaml_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert load_config(path).source_format == "stub-csv"
+
+
+_MINIMAL_YAML = "source_format: stub-csv\ndetectors:\n  - name: stub_threshold\n"
+
+
+def _write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "c.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_env_database_url_overrides_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Compose injects the Postgres URL; it must win over the file's SQLite default.
+    path = _write(tmp_path, "database_url: sqlite:///file.db\n" + _MINIMAL_YAML)
+    monkeypatch.setenv("IOTSHIELD_DATABASE_URL", "postgresql+psycopg://u:p@postgres:5432/db")
+    assert load_config(path).database_url == "postgresql+psycopg://u:p@postgres:5432/db"
+
+
+def test_env_database_url_supplies_value_absent_from_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A config that omits database_url is valid when the environment provides it.
+    path = _write(tmp_path, _MINIMAL_YAML)
+    monkeypatch.setenv("IOTSHIELD_DATABASE_URL", "sqlite:///env.db")
+    assert load_config(path).database_url == "sqlite:///env.db"
+
+
+def test_config_file_url_used_when_env_absent(tmp_path: Path) -> None:
+    # The hermetic autouse fixture guarantees IOTSHIELD_DATABASE_URL is unset.
+    path = _write(tmp_path, "database_url: sqlite:///file.db\n" + _MINIMAL_YAML)
+    assert load_config(path).database_url == "sqlite:///file.db"

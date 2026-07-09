@@ -5,6 +5,8 @@ Whoever runs the app supplies the database URL: tests pass
 deliberately no default URL — config must say where the database is.
 """
 
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from iotshield.storage.orm import Base
+
+DATABASE_URL_ENV = "IOTSHIELD_DATABASE_URL"
+"""Env var naming the database (Postgres in compose, SQLite on the host).
+
+The one config value read from the environment: the API service and the
+schema-init step require it, and the pipeline config lets it override the file's
+``database_url``. Named once so the operator-facing contract lives in one place.
+"""
 
 
 def _enable_sqlite_fks(dbapi_connection: Any, _connection_record: Any) -> None:
@@ -38,6 +48,19 @@ def create_schema(engine: Engine) -> None:
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def database_url_from_env() -> str | None:
+    """The database URL from the environment, or None after printing the error.
+
+    Shared by the entrypoints that require it (the API service and the schema-init
+    step) so the env-var name and the missing-variable message live in one place;
+    each caller maps None to exit code 2.
+    """
+    url = os.environ.get(DATABASE_URL_ENV)
+    if not url:
+        print(f"error: {DATABASE_URL_ENV} is not set", file=sys.stderr)
+    return url
 
 
 def describe_location(url: str) -> str:
