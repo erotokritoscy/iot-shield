@@ -396,8 +396,10 @@ wheels = [
 name = "iotshield"
 source = { editable = "." }
 dependencies = [
+    { name = "altair" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -415,13 +417,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "altair", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pandas", specifier = ">=2.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "streamlit", specifier = ">=1.40" },
+    { name = "streamlit", specifier = ">=1.49" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

@@ -68,11 +68,17 @@ class ApiClient:
         return self._get_list(NormalizedEvent, "/events", params)
 
     def detections(
-        self, *, asset_id: str | None = None, limit: int = 5000
+        self,
+        *,
+        asset_id: str | None = None,
+        lane: Lane | None = None,
+        limit: int = 5000,
     ) -> list[DetectionResult]:
         params: dict[str, Any] = {"limit": limit}
         if asset_id is not None:
             params["asset_id"] = asset_id
+        if lane is not None:
+            params["lane"] = lane.value
         return self._get_list(DetectionResult, "/detections", params)
 
     def alerts(self, *, limit: int = 1000) -> list[PrioritizedAlert]:

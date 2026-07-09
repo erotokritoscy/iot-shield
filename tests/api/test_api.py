@@ -23,7 +23,9 @@ from tests.api.conftest import ApiHarness
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
 
-def event(*, asset_id: str = "pump-02", lane: Lane = Lane.TELEMETRY, offset_s: int = 0):
+def event(
+    *, asset_id: str = "pump-02", lane: Lane = Lane.TELEMETRY, offset_s: int = 0
+) -> NormalizedEvent:
     return NormalizedEvent(
         timestamp=T0 + timedelta(seconds=offset_s),
         asset_id=asset_id,

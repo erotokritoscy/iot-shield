@@ -10,7 +10,15 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from iotshield.contracts.enums import (
     AlertSeverity,
@@ -22,14 +30,43 @@ from iotshield.contracts.enums import (
 )
 
 
+def _reject_epoch_number(value: Any) -> Any:
+    # Pydantic's lax mode reads a bare number (or numeric string) as epoch
+    # seconds, so a column-shifted CSV line silently becomes a 1970-dated event
+    # instead of a MalformedRecord. A real ISO-8601 string never parses as a
+    # float (it carries '-'/':'/'T'), so "float() accepts it" cleanly detects a
+    # bare number — reject it so it lands in the malformed audit view.
+    msg = "timestamp must be an ISO-8601 datetime, not an epoch number"
+    if isinstance(value, (int, float)):
+        raise ValueError(msg)
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            return value  # not a bare number -> a genuine ISO string, allow it
+        raise ValueError(msg)  # float() accepted it -> it's an epoch number
+    return value
+
+
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware (naive datetimes are rejected)")
     return value.astimezone(UTC)
 
 
-UtcDatetime = Annotated[datetime, AfterValidator(_ensure_aware_utc)]
-"""Timezone-aware datetime, normalized to UTC on validation."""
+UtcDatetime = Annotated[
+    datetime, BeforeValidator(_reject_epoch_number), AfterValidator(_ensure_aware_utc)
+]
+"""Timezone-aware datetime, normalized to UTC on validation.
+
+The before-validator rejects epoch numbers (which pydantic would otherwise
+silently accept); the after-validator requires aware input and normalizes to UTC.
+"""
+
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+"""A float that rejects nan/inf — non-finite values break JSON serialization
+(the API 500s) and storage (SQLite binds NaN as NULL). Named once so every
+numeric contract field is finite-by-default (mirrors UtcDatetime for time)."""
 
 
 def _utc_now() -> datetime:
@@ -84,7 +121,7 @@ class NormalizedEvent(_ContractModel):
     source_type: Lane
     source_format: str = Field(min_length=1, description='Fine-grained origin, e.g. "syslog"')
     metric: str | None = Field(default=None, description='Channel/action name, e.g. "Pressure"')
-    value: float | None = None
+    value: FiniteFloat | None = None
     severity: Severity = Severity.INFO
     message: str | None = None
     raw: str = Field(description="Original record verbatim, for evidence and audit")
@@ -111,16 +148,18 @@ class DetectionResult(_WindowedContract):
 
     ``score`` and ``threshold`` are the method's raw values; scores are not
     comparable across methods — downstream consumers reason about the margin.
-    Contributing events are recoverable by query on (asset_id, window, lane);
-    they are not stored inline (ADR-0003 D4).
+    Contributing events are recoverable by an inclusive-window query on
+    (asset_id, window_start..window_end, lane) — the bound must be closed, since
+    a point anomaly is a zero-length window; they are not stored inline
+    (ADR-0003 D4).
     """
 
     detection_id: UUID = Field(default_factory=uuid4)
     asset_id: str = Field(min_length=1)
     lane: Lane
     method: str = Field(min_length=1, description='Detector name, e.g. "lstm_ae"')
-    score: float
-    threshold: float
+    score: FiniteFloat
+    threshold: FiniteFloat
     event_kind: EventKind | None = None
     evidence: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -137,7 +176,7 @@ class PrioritizedAlert(_WindowedContract):
     alert_id: UUID = Field(default_factory=uuid4)
     asset_id: str = Field(min_length=1)
     severity: AlertSeverity
-    priority_score: float = Field(ge=0.0, le=100.0)
+    priority_score: FiniteFloat = Field(ge=0.0, le=100.0)
     threat_class: str = "unknown"
     rationale: str = Field(min_length=1, description="Human-readable why, always present")
     score_components: dict[str, Any] = Field(default_factory=dict)
@@ -145,3 +184,10 @@ class PrioritizedAlert(_WindowedContract):
     recommended_action: str | None = None
     status: AlertStatus = AlertStatus.NEW
     created_at: UtcDatetime = Field(default_factory=_utc_now)
+
+    @field_validator("detection_ids")
+    @classmethod
+    def _unique_detection_ids(cls, value: list[UUID]) -> list[UUID]:
+        # Lineage is a set of distinct detections; de-dupe order-preserving so a
+        # repeated id can't crash the alert<->detection junction's composite PK.
+        return list(dict.fromkeys(value))

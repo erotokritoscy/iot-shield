@@ -53,3 +53,13 @@ def test_unknown_adapter_exits_two_with_known_alternatives(
     input_path, config_path = write_files(tmp_path, config_text=bad)
     assert main(["--input", str(input_path), "--config", str(config_path)]) == 2
     assert "stub_threshold" in capsys.readouterr().err  # error lists what IS available
+
+
+def test_invalid_yaml_exits_two_with_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A syntax error in the config (unclosed bracket) is the commonest config
+    # mistake; it must be the friendly exit-2 path, not a raw traceback.
+    input_path, config_path = write_files(tmp_path, config_text="database_url: [unclosed\n")
+    assert main(["--input", str(input_path), "--config", str(config_path)]) == 2
+    assert "error:" in capsys.readouterr().err

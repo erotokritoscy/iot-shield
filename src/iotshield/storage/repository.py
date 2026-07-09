@@ -9,9 +9,10 @@ Time ranges are half-open: ``start <= t < end``.
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import TypeVar
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from iotshield.contracts import (
@@ -32,6 +33,18 @@ from iotshield.storage.orm import (
     EventRow,
     MalformedRow,
 )
+
+_Row = TypeVar("_Row")
+
+
+def _oldest_first(session: Session, stmt: Select[tuple[_Row]]) -> list[_Row]:
+    """Rows for a DESC + LIMIT query, reversed to oldest-first.
+
+    The read functions order DESC and LIMIT so the newest rows survive the cap
+    (an ASC + LIMIT would hide recent data), then present them oldest-first for
+    the timeline. That reverse lives here once, not in each caller.
+    """
+    return list(session.scalars(stmt))[::-1]
 
 
 def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
@@ -108,7 +121,9 @@ def get_events(
     end: datetime | None = None,
     limit: int = 1000,
 ) -> list[NormalizedEvent]:
-    stmt = select(EventRow).order_by(EventRow.timestamp, EventRow.event_id).limit(limit)
+    stmt = (
+        select(EventRow).order_by(EventRow.timestamp.desc(), EventRow.event_id.desc()).limit(limit)
+    )
     if asset_id is not None:
         stmt = stmt.where(EventRow.asset_id == asset_id)
     if lane is not None:
@@ -117,12 +132,16 @@ def get_events(
         stmt = stmt.where(EventRow.timestamp >= start)
     if end is not None:
         stmt = stmt.where(EventRow.timestamp < end)
-    return [row.to_contract() for row in session.scalars(stmt)]
+    return [row.to_contract() for row in _oldest_first(session, stmt)]
 
 
 def list_malformed(session: Session, *, limit: int = 1000) -> list[MalformedRecord]:
-    stmt = select(MalformedRow).order_by(MalformedRow.created_at, MalformedRow.record_id)
-    return [row.to_contract() for row in session.scalars(stmt.limit(limit))]
+    stmt = (
+        select(MalformedRow)
+        .order_by(MalformedRow.created_at.desc(), MalformedRow.record_id.desc())
+        .limit(limit)
+    )
+    return [row.to_contract() for row in _oldest_first(session, stmt)]
 
 
 def get_detections(
@@ -136,7 +155,7 @@ def get_detections(
 ) -> list[DetectionResult]:
     stmt = (
         select(DetectionRow)
-        .order_by(DetectionRow.window_start, DetectionRow.detection_id)
+        .order_by(DetectionRow.window_start.desc(), DetectionRow.detection_id.desc())
         .limit(limit)
     )
     if asset_id is not None:
@@ -147,7 +166,7 @@ def get_detections(
         stmt = stmt.where(DetectionRow.window_start >= start)
     if end is not None:
         stmt = stmt.where(DetectionRow.window_start < end)
-    return [row.to_contract() for row in session.scalars(stmt)]
+    return [row.to_contract() for row in _oldest_first(session, stmt)]
 
 
 def get_alerts(

@@ -12,7 +12,7 @@ import sys
 import uvicorn
 
 from iotshield.api.app import create_app
-from iotshield.storage import make_engine
+from iotshield.storage import describe_location, make_engine
 
 
 def main() -> int:
@@ -22,6 +22,11 @@ def main() -> int:
         return 2
     host = os.environ.get("IOTSHIELD_API_HOST", "127.0.0.1")
     port = int(os.environ.get("IOTSHIELD_API_PORT", "8000"))
+    # Print the resolved (absolute, for SQLite) database location so a cwd-relative
+    # URL pointing at an unexpected file is visible instead of silently empty.
+    print(
+        f"iotshield API on {host}:{port} using database: {describe_location(url)}", file=sys.stderr
+    )
     uvicorn.run(create_app(make_engine(url)), host=host, port=port)
     return 0
 

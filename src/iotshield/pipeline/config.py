@@ -38,7 +38,12 @@ class PipelineConfig(_ConfigModel):
 
 
 def load_config(path: Path) -> PipelineConfig:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        # yaml.YAMLError is not a ValueError, so surface config-syntax errors as
+        # one — the CLI catches ValueError and exits 2 with a message.
+        raise ValueError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"config file {path} must contain a YAML mapping")
     return PipelineConfig.model_validate(raw)

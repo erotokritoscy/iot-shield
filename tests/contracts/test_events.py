@@ -42,6 +42,22 @@ def test_naive_iso_string_rejected() -> None:
         make_event(timestamp="2026-07-07T12:00:00")
 
 
+@pytest.mark.parametrize("epoch", [1720000000, 1720000000.0, "1720000000", "1.7e9"])
+def test_epoch_number_timestamp_rejected(epoch: object) -> None:
+    # A bare number is epoch seconds to pydantic; reject it so a column-shifted
+    # CSV line becomes malformed data, not a silent 1970-dated event.
+    with pytest.raises(ValidationError, match="ISO-8601"):
+        make_event(timestamp=epoch)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_value_rejected(bad: float) -> None:
+    # Non-finite floats are not JSON-serializable and corrupt storage; the
+    # normalizer turns these into MalformedRecords instead.
+    with pytest.raises(ValidationError):
+        make_event(value=bad)
+
+
 def test_json_round_trip_preserves_everything() -> None:
     event = make_event(metadata={"line_number": 42})
     restored = NormalizedEvent.model_validate_json(event.model_dump_json())

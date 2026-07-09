@@ -5,10 +5,12 @@ Whoever runs the app supplies the database URL: tests pass
 deliberately no default URL — config must say where the database is.
 """
 
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, create_engine
 from sqlalchemy import event as sa_event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from iotshield.storage.orm import Base
@@ -36,3 +38,20 @@ def create_schema(engine: Engine) -> None:
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def describe_location(url: str) -> str:
+    """Credential-safe, absolute description of where the database lives.
+
+    SQLite file URLs are cwd-relative, so two processes launched from different
+    directories silently open different files (empty dashboard over a populated
+    run). Resolving to an absolute path makes that visible in the run report and
+    API startup log; compose removes the hazard by sharing one database.
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite":
+        return parsed.render_as_string(hide_password=True)
+    database = parsed.database
+    if database and database != ":memory:":
+        return str(Path(database).resolve())
+    return url

@@ -72,10 +72,10 @@ class Base(DeclarativeBase):
 class AssetRow(Base):
     __tablename__ = "assets"
 
-    asset_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255))
-    asset_type: Mapped[str] = mapped_column(String(100))
-    location: Mapped[str | None] = mapped_column(String(255))
+    asset_id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    asset_type: Mapped[str] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
     criticality: Mapped[str] = mapped_column(String(20))
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
@@ -112,8 +112,8 @@ class EventRow(Base):
     timestamp: Mapped[datetime]
     asset_id: Mapped[str] = mapped_column(ForeignKey("assets.asset_id"))
     source_type: Mapped[str] = mapped_column(String(20))
-    source_format: Mapped[str] = mapped_column(String(100))
-    metric: Mapped[str | None] = mapped_column(String(255))
+    source_format: Mapped[str] = mapped_column(Text)
+    metric: Mapped[str | None] = mapped_column(Text)
     value: Mapped[float | None]
     severity: Mapped[str] = mapped_column(String(20))
     message: Mapped[str | None] = mapped_column(Text)
@@ -158,8 +158,8 @@ class MalformedRow(Base):
     record_id: Mapped[UUID] = mapped_column(primary_key=True)
     raw: Mapped[str] = mapped_column(Text)
     error: Mapped[str] = mapped_column(Text)
-    source_format: Mapped[str] = mapped_column(String(100))
-    origin: Mapped[str] = mapped_column(String(255))
+    source_format: Mapped[str] = mapped_column(Text)
+    origin: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime]
 
     @classmethod
@@ -195,7 +195,7 @@ class DetectionRow(Base):
     window_start: Mapped[datetime]
     window_end: Mapped[datetime]
     lane: Mapped[str] = mapped_column(String(20))
-    method: Mapped[str] = mapped_column(String(100))
+    method: Mapped[str] = mapped_column(Text)
     score: Mapped[float]
     threshold: Mapped[float]
     event_kind: Mapped[str | None] = mapped_column(String(20))
@@ -258,7 +258,7 @@ class AlertRow(Base):
     window_end: Mapped[datetime]
     severity: Mapped[str] = mapped_column(String(20))
     priority_score: Mapped[float]
-    threat_class: Mapped[str] = mapped_column(String(100))
+    threat_class: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str] = mapped_column(Text)
     score_components: Mapped[dict[str, Any]]
     recommended_action: Mapped[str | None] = mapped_column(Text)

@@ -28,3 +28,21 @@ def test_unknown_name_lists_known_alternatives() -> None:
 def test_bad_param_names_the_adapter() -> None:
     with pytest.raises(ValueError, match=r"invalid params for detector 'stub_threshold'"):
         build_detector("stub_threshold", {"thresold": 80.0})
+
+
+def test_quoted_numeric_threshold_is_coerced() -> None:
+    # YAML scalars can arrive quoted; float() coercion keeps them usable instead
+    # of exploding later inside detect().
+    detector = build_detector("stub_threshold", {"threshold": "90"})
+    assert detector.detect  # constructed successfully with a numeric threshold
+
+
+def test_non_numeric_param_value_fails_fast_and_names_adapter() -> None:
+    with pytest.raises(ValueError, match=r"invalid params for detector 'stub_threshold'"):
+        build_detector("stub_threshold", {"threshold": "high"})
+
+
+def test_non_positive_bucket_fails_fast_and_names_adapter() -> None:
+    # bucket_minutes=0 would ZeroDivisionError mid-run; catch it at construction.
+    with pytest.raises(ValueError, match=r"invalid params for alert engine 'stub'"):
+        build_alert_engine("stub", {"bucket_minutes": 0})

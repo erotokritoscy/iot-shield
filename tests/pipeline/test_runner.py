@@ -119,6 +119,15 @@ class TestEndToEnd:
         assert "events: 4" in text and "alerts: 2" in text
         assert "pump-02" in text  # top alert names its asset
         assert "detection(s)" in text  # ... and carries a rationale
+        assert "database:" in text  # resolved DB location, so a cwd mismatch is visible
+
+    def test_utf8_bom_input_is_not_rejected(self, tmp_path: Path) -> None:
+        # A UTF-8 BOM (Excel/Notepad default on Windows) must not glue onto the
+        # first field and reject line 1.
+        path = tmp_path / "bom.csv"
+        path.write_bytes(b"\xef\xbb\xbf" + INLINE_CSV.encode("utf-8"))
+        report = run_pipeline(make_config(tmp_path), path)
+        assert report.events == 4  # first line survived the BOM
 
 
 class TestDemoArtifacts:

@@ -9,13 +9,15 @@ description = "iotshield.ai modular detection pipeline MVP (CYENS internship, Ju
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "altair>=5.4",
     "fastapi>=0.115",
     "httpx>=0.27",
+    "pandas>=2.0",
     "psycopg[binary]>=3.1",
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0",
-    "streamlit>=1.40",
+    "streamlit>=1.49",
     "uvicorn>=0.30",
 ]
 

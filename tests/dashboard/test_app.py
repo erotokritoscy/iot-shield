@@ -9,6 +9,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import iotshield.dashboard.app as dashboard_app
+from iotshield.contracts import PrioritizedAlert
 from iotshield.dashboard.client import ApiClient
 from tests.dashboard.conftest import SeededDashboard
 
@@ -93,6 +94,23 @@ def test_endpoint_failure_mid_page_shows_error_not_traceback(
     # mid-rerun) — the page-dispatch boundary must render st.error, not raise.
     def explode(*args: object, **kwargs: object) -> object:
         raise httpx.ConnectError("connection lost mid-rerun")
+
+    monkeypatch.setattr(type(seeded.client), "alerts", explode)
+    monkeypatch.setattr(dashboard_app, "get_client", lambda: seeded.client)
+    at = AppTest.from_file(str(APP_PATH), default_timeout=15)
+    at.run()
+    assert not at.exception
+    assert at.error
+
+
+def test_contract_drift_mid_page_shows_error_not_traceback(
+    monkeypatch: pytest.MonkeyPatch, seeded: SeededDashboard
+) -> None:
+    # A response that no longer validates against a contract (API/dashboard skew)
+    # raises ValidationError — the very failure the typed client exists to
+    # surface. The boundary must render st.error, not a traceback.
+    def explode(*args: object, **kwargs: object) -> object:
+        return PrioritizedAlert.model_validate({})  # missing fields -> ValidationError
 
     monkeypatch.setattr(type(seeded.client), "alerts", explode)
     monkeypatch.setattr(dashboard_app, "get_client", lambda: seeded.client)

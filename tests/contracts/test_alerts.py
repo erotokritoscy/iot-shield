@@ -41,6 +41,14 @@ def test_empty_detection_ids_rejected() -> None:
         make_alert(detection_ids=[])
 
 
+def test_duplicate_detection_ids_deduped_order_preserving() -> None:
+    # A repeated id would crash the alert<->detection junction's composite PK;
+    # the contract de-dupes it, keeping first-seen order.
+    d0, d1 = uuid4(), uuid4()
+    alert = make_alert(detection_ids=[d0, d1, d0])
+    assert alert.detection_ids == [d0, d1]
+
+
 def test_defaults() -> None:
     alert = make_alert()
     assert alert.status == AlertStatus.NEW

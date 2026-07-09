@@ -17,7 +17,7 @@ from iotshield.contracts import (
     PrioritizedAlert,
 )
 from iotshield.storage import repository
-from iotshield.storage.orm import EventRow
+from iotshield.storage.orm import AssetRow, DetectionRow, EventRow, MalformedRow
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -86,10 +86,15 @@ class TestEventQueries:
         )  # [start, end)
         assert [e.timestamp for e in window] == [T0, T0 + timedelta(seconds=10)]
 
-    def test_ordered_by_timestamp_with_limit(self, session: Session) -> None:
+    def test_limit_returns_newest_rows_oldest_first(self, session: Session) -> None:
         repository.insert_events(session, [event(offset_s=s) for s in (20, 0, 10)])
-        first_two = repository.get_events(session, limit=2)
-        assert [e.timestamp for e in first_two] == [T0, T0 + timedelta(seconds=10)]
+        newest_two = repository.get_events(session, limit=2)
+        # The LIMIT keeps the NEWEST rows (offsets 10, 20), not the oldest, and
+        # returns them oldest-first for the timeline.
+        assert [e.timestamp for e in newest_two] == [
+            T0 + timedelta(seconds=10),
+            T0 + timedelta(seconds=20),
+        ]
 
 
 class TestDetectionQueries:
@@ -100,6 +105,13 @@ class TestDetectionQueries:
         )
         pump = repository.get_detections(session, asset_id="pump-02")
         assert [d.window_start for d in pump] == [T0, T0 + timedelta(seconds=10)]
+
+    def test_window_start_range_is_half_open(self, session: Session) -> None:
+        repository.insert_detections(session, [detection(offset_s=s) for s in (0, 10, 20)])
+        window = repository.get_detections(
+            session, start=T0, end=T0 + timedelta(seconds=20)
+        )  # [start, end)
+        assert [d.window_start for d in window] == [T0, T0 + timedelta(seconds=10)]
 
 
 class TestAlertQueries:
@@ -138,6 +150,20 @@ class TestAlertQueries:
         ghost = alert([d], priority=50.0).model_copy(update={"detection_ids": [uuid4()]})
         with pytest.raises(IntegrityError):
             repository.insert_alerts(session, [ghost])
+
+
+def test_free_form_columns_have_no_length_cap() -> None:
+    # Contracts don't bound these strings; storage must not either, or a row that
+    # passes on SQLite (which ignores VARCHAR limits) truncates on Postgres and
+    # rolls back the whole atomic run.
+    for column in (
+        AssetRow.__table__.c.name,
+        EventRow.__table__.c.metric,
+        EventRow.__table__.c.source_format,
+        MalformedRow.__table__.c.origin,
+        DetectionRow.__table__.c.method,
+    ):
+        assert getattr(column.type, "length", None) is None
 
 
 def test_storage_boundary_rejects_naive_datetimes(session: Session) -> None:

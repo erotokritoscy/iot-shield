@@ -7,6 +7,7 @@ chart is accompanied by a table/caption in the app, so nothing depends on
 color perception alone.
 """
 
+from datetime import UTC, datetime
 from typing import TypeVar, cast
 
 import altair as alt
@@ -19,6 +20,14 @@ CRITICAL = "#d03b3b"  # status: critical — reserved for detection windows, nev
 GRID = "#e1e0d9"
 MUTED = "#898781"
 BASELINE = "#c3c2b7"
+
+
+def _utc_wallclock(ts: datetime) -> datetime:
+    # Vega-Lite renders a naive datetime as-is (no timezone conversion), while a
+    # tz-aware one is shifted into the viewer's local time — which would disagree
+    # with the UTC timestamps in the tables beside the chart. Feed UTC wall-clock
+    # so the axis and tooltips stay in UTC for every viewer (golden rule 4).
+    return ts.astimezone(UTC).replace(tzinfo=None)
 
 
 _ChartT = TypeVar("_ChartT", alt.Chart, alt.LayerChart)
@@ -44,7 +53,7 @@ def telemetry_timeline(
         return None
     frame = pd.DataFrame(
         {
-            "timestamp": [e.timestamp for e in plotted],
+            "timestamp": [_utc_wallclock(e.timestamp) for e in plotted],
             "value": [e.value for e in plotted],
             "metric": [e.metric or "" for e in plotted],
         }
@@ -64,8 +73,8 @@ def telemetry_timeline(
     if spans:
         bands = pd.DataFrame(
             {
-                "start": [d.window_start for d in spans],
-                "end": [d.window_end for d in spans],
+                "start": [_utc_wallclock(d.window_start) for d in spans],
+                "end": [_utc_wallclock(d.window_end) for d in spans],
                 "method": [d.method for d in spans],
             }
         )
@@ -77,7 +86,7 @@ def telemetry_timeline(
     if points:
         rules = pd.DataFrame(
             {
-                "timestamp": [d.window_start for d in points],
+                "timestamp": [_utc_wallclock(d.window_start) for d in points],
                 "method": [d.method for d in points],
                 "score": [d.score for d in points],
             }

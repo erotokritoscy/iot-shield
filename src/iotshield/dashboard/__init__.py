@@ -1,6 +1,6 @@
 """Streamlit dashboard. Consumes the API only — never touches storage directly.
 
-Run: uv run streamlit run src/iotshield/dashboard/app.py
+Run: uv run streamlit run src/iotshield/dashboard/streamlit_app.py
 """
 
 from iotshield.dashboard.client import ApiClient

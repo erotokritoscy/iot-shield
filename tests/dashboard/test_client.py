@@ -29,6 +29,12 @@ def test_alert_detections_resolve_lineage(seeded: SeededDashboard) -> None:
     assert [d.detection_id for d in evidence] == [seeded.detection.detection_id]
 
 
+def test_detections_lane_filter_is_forwarded(seeded: SeededDashboard) -> None:
+    # The seeded detection is telemetry-lane; the lane filter must reach the API.
+    assert len(seeded.client.detections(asset_id="pump-02", lane=Lane.TELEMETRY)) == 1
+    assert seeded.client.detections(asset_id="pump-02", lane=Lane.LOG) == []
+
+
 def test_summary_parses(seeded: SeededDashboard) -> None:
     summary = seeded.client.summary()
     assert isinstance(summary, Summary)

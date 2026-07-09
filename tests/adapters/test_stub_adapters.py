@@ -61,6 +61,28 @@ class TestStubCsvNormalizer:
         assert result.events == []
         assert len(result.malformed) == 1
 
+    def test_non_finite_value_becomes_malformed(self) -> None:
+        # 'nan'/'inf' parse as floats but poison JSON/storage; the contract
+        # rejects them, so the stub captures them as rejects rather than events.
+        result = StubCsvNormalizer().normalize(
+            "2026-07-07T12:00:00+00:00,pump-02,Pressure,nan",
+            source_format=STUB_SOURCE_FORMAT,
+            origin="test://x",
+        )
+        assert result.events == []
+        assert len(result.malformed) == 1
+
+    def test_epoch_number_timestamp_becomes_malformed(self) -> None:
+        # A column-shifted line whose first field is a number would otherwise
+        # become a silent 1970-dated event; it must land in the audit view.
+        result = StubCsvNormalizer().normalize(
+            "1720000000,pump-02,Pressure,0.38",
+            source_format=STUB_SOURCE_FORMAT,
+            origin="test://x",
+        )
+        assert result.events == []
+        assert len(result.malformed) == 1
+
 
 class TestStubThresholdDetector:
     def test_fires_strictly_above_threshold_only(self) -> None:

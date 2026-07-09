@@ -55,3 +55,12 @@ def test_unknown_field_rejected() -> None:
 def test_naive_window_rejected() -> None:
     with pytest.raises(ValidationError, match="timezone-aware"):
         make_detection(window_start=datetime(2026, 7, 7, 12, 0, 0))
+
+
+@pytest.mark.parametrize("field", ["score", "threshold"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_non_finite_score_rejected(field: str, bad: float) -> None:
+    # A NaN score is not JSON-serializable and would 500 the API (or NULL out on
+    # SQLite); reject it at the contract so a buggy detector fails loudly.
+    with pytest.raises(ValidationError):
+        make_detection(**{field: bad})

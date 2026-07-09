@@ -19,11 +19,16 @@ T = TypeVar("T")
 
 
 def _stub_threshold(threshold: float = 80.0, lane: str = "telemetry") -> StubThresholdDetector:
-    return StubThresholdDetector(threshold=threshold, lane=Lane(lane))
+    # float() coerces YAML scalars that arrive quoted (e.g. "90"); a non-numeric
+    # value raises ValueError, caught and attributed by _build.
+    return StubThresholdDetector(threshold=float(threshold), lane=Lane(lane))
 
 
 def _stub_alert_engine(bucket_minutes: float = 5.0) -> StubAlertEngine:
-    return StubAlertEngine(bucket=timedelta(minutes=bucket_minutes))
+    minutes = float(bucket_minutes)
+    if minutes <= 0:
+        raise ValueError(f"bucket_minutes must be positive, got {minutes}")
+    return StubAlertEngine(bucket=timedelta(minutes=minutes))
 
 
 NORMALIZERS: dict[str, Callable[..., Normalizer]] = {
@@ -49,7 +54,11 @@ def _build(
         raise ValueError(f"unknown {kind} {name!r}; known: {known}") from None
     try:
         return factory(**params)
-    except TypeError as exc:
+    except (TypeError, ValueError) as exc:
+        # TypeError: unknown/misspelled param name. ValueError: a bad param
+        # *value* (non-numeric threshold, non-positive bucket, unknown Lane) —
+        # both fail here at construction, before any database is touched, and
+        # name the adapter so the operator knows which config entry is wrong.
         raise ValueError(f"invalid params for {kind} {name!r}: {exc}") from exc
 
 

@@ -7,6 +7,17 @@ speak contract objects only.
 """
 
 from iotshield.storage import repository
-from iotshield.storage.db import create_schema, make_engine, make_session_factory
+from iotshield.storage.db import (
+    create_schema,
+    describe_location,
+    make_engine,
+    make_session_factory,
+)
 
-__all__ = ["create_schema", "make_engine", "make_session_factory", "repository"]
+__all__ = [
+    "create_schema",
+    "describe_location",
+    "make_engine",
+    "make_session_factory",
+    "repository",
+]

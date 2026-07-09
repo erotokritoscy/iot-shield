@@ -4,11 +4,13 @@ Run:    uv run streamlit run src/iotshield/dashboard/streamlit_app.py
 Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 """
 
+import json
 import os
 
 import httpx
 import pandas as pd
 import streamlit as st
+from pydantic import ValidationError
 
 from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import severity_bar, telemetry_timeline
@@ -16,6 +18,12 @@ from iotshield.dashboard.client import ApiClient
 
 API_URL_ENV = "IOTSHIELD_API_URL"
 DEFAULT_API_URL = "http://127.0.0.1:8000"
+
+# Everything that can go wrong talking to the API: transport/status errors
+# (httpx), a response that no longer matches a contract (ValidationError — the
+# whole point of the typed client), or a non-JSON body (JSONDecodeError). The
+# dashboard renders these as st.error, never a traceback (ADR-0008).
+_API_ERRORS = (httpx.HTTPError, ValidationError, json.JSONDecodeError)
 
 
 def get_client() -> ApiClient:
@@ -106,7 +114,10 @@ def assets_page(client: ApiClient) -> None:
     )
 
     events = client.events(asset_id=selected.asset_id, lane=Lane.TELEMETRY)
-    detections = client.detections(asset_id=selected.asset_id)
+    # Telemetry-only lane: the timeline plots telemetry values, so overlaying
+    # detections from other lanes (e.g. logs) would draw red bands over a series
+    # they don't belong to.
+    detections = client.detections(asset_id=selected.asset_id, lane=Lane.TELEMETRY)
     chart = telemetry_timeline(events, detections)
     if chart is None:
         st.info("No telemetry with numeric values for this asset.")
@@ -160,7 +171,7 @@ def main() -> None:
     client = get_client()
     try:
         client.health()
-    except httpx.HTTPError:
+    except _API_ERRORS:
         api_url = os.environ.get(API_URL_ENV, DEFAULT_API_URL)
         st.error(
             f"API unreachable at {api_url}. Start it with: "
@@ -176,8 +187,8 @@ def main() -> None:
             assets_page(client)
         else:
             data_health_page(client)
-    except httpx.HTTPError as exc:
+    except _API_ERRORS as exc:
         # The health check above covers "API never started"; this boundary covers
-        # a single endpoint erroring or the API dying mid-rerun — friendly error,
-        # never a traceback (ADR-0008).
+        # a single endpoint erroring, the API dying mid-rerun, or a response that
+        # fails contract validation — friendly error, never a traceback (ADR-0008).
         st.error(f"API request failed while rendering this page: {exc}")

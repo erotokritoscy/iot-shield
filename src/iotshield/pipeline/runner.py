@@ -12,7 +12,13 @@ from pathlib import Path
 from iotshield.contracts import DetectionResult, PrioritizedAlert
 from iotshield.pipeline.config import PipelineConfig
 from iotshield.pipeline.registry import build_alert_engine, build_detector, build_normalizer
-from iotshield.storage import create_schema, make_engine, make_session_factory, repository
+from iotshield.storage import (
+    create_schema,
+    describe_location,
+    make_engine,
+    make_session_factory,
+    repository,
+)
 
 TOP_ALERTS_IN_REPORT = 5
 
@@ -22,6 +28,7 @@ class RunReport:
     """End-of-run summary: the demo surface until the API/dashboard exist."""
 
     input_path: str
+    database: str
     events: int
     malformed: int
     detections: int
@@ -31,6 +38,7 @@ class RunReport:
     def render(self) -> str:
         lines = [
             f"Pipeline run complete: {self.input_path}",
+            f"  database: {self.database}",
             f"  events: {self.events}   malformed: {self.malformed}"
             f"   detections: {self.detections}   alerts: {self.alerts}",
         ]
@@ -51,7 +59,9 @@ def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
     normalizer = build_normalizer(config.normalizer)
     detectors = [build_detector(d.name, d.params) for d in config.detectors]
     alert_engine = build_alert_engine(config.alert_engine.name, config.alert_engine.params)
-    text = input_path.read_text(encoding="utf-8")
+    # utf-8-sig strips a leading BOM (Excel/Notepad default on Windows) that
+    # would otherwise glue U+FEFF onto the first field and reject line 1.
+    text = input_path.read_text(encoding="utf-8-sig")
 
     engine = make_engine(config.database_url)
     try:
@@ -83,6 +93,7 @@ def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
 
     return RunReport(
         input_path=str(input_path),
+        database=describe_location(config.database_url),
         events=len(result.events),
         malformed=len(result.malformed),
         detections=len(detections),
