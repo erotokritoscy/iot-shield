@@ -1,0 +1,29 @@
+# Syslog demo configuration — the LOG-lane counterpart to demo.yaml.
+# Same module-selection surface (ADR-0006); it swaps the normalizer to `syslog`
+# (re-implemented from team4, ADR-0011). A syslog record has no numeric reading,
+# so the telemetry threshold detector below fires on nothing — for this run the
+# visible results are events and the malformed-input audit, not detections.
+
+database_url: "sqlite:///demo.db"
+source_format: syslog
+normalizer: syslog
+
+detectors:
+  - name: stub_threshold
+    params:
+      threshold: 80.0
+      lane: telemetry
+
+alert_engine:
+  name: stub
+  params:
+    bucket_minutes: 5
+
+# host-a is registered here; host-b is deliberately absent and gets
+# auto-discovered from the log lines (registered-vs-discovered, as in demo.yaml).
+assets:
+  - asset_id: host-a
+    name: Edge gateway A
+    asset_type: gateway
+    location: line-1
+    criticality: high

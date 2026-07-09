@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 from iotshield.alert import AlertEngine, StubAlertEngine
 from iotshield.contracts import Lane
 from iotshield.detect import Detector, StubThresholdDetector
-from iotshield.normalize import Normalizer, StubCsvNormalizer
+from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
 
 T = TypeVar("T")
 
@@ -33,6 +33,7 @@ def _stub_alert_engine(bucket_minutes: float = 5.0) -> StubAlertEngine:
 
 NORMALIZERS: dict[str, Callable[..., Normalizer]] = {
     "stub": StubCsvNormalizer,
+    "syslog": SyslogNormalizer,
 }
 
 DETECTORS: dict[str, Callable[..., Detector]] = {

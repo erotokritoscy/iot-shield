@@ -1,0 +1,8 @@
+<34>1 2026-07-07T12:00:00Z host-a sshd - - - Failed password for root from 10.0.0.9
+<165>1 2026-07-07T12:00:05Z host-a app - - - Configuration reloaded
+<11>1 2026-07-07T12:00:10Z host-b kernel - - - I/O error on device sda
+Jul  7 12:00:15 host-b sshd[2001]: Accepted publickey for admin
+Jul  7 12:00:20 host-b kernel: out of memory: killed process 4521
+<34>1 2026-07-07T12:00:25Z host-a sudo - - - session opened for user root
+this line is not valid syslog
+<34>1 not-a-real-timestamp host-a su - - - malformed timestamp example

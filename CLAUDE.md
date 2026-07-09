@@ -59,12 +59,18 @@ depend on in compose); the read-only API never creates the schema, and the
 runner still creates it for standalone host runs. The image is intentionally
 unhardened until the first real detector (team3) settles the dependency surface.
 
+Two demo runs exercise both normalizer adapters: `config/demo.yaml` +
+`data/demo/demo.csv` (telemetry → the `stub` normalizer → detections/alerts), and
+`config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
+normalizer, re-implemented from team4 → LOG-lane events; no detections by
+design — ADR-0011).
+
 ## Layout
 
 ```
 src/iotshield/
   contracts/    frozen data contracts (pydantic v2) — the product's core
-  normalize/    Normalizer port + adapters (stub, team4, ...)
+  normalize/    Normalizer port + adapters (stub, syslog, ...)
   detect/       Detector port + adapters (stub threshold, telemetry-ad, ...)
   alert/        scoring/correlation port + adapters (stub, team2 formula)
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)

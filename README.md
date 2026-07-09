@@ -44,6 +44,16 @@ One atomic run: normalize → detect → correlate/prioritize → store (SQLite 
 Postgres via the same config's `database_url` in compose). The end-of-run report
 prints counts and the top alerts with their rationales.
 
+A second demo swaps in the `syslog` normalizer (re-implemented from team4,
+ADR-0011) — logs instead of telemetry:
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo_syslog.log --config config/demo_syslog.yaml
+```
+
+Syslog records land in the LOG lane, so this run's visible results are events and
+captured malformed lines, not detections (the telemetry detector ignores them).
+
 ## Serve the API
 
 ```

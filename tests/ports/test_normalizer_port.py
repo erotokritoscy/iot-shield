@@ -10,7 +10,13 @@ from datetime import timedelta
 
 import pytest
 
-from iotshield.normalize import STUB_SOURCE_FORMAT, Normalizer, StubCsvNormalizer
+from iotshield.normalize import (
+    STUB_SOURCE_FORMAT,
+    SYSLOG_SOURCE_FORMAT,
+    Normalizer,
+    StubCsvNormalizer,
+    SyslogNormalizer,
+)
 
 ORIGIN = "test://fixture"
 
@@ -36,6 +42,18 @@ STUB_TEXT = """\
 # 3 good lines (one with a non-UTC offset), 1 blank (skipped: no content is not
 # data), 3 bad lines (non-numeric value, missing field, naive timestamp).
 
+SYSLOG_TEXT = """\
+<34>1 2026-07-07T12:00:00Z host-a su - ID1 - failed password for root
+<13>1 2026-07-07T12:00:01+02:00 host-a cron - ID2 - disk usage high
+Jul  7 12:00:02 host-b sshd[1234]: Accepted publickey for admin
+
+<133>Jul  7 12:00:03 host-b kernel: out of memory: killed process
+this is not a syslog line at all
+<34>1 not-a-timestamp host-a su - ID3 - bad timestamp field
+"""
+# 4 good (2 RFC 5424 incl. a non-UTC offset, 2 RFC 3164 incl. a PRI variant),
+# 1 blank (skipped), 2 bad (non-syslog line, RFC 5424 unparseable timestamp).
+
 CASES = [
     pytest.param(
         NormalizerCase(
@@ -46,6 +64,16 @@ CASES = [
             expected_malformed=3,
         ),
         id="stub-csv",
+    ),
+    pytest.param(
+        NormalizerCase(
+            make=SyslogNormalizer,
+            source_format=SYSLOG_SOURCE_FORMAT,
+            text=SYSLOG_TEXT,
+            expected_events=4,
+            expected_malformed=2,
+        ),
+        id="syslog",
     ),
 ]
 
