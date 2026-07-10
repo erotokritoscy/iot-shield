@@ -24,8 +24,10 @@ run out of the box. `docker compose down -v` tears it all down, volume included.
 
 The `runner` is a job, not a long-lived service — it runs once and exits, so it
 sits behind the `jobs` profile and is invoked with `docker compose run`, not
-`up`. Point it at other data with `docker compose run --rm runner --input
-data/demo/demo.csv --config config/demo.yaml`.
+`up`. Point it at other data by overriding the command (the service has no
+entrypoint, so pass the whole command, not just flags): `docker compose run --rm
+runner python -m iotshield.pipeline --input=data/demo/demo_team3.csv
+--config=config/demo_team3.yaml`.
 
 ## Quick start (dev, no Docker)
 
