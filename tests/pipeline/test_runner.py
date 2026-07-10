@@ -144,3 +144,23 @@ class TestDemoArtifacts:
         # Registered high-criticality pump outranks the discovered gateway.
         assert report.top_alerts[0].asset_id == "pump-02"
         assert report.top_alerts[1].asset_id == "gw-01"
+
+    def test_team3_demo_produces_a_real_detection_and_alert(self, tmp_path: Path) -> None:
+        # The team3 detector on a real SKAB valve fault: one sustained anomaly
+        # episode -> one prioritized alert on the registered testbed asset.
+        from iotshield.contracts import AlertSeverity
+        from iotshield.pipeline import load_config
+
+        config = load_config(REPO_ROOT / "config" / "demo_team3.yaml").model_copy(
+            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
+        )
+        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_team3.csv")
+        assert (report.events, report.malformed, report.detections, report.alerts) == (
+            2400,
+            0,
+            1,
+            1,
+        )
+        top = report.top_alerts[0]
+        assert top.asset_id == "skab-testbed"
+        assert top.severity == AlertSeverity.CRITICAL

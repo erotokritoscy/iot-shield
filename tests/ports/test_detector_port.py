@@ -8,10 +8,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
-from iotshield.detect import Detector, StubThresholdDetector
+from iotshield.detect import Detector, StubThresholdDetector, Team3ZScoreDetector
+from iotshield.detect.team3.train import train_artifact
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -36,6 +39,19 @@ class DetectorCase:
     triggering_events: Sequence[NormalizedEvent]  # must yield >= 1 detection
 
 
+# A hermetic team3 artifact: trained on a synthetic single-channel normal series
+# (tiny window so the case stays small), with no committed file involved.
+_TEAM3_ARTIFACT = train_artifact(
+    pd.DataFrame({"Pressure": np.random.default_rng(0).normal(10.0, 0.5, 300)}),
+    channels=["Pressure"],
+    window_size=3,
+    lag_steps=[1],
+    fft_enabled=False,
+    percentile=99.0,
+)
+# Flat-normal readings with a sustained spike in the middle -> at least one episode.
+_TEAM3_VALUES = [10.0] * 8 + [55.0, 57.0, 56.0] + [10.0] * 4
+
 CASES = [
     pytest.param(
         DetectorCase(
@@ -49,6 +65,13 @@ CASES = [
             ],
         ),
         id="stub-threshold",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: Team3ZScoreDetector(_TEAM3_ARTIFACT),
+            triggering_events=[event(value=v, offset_s=i) for i, v in enumerate(_TEAM3_VALUES)],
+        ),
+        id="team3-zscore",
     ),
 ]
 

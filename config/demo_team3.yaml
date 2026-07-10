@@ -1,0 +1,30 @@
+# Team3 telemetry-detector demo (ADR-0012) — the payoff of the detector lane.
+# Same module-selection surface as demo.yaml; it swaps the detector to
+# `team3_zscore` (robust z-score, vendored from team3). The input is a small slice
+# of a real SKAB valve run (valve1/13: normal -> sustained valve fault); unlike
+# demo.yaml's stub threshold, this fires a real anomaly detection -> alert.
+#
+# Provenance: data/demo/demo_team3.csv is valve1/13.csv rows 500-800 fanned into
+# our long CSV, timestamps attributed UTC (the same D2 assumption as syslog). The
+# artifact (skab_zscore) is trained on that recording's normal prefix (ADR-0012 D3).
+
+database_url: "sqlite:///demo.db"
+source_format: stub-csv
+normalizer: stub
+
+detectors:
+  - name: team3_zscore
+    params:
+      artifact: skab_zscore
+
+alert_engine:
+  name: stub
+  params:
+    bucket_minutes: 5
+
+assets:
+  - asset_id: skab-testbed
+    name: SKAB rotor testbed
+    asset_type: pump
+    location: skab-rig
+    criticality: high

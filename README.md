@@ -54,6 +54,17 @@ uv run python -m iotshield.pipeline --input data/demo/demo_syslog.log --config c
 Syslog records land in the LOG lane, so this run's visible results are events and
 captured malformed lines, not detections (the telemetry detector ignores them).
 
+A third demo swaps in the `team3_zscore` detector (a robust z-score model vendored
+from team3, ADR-0012) over a real SKAB valve fault — the detector lane's payoff:
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo_team3.csv --config config/demo_team3.yaml
+```
+
+The input is telemetry that ramps from normal into a sustained valve anomaly, so
+this run produces a real detection (one collective anomaly episode) and a
+prioritized alert on the `skab-testbed` asset.
+
 ## Serve the API
 
 ```

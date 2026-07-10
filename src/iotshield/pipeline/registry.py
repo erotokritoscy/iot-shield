@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 
 from iotshield.alert import AlertEngine, StubAlertEngine
 from iotshield.contracts import Lane
-from iotshield.detect import Detector, StubThresholdDetector
+from iotshield.detect import Detector, StubThresholdDetector, Team3ZScoreDetector
 from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
 
 T = TypeVar("T")
@@ -31,6 +31,15 @@ def _stub_alert_engine(bucket_minutes: float = 5.0) -> StubAlertEngine:
     return StubAlertEngine(bucket=timedelta(minutes=minutes))
 
 
+def _team3_zscore(
+    artifact: str = "skab_zscore", min_segment_length: int = 1
+) -> Team3ZScoreDetector:
+    # from_resource raises ValueError for an unknown artifact id; _build attributes it.
+    return Team3ZScoreDetector.from_resource(
+        str(artifact), min_segment_length=int(min_segment_length)
+    )
+
+
 NORMALIZERS: dict[str, Callable[..., Normalizer]] = {
     "stub": StubCsvNormalizer,
     "syslog": SyslogNormalizer,
@@ -38,6 +47,7 @@ NORMALIZERS: dict[str, Callable[..., Normalizer]] = {
 
 DETECTORS: dict[str, Callable[..., Detector]] = {
     "stub_threshold": _stub_threshold,
+    "team3_zscore": _team3_zscore,
 }
 
 ALERT_ENGINES: dict[str, Callable[..., AlertEngine]] = {

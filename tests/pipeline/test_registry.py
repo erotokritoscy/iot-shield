@@ -46,3 +46,17 @@ def test_non_positive_bucket_fails_fast_and_names_adapter() -> None:
     # bucket_minutes=0 would ZeroDivisionError mid-run; catch it at construction.
     with pytest.raises(ValueError, match=r"invalid params for alert engine 'stub'"):
         build_alert_engine("stub", {"bucket_minutes": 0})
+
+
+def test_team3_detector_builds_from_committed_artifact() -> None:
+    detector = build_detector("team3_zscore", {})
+    assert detector.lane == Lane.TELEMETRY
+    assert detector.method == "team3_zscore"
+
+
+def test_team3_unknown_artifact_fails_fast_and_names_adapter() -> None:
+    # A bad artifact id is a config error; it must fail at construction, named.
+    with pytest.raises(
+        ValueError, match=r"invalid params for detector 'team3_zscore'.*unknown team3 artifact"
+    ):
+        build_detector("team3_zscore", {"artifact": "nope"})

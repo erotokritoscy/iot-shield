@@ -1,0 +1,2400 @@
+2020-03-09T14:43:27+00:00,skab-testbed,Accelerometer1RMS,0.0275419
+2020-03-09T14:43:27+00:00,skab-testbed,Accelerometer2RMS,0.0396346999999999
+2020-03-09T14:43:27+00:00,skab-testbed,Current,0.795241
+2020-03-09T14:43:27+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:43:27+00:00,skab-testbed,Temperature,67.7339
+2020-03-09T14:43:27+00:00,skab-testbed,Thermocouple,24.5808
+2020-03-09T14:43:27+00:00,skab-testbed,Voltage,236.092
+2020-03-09T14:43:27+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:29+00:00,skab-testbed,Accelerometer1RMS,0.0273632999999999
+2020-03-09T14:43:29+00:00,skab-testbed,Accelerometer2RMS,0.0391640999999999
+2020-03-09T14:43:29+00:00,skab-testbed,Current,0.742792
+2020-03-09T14:43:29+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:29+00:00,skab-testbed,Temperature,67.6924
+2020-03-09T14:43:29+00:00,skab-testbed,Thermocouple,24.583
+2020-03-09T14:43:29+00:00,skab-testbed,Voltage,208.867
+2020-03-09T14:43:29+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:30+00:00,skab-testbed,Accelerometer1RMS,0.0275546
+2020-03-09T14:43:30+00:00,skab-testbed,Accelerometer2RMS,0.0401809
+2020-03-09T14:43:30+00:00,skab-testbed,Current,0.8375
+2020-03-09T14:43:30+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:30+00:00,skab-testbed,Temperature,67.6482
+2020-03-09T14:43:30+00:00,skab-testbed,Thermocouple,24.578000000000003
+2020-03-09T14:43:30+00:00,skab-testbed,Voltage,251.828
+2020-03-09T14:43:30+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:31+00:00,skab-testbed,Accelerometer1RMS,0.0272348
+2020-03-09T14:43:31+00:00,skab-testbed,Accelerometer2RMS,0.0398187
+2020-03-09T14:43:31+00:00,skab-testbed,Current,0.939654
+2020-03-09T14:43:31+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:43:31+00:00,skab-testbed,Temperature,67.7048
+2020-03-09T14:43:31+00:00,skab-testbed,Thermocouple,24.5909
+2020-03-09T14:43:31+00:00,skab-testbed,Voltage,240.273
+2020-03-09T14:43:31+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:32+00:00,skab-testbed,Accelerometer1RMS,0.0272519
+2020-03-09T14:43:32+00:00,skab-testbed,Accelerometer2RMS,0.0397275
+2020-03-09T14:43:32+00:00,skab-testbed,Current,0.876791
+2020-03-09T14:43:32+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:32+00:00,skab-testbed,Temperature,67.73
+2020-03-09T14:43:32+00:00,skab-testbed,Thermocouple,24.5886
+2020-03-09T14:43:32+00:00,skab-testbed,Voltage,237.539
+2020-03-09T14:43:32+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:33+00:00,skab-testbed,Accelerometer1RMS,0.0268846
+2020-03-09T14:43:33+00:00,skab-testbed,Accelerometer2RMS,0.039047
+2020-03-09T14:43:33+00:00,skab-testbed,Current,0.746109
+2020-03-09T14:43:33+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:33+00:00,skab-testbed,Temperature,67.6318
+2020-03-09T14:43:33+00:00,skab-testbed,Thermocouple,24.5822
+2020-03-09T14:43:33+00:00,skab-testbed,Voltage,235.875
+2020-03-09T14:43:33+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:34+00:00,skab-testbed,Accelerometer1RMS,0.0270982
+2020-03-09T14:43:34+00:00,skab-testbed,Accelerometer2RMS,0.0386826
+2020-03-09T14:43:34+00:00,skab-testbed,Current,0.8582629999999999
+2020-03-09T14:43:34+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:43:34+00:00,skab-testbed,Temperature,67.5609
+2020-03-09T14:43:34+00:00,skab-testbed,Thermocouple,24.5797
+2020-03-09T14:43:34+00:00,skab-testbed,Voltage,239.908
+2020-03-09T14:43:34+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:35+00:00,skab-testbed,Accelerometer1RMS,0.0273819
+2020-03-09T14:43:35+00:00,skab-testbed,Accelerometer2RMS,0.0391510999999999
+2020-03-09T14:43:35+00:00,skab-testbed,Current,1.33612
+2020-03-09T14:43:35+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:35+00:00,skab-testbed,Temperature,67.6914
+2020-03-09T14:43:35+00:00,skab-testbed,Thermocouple,24.5866
+2020-03-09T14:43:35+00:00,skab-testbed,Voltage,247.658
+2020-03-09T14:43:35+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:36+00:00,skab-testbed,Accelerometer1RMS,0.0270988
+2020-03-09T14:43:36+00:00,skab-testbed,Accelerometer2RMS,0.0397875
+2020-03-09T14:43:36+00:00,skab-testbed,Current,0.803187
+2020-03-09T14:43:36+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:36+00:00,skab-testbed,Temperature,67.6662
+2020-03-09T14:43:36+00:00,skab-testbed,Thermocouple,24.5866
+2020-03-09T14:43:36+00:00,skab-testbed,Voltage,244.091
+2020-03-09T14:43:36+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:37+00:00,skab-testbed,Accelerometer1RMS,0.0268845
+2020-03-09T14:43:37+00:00,skab-testbed,Accelerometer2RMS,0.0398143
+2020-03-09T14:43:37+00:00,skab-testbed,Current,0.906081
+2020-03-09T14:43:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:37+00:00,skab-testbed,Temperature,67.7677
+2020-03-09T14:43:37+00:00,skab-testbed,Thermocouple,24.5802
+2020-03-09T14:43:37+00:00,skab-testbed,Voltage,230.512
+2020-03-09T14:43:37+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:38+00:00,skab-testbed,Accelerometer1RMS,0.0268645
+2020-03-09T14:43:38+00:00,skab-testbed,Accelerometer2RMS,0.0409726
+2020-03-09T14:43:38+00:00,skab-testbed,Current,1.11348
+2020-03-09T14:43:38+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:38+00:00,skab-testbed,Temperature,67.6237
+2020-03-09T14:43:38+00:00,skab-testbed,Thermocouple,24.5802
+2020-03-09T14:43:38+00:00,skab-testbed,Voltage,219.813
+2020-03-09T14:43:38+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:39+00:00,skab-testbed,Accelerometer1RMS,0.0269374
+2020-03-09T14:43:39+00:00,skab-testbed,Accelerometer2RMS,0.0401813
+2020-03-09T14:43:39+00:00,skab-testbed,Current,0.746422
+2020-03-09T14:43:39+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:39+00:00,skab-testbed,Temperature,67.7309
+2020-03-09T14:43:39+00:00,skab-testbed,Thermocouple,24.5762
+2020-03-09T14:43:39+00:00,skab-testbed,Voltage,231.906
+2020-03-09T14:43:39+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:40+00:00,skab-testbed,Accelerometer1RMS,0.0270789
+2020-03-09T14:43:40+00:00,skab-testbed,Accelerometer2RMS,0.0406869
+2020-03-09T14:43:40+00:00,skab-testbed,Current,1.02421
+2020-03-09T14:43:40+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:43:40+00:00,skab-testbed,Temperature,67.6396
+2020-03-09T14:43:40+00:00,skab-testbed,Thermocouple,24.5836
+2020-03-09T14:43:40+00:00,skab-testbed,Voltage,230.034
+2020-03-09T14:43:40+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:41+00:00,skab-testbed,Accelerometer1RMS,0.0271812
+2020-03-09T14:43:41+00:00,skab-testbed,Accelerometer2RMS,0.0398278
+2020-03-09T14:43:41+00:00,skab-testbed,Current,0.784698
+2020-03-09T14:43:41+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:41+00:00,skab-testbed,Temperature,67.7471
+2020-03-09T14:43:41+00:00,skab-testbed,Thermocouple,24.5856
+2020-03-09T14:43:41+00:00,skab-testbed,Voltage,233.718
+2020-03-09T14:43:41+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:42+00:00,skab-testbed,Accelerometer1RMS,0.0274915999999999
+2020-03-09T14:43:42+00:00,skab-testbed,Accelerometer2RMS,0.0411054
+2020-03-09T14:43:42+00:00,skab-testbed,Current,1.1423
+2020-03-09T14:43:42+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:42+00:00,skab-testbed,Temperature,67.7093
+2020-03-09T14:43:42+00:00,skab-testbed,Thermocouple,24.5842
+2020-03-09T14:43:42+00:00,skab-testbed,Voltage,205.567
+2020-03-09T14:43:42+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:43+00:00,skab-testbed,Accelerometer1RMS,0.0278587999999999
+2020-03-09T14:43:43+00:00,skab-testbed,Accelerometer2RMS,0.0415661
+2020-03-09T14:43:43+00:00,skab-testbed,Current,0.80781
+2020-03-09T14:43:43+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:43:43+00:00,skab-testbed,Temperature,67.5647
+2020-03-09T14:43:43+00:00,skab-testbed,Thermocouple,24.5842
+2020-03-09T14:43:43+00:00,skab-testbed,Voltage,230.466
+2020-03-09T14:43:43+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:44+00:00,skab-testbed,Accelerometer1RMS,0.0276944
+2020-03-09T14:43:44+00:00,skab-testbed,Accelerometer2RMS,0.0416314
+2020-03-09T14:43:44+00:00,skab-testbed,Current,1.25111
+2020-03-09T14:43:44+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:44+00:00,skab-testbed,Temperature,67.6827
+2020-03-09T14:43:44+00:00,skab-testbed,Thermocouple,24.5913
+2020-03-09T14:43:44+00:00,skab-testbed,Voltage,230.953
+2020-03-09T14:43:44+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:45+00:00,skab-testbed,Accelerometer1RMS,0.0272967
+2020-03-09T14:43:45+00:00,skab-testbed,Accelerometer2RMS,0.0421476
+2020-03-09T14:43:45+00:00,skab-testbed,Current,0.8391860000000001
+2020-03-09T14:43:45+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:45+00:00,skab-testbed,Temperature,67.7608
+2020-03-09T14:43:45+00:00,skab-testbed,Thermocouple,24.596
+2020-03-09T14:43:45+00:00,skab-testbed,Voltage,216.343
+2020-03-09T14:43:45+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:46+00:00,skab-testbed,Accelerometer1RMS,0.0275556
+2020-03-09T14:43:46+00:00,skab-testbed,Accelerometer2RMS,0.0418578
+2020-03-09T14:43:46+00:00,skab-testbed,Current,1.29255
+2020-03-09T14:43:46+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:46+00:00,skab-testbed,Temperature,67.6876
+2020-03-09T14:43:46+00:00,skab-testbed,Thermocouple,24.5852
+2020-03-09T14:43:46+00:00,skab-testbed,Voltage,227.285
+2020-03-09T14:43:46+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:47+00:00,skab-testbed,Accelerometer1RMS,0.0280685
+2020-03-09T14:43:47+00:00,skab-testbed,Accelerometer2RMS,0.0411158
+2020-03-09T14:43:47+00:00,skab-testbed,Current,0.888284
+2020-03-09T14:43:47+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:47+00:00,skab-testbed,Temperature,67.797
+2020-03-09T14:43:47+00:00,skab-testbed,Thermocouple,24.5856
+2020-03-09T14:43:47+00:00,skab-testbed,Voltage,225.481
+2020-03-09T14:43:47+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:48+00:00,skab-testbed,Accelerometer1RMS,0.0279445999999999
+2020-03-09T14:43:48+00:00,skab-testbed,Accelerometer2RMS,0.0412784
+2020-03-09T14:43:48+00:00,skab-testbed,Current,1.29339
+2020-03-09T14:43:48+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:48+00:00,skab-testbed,Temperature,67.7719
+2020-03-09T14:43:48+00:00,skab-testbed,Thermocouple,24.5896
+2020-03-09T14:43:48+00:00,skab-testbed,Voltage,227.732
+2020-03-09T14:43:48+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:43:50+00:00,skab-testbed,Accelerometer1RMS,0.0274982
+2020-03-09T14:43:50+00:00,skab-testbed,Accelerometer2RMS,0.0413966
+2020-03-09T14:43:50+00:00,skab-testbed,Current,1.4143
+2020-03-09T14:43:50+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:50+00:00,skab-testbed,Temperature,67.5695
+2020-03-09T14:43:50+00:00,skab-testbed,Thermocouple,24.5782
+2020-03-09T14:43:50+00:00,skab-testbed,Voltage,246.272
+2020-03-09T14:43:50+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:51+00:00,skab-testbed,Accelerometer1RMS,0.027705
+2020-03-09T14:43:51+00:00,skab-testbed,Accelerometer2RMS,0.0422552
+2020-03-09T14:43:51+00:00,skab-testbed,Current,0.892265
+2020-03-09T14:43:51+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:51+00:00,skab-testbed,Temperature,67.6612
+2020-03-09T14:43:51+00:00,skab-testbed,Thermocouple,24.5846
+2020-03-09T14:43:51+00:00,skab-testbed,Voltage,231.462
+2020-03-09T14:43:51+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:52+00:00,skab-testbed,Accelerometer1RMS,0.0278054
+2020-03-09T14:43:52+00:00,skab-testbed,Accelerometer2RMS,0.0422745
+2020-03-09T14:43:52+00:00,skab-testbed,Current,1.19571
+2020-03-09T14:43:52+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:52+00:00,skab-testbed,Temperature,67.7597
+2020-03-09T14:43:52+00:00,skab-testbed,Thermocouple,24.5881
+2020-03-09T14:43:52+00:00,skab-testbed,Voltage,219.615
+2020-03-09T14:43:52+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:53+00:00,skab-testbed,Accelerometer1RMS,0.0276627
+2020-03-09T14:43:53+00:00,skab-testbed,Accelerometer2RMS,0.0415899999999999
+2020-03-09T14:43:53+00:00,skab-testbed,Current,0.8843340000000001
+2020-03-09T14:43:53+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:53+00:00,skab-testbed,Temperature,67.7769
+2020-03-09T14:43:53+00:00,skab-testbed,Thermocouple,24.5896
+2020-03-09T14:43:53+00:00,skab-testbed,Voltage,215.832
+2020-03-09T14:43:53+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:54+00:00,skab-testbed,Accelerometer1RMS,0.0277719
+2020-03-09T14:43:54+00:00,skab-testbed,Accelerometer2RMS,0.0415398
+2020-03-09T14:43:54+00:00,skab-testbed,Current,1.20379
+2020-03-09T14:43:54+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:43:54+00:00,skab-testbed,Temperature,67.6367
+2020-03-09T14:43:54+00:00,skab-testbed,Thermocouple,24.5908
+2020-03-09T14:43:54+00:00,skab-testbed,Voltage,224.916
+2020-03-09T14:43:54+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:43:55+00:00,skab-testbed,Accelerometer1RMS,0.0275786
+2020-03-09T14:43:55+00:00,skab-testbed,Accelerometer2RMS,0.0401431
+2020-03-09T14:43:55+00:00,skab-testbed,Current,1.30276
+2020-03-09T14:43:55+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:55+00:00,skab-testbed,Temperature,67.7401
+2020-03-09T14:43:55+00:00,skab-testbed,Thermocouple,24.5927
+2020-03-09T14:43:55+00:00,skab-testbed,Voltage,222.445
+2020-03-09T14:43:55+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:43:56+00:00,skab-testbed,Accelerometer1RMS,0.0277222
+2020-03-09T14:43:56+00:00,skab-testbed,Accelerometer2RMS,0.0412839999999999
+2020-03-09T14:43:56+00:00,skab-testbed,Current,1.28914
+2020-03-09T14:43:56+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:56+00:00,skab-testbed,Temperature,67.74600000000001
+2020-03-09T14:43:56+00:00,skab-testbed,Thermocouple,24.5887
+2020-03-09T14:43:56+00:00,skab-testbed,Voltage,229.24
+2020-03-09T14:43:56+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:43:57+00:00,skab-testbed,Accelerometer1RMS,0.0277026
+2020-03-09T14:43:57+00:00,skab-testbed,Accelerometer2RMS,0.0416463
+2020-03-09T14:43:57+00:00,skab-testbed,Current,1.28244
+2020-03-09T14:43:57+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:43:57+00:00,skab-testbed,Temperature,67.81
+2020-03-09T14:43:57+00:00,skab-testbed,Thermocouple,24.5902
+2020-03-09T14:43:57+00:00,skab-testbed,Voltage,236.048
+2020-03-09T14:43:57+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:43:58+00:00,skab-testbed,Accelerometer1RMS,0.0275004
+2020-03-09T14:43:58+00:00,skab-testbed,Accelerometer2RMS,0.0414591
+2020-03-09T14:43:58+00:00,skab-testbed,Current,1.3129
+2020-03-09T14:43:58+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:43:58+00:00,skab-testbed,Temperature,67.6341
+2020-03-09T14:43:58+00:00,skab-testbed,Thermocouple,24.596
+2020-03-09T14:43:58+00:00,skab-testbed,Voltage,232.993
+2020-03-09T14:43:58+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:43:59+00:00,skab-testbed,Accelerometer1RMS,0.0273875999999999
+2020-03-09T14:43:59+00:00,skab-testbed,Accelerometer2RMS,0.0416009
+2020-03-09T14:43:59+00:00,skab-testbed,Current,1.21371
+2020-03-09T14:43:59+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:43:59+00:00,skab-testbed,Temperature,67.8426
+2020-03-09T14:43:59+00:00,skab-testbed,Thermocouple,24.596
+2020-03-09T14:43:59+00:00,skab-testbed,Voltage,232.21400000000003
+2020-03-09T14:43:59+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:00+00:00,skab-testbed,Accelerometer1RMS,0.0275505999999999
+2020-03-09T14:44:00+00:00,skab-testbed,Accelerometer2RMS,0.0414778
+2020-03-09T14:44:00+00:00,skab-testbed,Current,1.3119299999999998
+2020-03-09T14:44:00+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:00+00:00,skab-testbed,Temperature,67.7336
+2020-03-09T14:44:00+00:00,skab-testbed,Thermocouple,24.5882
+2020-03-09T14:44:00+00:00,skab-testbed,Voltage,228.409
+2020-03-09T14:44:00+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:01+00:00,skab-testbed,Accelerometer1RMS,0.0278582
+2020-03-09T14:44:01+00:00,skab-testbed,Accelerometer2RMS,0.0409936
+2020-03-09T14:44:01+00:00,skab-testbed,Current,1.23263
+2020-03-09T14:44:01+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:01+00:00,skab-testbed,Temperature,67.7878
+2020-03-09T14:44:01+00:00,skab-testbed,Thermocouple,24.5915
+2020-03-09T14:44:01+00:00,skab-testbed,Voltage,222.483
+2020-03-09T14:44:01+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:02+00:00,skab-testbed,Accelerometer1RMS,0.0274894
+2020-03-09T14:44:02+00:00,skab-testbed,Accelerometer2RMS,0.0403689
+2020-03-09T14:44:02+00:00,skab-testbed,Current,1.39946
+2020-03-09T14:44:02+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:02+00:00,skab-testbed,Temperature,67.8345
+2020-03-09T14:44:02+00:00,skab-testbed,Thermocouple,24.5935
+2020-03-09T14:44:02+00:00,skab-testbed,Voltage,251.216
+2020-03-09T14:44:02+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:03+00:00,skab-testbed,Accelerometer1RMS,0.0277492
+2020-03-09T14:44:03+00:00,skab-testbed,Accelerometer2RMS,0.040714
+2020-03-09T14:44:03+00:00,skab-testbed,Current,1.28476
+2020-03-09T14:44:03+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:03+00:00,skab-testbed,Temperature,67.9089
+2020-03-09T14:44:03+00:00,skab-testbed,Thermocouple,24.5855
+2020-03-09T14:44:03+00:00,skab-testbed,Voltage,224.363
+2020-03-09T14:44:03+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:04+00:00,skab-testbed,Accelerometer1RMS,0.0275899
+2020-03-09T14:44:04+00:00,skab-testbed,Accelerometer2RMS,0.0393486999999999
+2020-03-09T14:44:04+00:00,skab-testbed,Current,1.3743299999999998
+2020-03-09T14:44:04+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:04+00:00,skab-testbed,Temperature,67.7757
+2020-03-09T14:44:04+00:00,skab-testbed,Thermocouple,24.5999
+2020-03-09T14:44:04+00:00,skab-testbed,Voltage,239.196
+2020-03-09T14:44:04+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:05+00:00,skab-testbed,Accelerometer1RMS,0.0280020999999999
+2020-03-09T14:44:05+00:00,skab-testbed,Accelerometer2RMS,0.0395847
+2020-03-09T14:44:05+00:00,skab-testbed,Current,1.42239
+2020-03-09T14:44:05+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:05+00:00,skab-testbed,Temperature,67.7954
+2020-03-09T14:44:05+00:00,skab-testbed,Thermocouple,24.5993
+2020-03-09T14:44:05+00:00,skab-testbed,Voltage,225.939
+2020-03-09T14:44:05+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:06+00:00,skab-testbed,Accelerometer1RMS,0.02787
+2020-03-09T14:44:06+00:00,skab-testbed,Accelerometer2RMS,0.040107
+2020-03-09T14:44:06+00:00,skab-testbed,Current,1.30473
+2020-03-09T14:44:06+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:06+00:00,skab-testbed,Temperature,67.9761
+2020-03-09T14:44:06+00:00,skab-testbed,Thermocouple,24.5919
+2020-03-09T14:44:06+00:00,skab-testbed,Voltage,245.02
+2020-03-09T14:44:06+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:07+00:00,skab-testbed,Accelerometer1RMS,0.0281075
+2020-03-09T14:44:07+00:00,skab-testbed,Accelerometer2RMS,0.0405702
+2020-03-09T14:44:07+00:00,skab-testbed,Current,1.24124
+2020-03-09T14:44:07+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:07+00:00,skab-testbed,Temperature,67.7076
+2020-03-09T14:44:07+00:00,skab-testbed,Thermocouple,24.5894
+2020-03-09T14:44:07+00:00,skab-testbed,Voltage,238.048
+2020-03-09T14:44:07+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:08+00:00,skab-testbed,Accelerometer1RMS,0.0278923
+2020-03-09T14:44:08+00:00,skab-testbed,Accelerometer2RMS,0.0409195
+2020-03-09T14:44:08+00:00,skab-testbed,Current,1.34443
+2020-03-09T14:44:08+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:08+00:00,skab-testbed,Temperature,67.8921
+2020-03-09T14:44:08+00:00,skab-testbed,Thermocouple,24.5923
+2020-03-09T14:44:08+00:00,skab-testbed,Voltage,228.802
+2020-03-09T14:44:08+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:10+00:00,skab-testbed,Accelerometer1RMS,0.0276417
+2020-03-09T14:44:10+00:00,skab-testbed,Accelerometer2RMS,0.0409994
+2020-03-09T14:44:10+00:00,skab-testbed,Current,1.1657
+2020-03-09T14:44:10+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:10+00:00,skab-testbed,Temperature,68.0957
+2020-03-09T14:44:10+00:00,skab-testbed,Thermocouple,24.5951
+2020-03-09T14:44:10+00:00,skab-testbed,Voltage,231.122
+2020-03-09T14:44:10+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:11+00:00,skab-testbed,Accelerometer1RMS,0.0275113
+2020-03-09T14:44:11+00:00,skab-testbed,Accelerometer2RMS,0.0406248
+2020-03-09T14:44:11+00:00,skab-testbed,Current,1.16814
+2020-03-09T14:44:11+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:11+00:00,skab-testbed,Temperature,68.048
+2020-03-09T14:44:11+00:00,skab-testbed,Thermocouple,24.5836
+2020-03-09T14:44:11+00:00,skab-testbed,Voltage,230.329
+2020-03-09T14:44:11+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:12+00:00,skab-testbed,Accelerometer1RMS,0.0277667
+2020-03-09T14:44:12+00:00,skab-testbed,Accelerometer2RMS,0.0414816
+2020-03-09T14:44:12+00:00,skab-testbed,Current,1.0248
+2020-03-09T14:44:12+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:12+00:00,skab-testbed,Temperature,68.1324
+2020-03-09T14:44:12+00:00,skab-testbed,Thermocouple,24.5906
+2020-03-09T14:44:12+00:00,skab-testbed,Voltage,211.038
+2020-03-09T14:44:12+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:13+00:00,skab-testbed,Accelerometer1RMS,0.0277188
+2020-03-09T14:44:13+00:00,skab-testbed,Accelerometer2RMS,0.0411126
+2020-03-09T14:44:13+00:00,skab-testbed,Current,0.697362
+2020-03-09T14:44:13+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:13+00:00,skab-testbed,Temperature,67.8374
+2020-03-09T14:44:13+00:00,skab-testbed,Thermocouple,24.5892
+2020-03-09T14:44:13+00:00,skab-testbed,Voltage,233.917
+2020-03-09T14:44:13+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:14+00:00,skab-testbed,Accelerometer1RMS,0.0274962
+2020-03-09T14:44:14+00:00,skab-testbed,Accelerometer2RMS,0.0407759
+2020-03-09T14:44:14+00:00,skab-testbed,Current,1.35616
+2020-03-09T14:44:14+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:14+00:00,skab-testbed,Temperature,67.9427
+2020-03-09T14:44:14+00:00,skab-testbed,Thermocouple,24.5893
+2020-03-09T14:44:14+00:00,skab-testbed,Voltage,242.575
+2020-03-09T14:44:14+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:15+00:00,skab-testbed,Accelerometer1RMS,0.0275768
+2020-03-09T14:44:15+00:00,skab-testbed,Accelerometer2RMS,0.0410626999999999
+2020-03-09T14:44:15+00:00,skab-testbed,Current,1.20169
+2020-03-09T14:44:15+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:15+00:00,skab-testbed,Temperature,68.0347
+2020-03-09T14:44:15+00:00,skab-testbed,Thermocouple,24.591
+2020-03-09T14:44:15+00:00,skab-testbed,Voltage,230.707
+2020-03-09T14:44:15+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:16+00:00,skab-testbed,Accelerometer1RMS,0.0275803
+2020-03-09T14:44:16+00:00,skab-testbed,Accelerometer2RMS,0.0408814
+2020-03-09T14:44:16+00:00,skab-testbed,Current,0.768388
+2020-03-09T14:44:16+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:16+00:00,skab-testbed,Temperature,67.9722
+2020-03-09T14:44:16+00:00,skab-testbed,Thermocouple,24.584
+2020-03-09T14:44:16+00:00,skab-testbed,Voltage,215.803
+2020-03-09T14:44:16+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:17+00:00,skab-testbed,Accelerometer1RMS,0.0272557
+2020-03-09T14:44:17+00:00,skab-testbed,Accelerometer2RMS,0.0403729
+2020-03-09T14:44:17+00:00,skab-testbed,Current,1.17496
+2020-03-09T14:44:17+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:17+00:00,skab-testbed,Temperature,68.0112
+2020-03-09T14:44:17+00:00,skab-testbed,Thermocouple,24.5935
+2020-03-09T14:44:17+00:00,skab-testbed,Voltage,228.861
+2020-03-09T14:44:17+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:18+00:00,skab-testbed,Accelerometer1RMS,0.0271725
+2020-03-09T14:44:18+00:00,skab-testbed,Accelerometer2RMS,0.0394107
+2020-03-09T14:44:18+00:00,skab-testbed,Current,1.22071
+2020-03-09T14:44:18+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:18+00:00,skab-testbed,Temperature,67.8684
+2020-03-09T14:44:18+00:00,skab-testbed,Thermocouple,24.581
+2020-03-09T14:44:18+00:00,skab-testbed,Voltage,216.281
+2020-03-09T14:44:18+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:19+00:00,skab-testbed,Accelerometer1RMS,0.0279267999999999
+2020-03-09T14:44:19+00:00,skab-testbed,Accelerometer2RMS,0.0403966
+2020-03-09T14:44:19+00:00,skab-testbed,Current,1.10836
+2020-03-09T14:44:19+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:19+00:00,skab-testbed,Temperature,67.9307
+2020-03-09T14:44:19+00:00,skab-testbed,Thermocouple,24.581
+2020-03-09T14:44:19+00:00,skab-testbed,Voltage,227.301
+2020-03-09T14:44:19+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:20+00:00,skab-testbed,Accelerometer1RMS,0.0275716
+2020-03-09T14:44:20+00:00,skab-testbed,Accelerometer2RMS,0.0402991999999999
+2020-03-09T14:44:20+00:00,skab-testbed,Current,1.27734
+2020-03-09T14:44:20+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:20+00:00,skab-testbed,Temperature,67.854
+2020-03-09T14:44:20+00:00,skab-testbed,Thermocouple,24.5843
+2020-03-09T14:44:20+00:00,skab-testbed,Voltage,222.995
+2020-03-09T14:44:20+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:21+00:00,skab-testbed,Accelerometer1RMS,0.0277109
+2020-03-09T14:44:21+00:00,skab-testbed,Accelerometer2RMS,0.0409417
+2020-03-09T14:44:21+00:00,skab-testbed,Current,1.28415
+2020-03-09T14:44:21+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:21+00:00,skab-testbed,Temperature,67.9967
+2020-03-09T14:44:21+00:00,skab-testbed,Thermocouple,24.5843
+2020-03-09T14:44:21+00:00,skab-testbed,Voltage,239.469
+2020-03-09T14:44:21+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:22+00:00,skab-testbed,Accelerometer1RMS,0.0271354
+2020-03-09T14:44:22+00:00,skab-testbed,Accelerometer2RMS,0.04079
+2020-03-09T14:44:22+00:00,skab-testbed,Current,0.696178
+2020-03-09T14:44:22+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:22+00:00,skab-testbed,Temperature,68.0805
+2020-03-09T14:44:22+00:00,skab-testbed,Thermocouple,24.5891
+2020-03-09T14:44:22+00:00,skab-testbed,Voltage,233.229
+2020-03-09T14:44:22+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:23+00:00,skab-testbed,Accelerometer1RMS,0.0273327
+2020-03-09T14:44:23+00:00,skab-testbed,Accelerometer2RMS,0.0406121
+2020-03-09T14:44:23+00:00,skab-testbed,Current,0.6951579999999999
+2020-03-09T14:44:23+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:23+00:00,skab-testbed,Temperature,68.1842
+2020-03-09T14:44:23+00:00,skab-testbed,Thermocouple,24.589
+2020-03-09T14:44:23+00:00,skab-testbed,Voltage,246.368
+2020-03-09T14:44:23+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:24+00:00,skab-testbed,Accelerometer1RMS,0.0272270999999999
+2020-03-09T14:44:24+00:00,skab-testbed,Accelerometer2RMS,0.0407473
+2020-03-09T14:44:24+00:00,skab-testbed,Current,1.39659
+2020-03-09T14:44:24+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:24+00:00,skab-testbed,Temperature,67.946
+2020-03-09T14:44:24+00:00,skab-testbed,Thermocouple,24.5805
+2020-03-09T14:44:24+00:00,skab-testbed,Voltage,243.698
+2020-03-09T14:44:24+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:25+00:00,skab-testbed,Accelerometer1RMS,0.0271818
+2020-03-09T14:44:25+00:00,skab-testbed,Accelerometer2RMS,0.0396183
+2020-03-09T14:44:25+00:00,skab-testbed,Current,1.29105
+2020-03-09T14:44:25+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:25+00:00,skab-testbed,Temperature,68.0218
+2020-03-09T14:44:25+00:00,skab-testbed,Thermocouple,24.5775
+2020-03-09T14:44:25+00:00,skab-testbed,Voltage,237.843
+2020-03-09T14:44:25+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:26+00:00,skab-testbed,Accelerometer1RMS,0.0278888
+2020-03-09T14:44:26+00:00,skab-testbed,Accelerometer2RMS,0.041156
+2020-03-09T14:44:26+00:00,skab-testbed,Current,0.668734
+2020-03-09T14:44:26+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:26+00:00,skab-testbed,Temperature,68.0031
+2020-03-09T14:44:26+00:00,skab-testbed,Thermocouple,24.5793
+2020-03-09T14:44:26+00:00,skab-testbed,Voltage,234.151
+2020-03-09T14:44:26+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:27+00:00,skab-testbed,Accelerometer1RMS,0.0276483
+2020-03-09T14:44:27+00:00,skab-testbed,Accelerometer2RMS,0.0403323
+2020-03-09T14:44:27+00:00,skab-testbed,Current,1.01657
+2020-03-09T14:44:27+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:27+00:00,skab-testbed,Temperature,68.181
+2020-03-09T14:44:27+00:00,skab-testbed,Thermocouple,24.592
+2020-03-09T14:44:27+00:00,skab-testbed,Voltage,235.198
+2020-03-09T14:44:27+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:28+00:00,skab-testbed,Accelerometer1RMS,0.0276809
+2020-03-09T14:44:28+00:00,skab-testbed,Accelerometer2RMS,0.0409086
+2020-03-09T14:44:28+00:00,skab-testbed,Current,1.0881
+2020-03-09T14:44:28+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:28+00:00,skab-testbed,Temperature,68.0818
+2020-03-09T14:44:28+00:00,skab-testbed,Thermocouple,24.5862
+2020-03-09T14:44:28+00:00,skab-testbed,Voltage,236.469
+2020-03-09T14:44:28+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:30+00:00,skab-testbed,Accelerometer1RMS,0.0277925
+2020-03-09T14:44:30+00:00,skab-testbed,Accelerometer2RMS,0.0408194
+2020-03-09T14:44:30+00:00,skab-testbed,Current,0.6554399999999999
+2020-03-09T14:44:30+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:30+00:00,skab-testbed,Temperature,68.1172
+2020-03-09T14:44:30+00:00,skab-testbed,Thermocouple,24.5721
+2020-03-09T14:44:30+00:00,skab-testbed,Voltage,235.677
+2020-03-09T14:44:30+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:31+00:00,skab-testbed,Accelerometer1RMS,0.0276883
+2020-03-09T14:44:31+00:00,skab-testbed,Accelerometer2RMS,0.0402323
+2020-03-09T14:44:31+00:00,skab-testbed,Current,0.980505
+2020-03-09T14:44:31+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:31+00:00,skab-testbed,Temperature,68.0603
+2020-03-09T14:44:31+00:00,skab-testbed,Thermocouple,24.579
+2020-03-09T14:44:31+00:00,skab-testbed,Voltage,228.922
+2020-03-09T14:44:31+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:32+00:00,skab-testbed,Accelerometer1RMS,0.0272561
+2020-03-09T14:44:32+00:00,skab-testbed,Accelerometer2RMS,0.0402587
+2020-03-09T14:44:32+00:00,skab-testbed,Current,0.988868
+2020-03-09T14:44:32+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:32+00:00,skab-testbed,Temperature,68.2543
+2020-03-09T14:44:32+00:00,skab-testbed,Thermocouple,24.5733
+2020-03-09T14:44:32+00:00,skab-testbed,Voltage,232.625
+2020-03-09T14:44:32+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:33+00:00,skab-testbed,Accelerometer1RMS,0.027972
+2020-03-09T14:44:33+00:00,skab-testbed,Accelerometer2RMS,0.0415894
+2020-03-09T14:44:33+00:00,skab-testbed,Current,0.71277
+2020-03-09T14:44:33+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:44:33+00:00,skab-testbed,Temperature,68.0917
+2020-03-09T14:44:33+00:00,skab-testbed,Thermocouple,24.5804
+2020-03-09T14:44:33+00:00,skab-testbed,Voltage,233.419
+2020-03-09T14:44:33+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:34+00:00,skab-testbed,Accelerometer1RMS,0.0281669
+2020-03-09T14:44:34+00:00,skab-testbed,Accelerometer2RMS,0.0417156
+2020-03-09T14:44:34+00:00,skab-testbed,Current,0.913397
+2020-03-09T14:44:34+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:34+00:00,skab-testbed,Temperature,68.1529
+2020-03-09T14:44:34+00:00,skab-testbed,Thermocouple,24.5709
+2020-03-09T14:44:34+00:00,skab-testbed,Voltage,227.345
+2020-03-09T14:44:34+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:35+00:00,skab-testbed,Accelerometer1RMS,0.0280621
+2020-03-09T14:44:35+00:00,skab-testbed,Accelerometer2RMS,0.0419296
+2020-03-09T14:44:35+00:00,skab-testbed,Current,0.679846
+2020-03-09T14:44:35+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:35+00:00,skab-testbed,Temperature,68.2092
+2020-03-09T14:44:35+00:00,skab-testbed,Thermocouple,24.5786
+2020-03-09T14:44:35+00:00,skab-testbed,Voltage,230.784
+2020-03-09T14:44:35+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:36+00:00,skab-testbed,Accelerometer1RMS,0.0274903
+2020-03-09T14:44:36+00:00,skab-testbed,Accelerometer2RMS,0.0416082
+2020-03-09T14:44:36+00:00,skab-testbed,Current,1.15704
+2020-03-09T14:44:36+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:36+00:00,skab-testbed,Temperature,68.0928
+2020-03-09T14:44:36+00:00,skab-testbed,Thermocouple,24.575
+2020-03-09T14:44:36+00:00,skab-testbed,Voltage,238.417
+2020-03-09T14:44:36+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:37+00:00,skab-testbed,Accelerometer1RMS,0.0277615999999999
+2020-03-09T14:44:37+00:00,skab-testbed,Accelerometer2RMS,0.0411605
+2020-03-09T14:44:37+00:00,skab-testbed,Current,0.49625
+2020-03-09T14:44:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:37+00:00,skab-testbed,Temperature,68.0827
+2020-03-09T14:44:37+00:00,skab-testbed,Thermocouple,24.5816
+2020-03-09T14:44:37+00:00,skab-testbed,Voltage,213.756
+2020-03-09T14:44:37+00:00,skab-testbed,Volume Flow RateRMS,32.9731
+2020-03-09T14:44:38+00:00,skab-testbed,Accelerometer1RMS,0.0280156
+2020-03-09T14:44:38+00:00,skab-testbed,Accelerometer2RMS,0.0404515
+2020-03-09T14:44:38+00:00,skab-testbed,Current,0.945345
+2020-03-09T14:44:38+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:38+00:00,skab-testbed,Temperature,68.1064
+2020-03-09T14:44:38+00:00,skab-testbed,Thermocouple,24.5725
+2020-03-09T14:44:38+00:00,skab-testbed,Voltage,225.272
+2020-03-09T14:44:38+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:39+00:00,skab-testbed,Accelerometer1RMS,0.0276623
+2020-03-09T14:44:39+00:00,skab-testbed,Accelerometer2RMS,0.040049
+2020-03-09T14:44:39+00:00,skab-testbed,Current,0.8690899999999999
+2020-03-09T14:44:39+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:39+00:00,skab-testbed,Temperature,68.1846
+2020-03-09T14:44:39+00:00,skab-testbed,Thermocouple,24.5754
+2020-03-09T14:44:39+00:00,skab-testbed,Voltage,226.69
+2020-03-09T14:44:39+00:00,skab-testbed,Volume Flow RateRMS,32.0278
+2020-03-09T14:44:40+00:00,skab-testbed,Accelerometer1RMS,0.028029
+2020-03-09T14:44:40+00:00,skab-testbed,Accelerometer2RMS,0.0410233
+2020-03-09T14:44:40+00:00,skab-testbed,Current,0.6087640000000001
+2020-03-09T14:44:40+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:40+00:00,skab-testbed,Temperature,68.008
+2020-03-09T14:44:40+00:00,skab-testbed,Thermocouple,24.5709
+2020-03-09T14:44:40+00:00,skab-testbed,Voltage,229.235
+2020-03-09T14:44:40+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:41+00:00,skab-testbed,Accelerometer1RMS,0.0279539
+2020-03-09T14:44:41+00:00,skab-testbed,Accelerometer2RMS,0.0410801
+2020-03-09T14:44:41+00:00,skab-testbed,Current,0.521702
+2020-03-09T14:44:41+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:41+00:00,skab-testbed,Temperature,68.0914
+2020-03-09T14:44:41+00:00,skab-testbed,Thermocouple,24.5743
+2020-03-09T14:44:41+00:00,skab-testbed,Voltage,217.118
+2020-03-09T14:44:41+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:42+00:00,skab-testbed,Accelerometer1RMS,0.0280140999999999
+2020-03-09T14:44:42+00:00,skab-testbed,Accelerometer2RMS,0.0408298
+2020-03-09T14:44:42+00:00,skab-testbed,Current,0.938224
+2020-03-09T14:44:42+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:42+00:00,skab-testbed,Temperature,68.1022
+2020-03-09T14:44:42+00:00,skab-testbed,Thermocouple,24.5724
+2020-03-09T14:44:42+00:00,skab-testbed,Voltage,234.941
+2020-03-09T14:44:42+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:43+00:00,skab-testbed,Accelerometer1RMS,0.0276426
+2020-03-09T14:44:43+00:00,skab-testbed,Accelerometer2RMS,0.0409605
+2020-03-09T14:44:43+00:00,skab-testbed,Current,1.04448
+2020-03-09T14:44:43+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:43+00:00,skab-testbed,Temperature,68.1767
+2020-03-09T14:44:43+00:00,skab-testbed,Thermocouple,24.5728
+2020-03-09T14:44:43+00:00,skab-testbed,Voltage,248.536
+2020-03-09T14:44:43+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:44+00:00,skab-testbed,Accelerometer1RMS,0.0277165
+2020-03-09T14:44:44+00:00,skab-testbed,Accelerometer2RMS,0.0399285
+2020-03-09T14:44:44+00:00,skab-testbed,Current,0.457373
+2020-03-09T14:44:44+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:44+00:00,skab-testbed,Temperature,68.176
+2020-03-09T14:44:44+00:00,skab-testbed,Thermocouple,24.5758
+2020-03-09T14:44:44+00:00,skab-testbed,Voltage,227.908
+2020-03-09T14:44:44+00:00,skab-testbed,Volume Flow RateRMS,33.0
+2020-03-09T14:44:45+00:00,skab-testbed,Accelerometer1RMS,0.0283193
+2020-03-09T14:44:45+00:00,skab-testbed,Accelerometer2RMS,0.0406394999999999
+2020-03-09T14:44:45+00:00,skab-testbed,Current,0.933374
+2020-03-09T14:44:45+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:45+00:00,skab-testbed,Temperature,68.1007
+2020-03-09T14:44:45+00:00,skab-testbed,Thermocouple,24.5755
+2020-03-09T14:44:45+00:00,skab-testbed,Voltage,239.277
+2020-03-09T14:44:45+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:46+00:00,skab-testbed,Accelerometer1RMS,0.0279313
+2020-03-09T14:44:46+00:00,skab-testbed,Accelerometer2RMS,0.0399644
+2020-03-09T14:44:46+00:00,skab-testbed,Current,1.00006
+2020-03-09T14:44:46+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:46+00:00,skab-testbed,Temperature,68.3597
+2020-03-09T14:44:46+00:00,skab-testbed,Thermocouple,24.5639
+2020-03-09T14:44:46+00:00,skab-testbed,Voltage,225.423
+2020-03-09T14:44:46+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:47+00:00,skab-testbed,Accelerometer1RMS,0.0278635
+2020-03-09T14:44:47+00:00,skab-testbed,Accelerometer2RMS,0.0405293
+2020-03-09T14:44:47+00:00,skab-testbed,Current,0.993718
+2020-03-09T14:44:47+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:47+00:00,skab-testbed,Temperature,68.0773
+2020-03-09T14:44:47+00:00,skab-testbed,Thermocouple,24.5662
+2020-03-09T14:44:47+00:00,skab-testbed,Voltage,221.21
+2020-03-09T14:44:47+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:48+00:00,skab-testbed,Accelerometer1RMS,0.0272411
+2020-03-09T14:44:48+00:00,skab-testbed,Accelerometer2RMS,0.040035
+2020-03-09T14:44:48+00:00,skab-testbed,Current,0.783536
+2020-03-09T14:44:48+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:48+00:00,skab-testbed,Temperature,68.0716
+2020-03-09T14:44:48+00:00,skab-testbed,Thermocouple,24.5726
+2020-03-09T14:44:48+00:00,skab-testbed,Voltage,227.843
+2020-03-09T14:44:48+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:44:50+00:00,skab-testbed,Accelerometer1RMS,0.0269754
+2020-03-09T14:44:50+00:00,skab-testbed,Accelerometer2RMS,0.0400544
+2020-03-09T14:44:50+00:00,skab-testbed,Current,0.5760890000000001
+2020-03-09T14:44:50+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:44:50+00:00,skab-testbed,Temperature,68.1283
+2020-03-09T14:44:50+00:00,skab-testbed,Thermocouple,24.5757
+2020-03-09T14:44:50+00:00,skab-testbed,Voltage,207.328
+2020-03-09T14:44:50+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:51+00:00,skab-testbed,Accelerometer1RMS,0.0271782
+2020-03-09T14:44:51+00:00,skab-testbed,Accelerometer2RMS,0.0396988
+2020-03-09T14:44:51+00:00,skab-testbed,Current,0.523472
+2020-03-09T14:44:51+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:51+00:00,skab-testbed,Temperature,68.2121
+2020-03-09T14:44:51+00:00,skab-testbed,Thermocouple,24.5713
+2020-03-09T14:44:51+00:00,skab-testbed,Voltage,205.738
+2020-03-09T14:44:51+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:52+00:00,skab-testbed,Accelerometer1RMS,0.0275235
+2020-03-09T14:44:52+00:00,skab-testbed,Accelerometer2RMS,0.0408751
+2020-03-09T14:44:52+00:00,skab-testbed,Current,0.563421
+2020-03-09T14:44:52+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:52+00:00,skab-testbed,Temperature,68.108
+2020-03-09T14:44:52+00:00,skab-testbed,Thermocouple,24.5761
+2020-03-09T14:44:52+00:00,skab-testbed,Voltage,228.13
+2020-03-09T14:44:52+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:53+00:00,skab-testbed,Accelerometer1RMS,0.0275002
+2020-03-09T14:44:53+00:00,skab-testbed,Accelerometer2RMS,0.0405861
+2020-03-09T14:44:53+00:00,skab-testbed,Current,0.560135
+2020-03-09T14:44:53+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:53+00:00,skab-testbed,Temperature,68.2002
+2020-03-09T14:44:53+00:00,skab-testbed,Thermocouple,24.5717
+2020-03-09T14:44:53+00:00,skab-testbed,Voltage,225.933
+2020-03-09T14:44:53+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:54+00:00,skab-testbed,Accelerometer1RMS,0.0275786
+2020-03-09T14:44:54+00:00,skab-testbed,Accelerometer2RMS,0.0413077
+2020-03-09T14:44:54+00:00,skab-testbed,Current,0.985036
+2020-03-09T14:44:54+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:54+00:00,skab-testbed,Temperature,68.084
+2020-03-09T14:44:54+00:00,skab-testbed,Thermocouple,24.565
+2020-03-09T14:44:54+00:00,skab-testbed,Voltage,227.446
+2020-03-09T14:44:54+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:55+00:00,skab-testbed,Accelerometer1RMS,0.0273283
+2020-03-09T14:44:55+00:00,skab-testbed,Accelerometer2RMS,0.040879
+2020-03-09T14:44:55+00:00,skab-testbed,Current,0.686962
+2020-03-09T14:44:55+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:44:55+00:00,skab-testbed,Temperature,68.161
+2020-03-09T14:44:55+00:00,skab-testbed,Thermocouple,24.565
+2020-03-09T14:44:55+00:00,skab-testbed,Voltage,226.765
+2020-03-09T14:44:55+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:56+00:00,skab-testbed,Accelerometer1RMS,0.027582
+2020-03-09T14:44:56+00:00,skab-testbed,Accelerometer2RMS,0.0408532
+2020-03-09T14:44:56+00:00,skab-testbed,Current,0.844166
+2020-03-09T14:44:56+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:56+00:00,skab-testbed,Temperature,68.2104
+2020-03-09T14:44:56+00:00,skab-testbed,Thermocouple,24.5641
+2020-03-09T14:44:56+00:00,skab-testbed,Voltage,223.12
+2020-03-09T14:44:56+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:57+00:00,skab-testbed,Accelerometer1RMS,0.0276830999999999
+2020-03-09T14:44:57+00:00,skab-testbed,Accelerometer2RMS,0.0407851
+2020-03-09T14:44:57+00:00,skab-testbed,Current,0.971977
+2020-03-09T14:44:57+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:57+00:00,skab-testbed,Temperature,68.2327
+2020-03-09T14:44:57+00:00,skab-testbed,Thermocouple,24.5634
+2020-03-09T14:44:57+00:00,skab-testbed,Voltage,225.977
+2020-03-09T14:44:57+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:44:58+00:00,skab-testbed,Accelerometer1RMS,0.0273374
+2020-03-09T14:44:58+00:00,skab-testbed,Accelerometer2RMS,0.0399741
+2020-03-09T14:44:58+00:00,skab-testbed,Current,0.942819
+2020-03-09T14:44:58+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:44:58+00:00,skab-testbed,Temperature,68.2982
+2020-03-09T14:44:58+00:00,skab-testbed,Thermocouple,24.5634
+2020-03-09T14:44:58+00:00,skab-testbed,Voltage,242.584
+2020-03-09T14:44:58+00:00,skab-testbed,Volume Flow RateRMS,32.028
+2020-03-09T14:44:59+00:00,skab-testbed,Accelerometer1RMS,0.0280024
+2020-03-09T14:44:59+00:00,skab-testbed,Accelerometer2RMS,0.0415238
+2020-03-09T14:44:59+00:00,skab-testbed,Current,0.682127
+2020-03-09T14:44:59+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:44:59+00:00,skab-testbed,Temperature,68.1331
+2020-03-09T14:44:59+00:00,skab-testbed,Thermocouple,24.5605
+2020-03-09T14:44:59+00:00,skab-testbed,Voltage,235.806
+2020-03-09T14:44:59+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:45:00+00:00,skab-testbed,Accelerometer1RMS,0.0277254
+2020-03-09T14:45:00+00:00,skab-testbed,Accelerometer2RMS,0.0412996999999999
+2020-03-09T14:45:00+00:00,skab-testbed,Current,0.672558
+2020-03-09T14:45:00+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:00+00:00,skab-testbed,Temperature,68.169
+2020-03-09T14:45:00+00:00,skab-testbed,Thermocouple,24.5548
+2020-03-09T14:45:00+00:00,skab-testbed,Voltage,219.631
+2020-03-09T14:45:00+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:45:01+00:00,skab-testbed,Accelerometer1RMS,0.0277325999999999
+2020-03-09T14:45:01+00:00,skab-testbed,Accelerometer2RMS,0.0414292
+2020-03-09T14:45:01+00:00,skab-testbed,Current,0.725853
+2020-03-09T14:45:01+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:01+00:00,skab-testbed,Temperature,68.1793
+2020-03-09T14:45:01+00:00,skab-testbed,Thermocouple,24.5697
+2020-03-09T14:45:01+00:00,skab-testbed,Voltage,228.847
+2020-03-09T14:45:01+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:45:02+00:00,skab-testbed,Accelerometer1RMS,0.0272737
+2020-03-09T14:45:02+00:00,skab-testbed,Accelerometer2RMS,0.0414125
+2020-03-09T14:45:02+00:00,skab-testbed,Current,0.418008
+2020-03-09T14:45:02+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:02+00:00,skab-testbed,Temperature,68.2368
+2020-03-09T14:45:02+00:00,skab-testbed,Thermocouple,24.5611
+2020-03-09T14:45:02+00:00,skab-testbed,Voltage,214.106
+2020-03-09T14:45:02+00:00,skab-testbed,Volume Flow RateRMS,31.9728
+2020-03-09T14:45:03+00:00,skab-testbed,Accelerometer1RMS,0.027522
+2020-03-09T14:45:03+00:00,skab-testbed,Accelerometer2RMS,0.0412841
+2020-03-09T14:45:03+00:00,skab-testbed,Current,1.2613299999999998
+2020-03-09T14:45:03+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:45:03+00:00,skab-testbed,Temperature,68.3929
+2020-03-09T14:45:03+00:00,skab-testbed,Thermocouple,24.5587
+2020-03-09T14:45:03+00:00,skab-testbed,Voltage,235.24
+2020-03-09T14:45:03+00:00,skab-testbed,Volume Flow RateRMS,31.0569
+2020-03-09T14:45:04+00:00,skab-testbed,Accelerometer1RMS,0.0276438
+2020-03-09T14:45:04+00:00,skab-testbed,Accelerometer2RMS,0.0406879
+2020-03-09T14:45:04+00:00,skab-testbed,Current,0.625156
+2020-03-09T14:45:04+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:04+00:00,skab-testbed,Temperature,68.4774
+2020-03-09T14:45:04+00:00,skab-testbed,Thermocouple,24.5634
+2020-03-09T14:45:04+00:00,skab-testbed,Voltage,222.864
+2020-03-09T14:45:04+00:00,skab-testbed,Volume Flow RateRMS,32.9728
+2020-03-09T14:45:05+00:00,skab-testbed,Accelerometer1RMS,0.0277499
+2020-03-09T14:45:05+00:00,skab-testbed,Accelerometer2RMS,0.0399574
+2020-03-09T14:45:05+00:00,skab-testbed,Current,0.903739
+2020-03-09T14:45:05+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:05+00:00,skab-testbed,Temperature,68.3198
+2020-03-09T14:45:05+00:00,skab-testbed,Thermocouple,24.5709
+2020-03-09T14:45:05+00:00,skab-testbed,Voltage,232.035
+2020-03-09T14:45:05+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:45:06+00:00,skab-testbed,Accelerometer1RMS,0.0283387999999999
+2020-03-09T14:45:06+00:00,skab-testbed,Accelerometer2RMS,0.0411107
+2020-03-09T14:45:06+00:00,skab-testbed,Current,0.9144
+2020-03-09T14:45:06+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:45:06+00:00,skab-testbed,Temperature,68.1725
+2020-03-09T14:45:06+00:00,skab-testbed,Thermocouple,24.5667
+2020-03-09T14:45:06+00:00,skab-testbed,Voltage,239.735
+2020-03-09T14:45:06+00:00,skab-testbed,Volume Flow RateRMS,31.9728
+2020-03-09T14:45:07+00:00,skab-testbed,Accelerometer1RMS,0.0275442
+2020-03-09T14:45:07+00:00,skab-testbed,Accelerometer2RMS,0.0414579
+2020-03-09T14:45:07+00:00,skab-testbed,Current,0.720936
+2020-03-09T14:45:07+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:07+00:00,skab-testbed,Temperature,68.426
+2020-03-09T14:45:07+00:00,skab-testbed,Thermocouple,24.5698
+2020-03-09T14:45:07+00:00,skab-testbed,Voltage,233.16
+2020-03-09T14:45:07+00:00,skab-testbed,Volume Flow RateRMS,31.9728
+2020-03-09T14:45:09+00:00,skab-testbed,Accelerometer1RMS,0.0275201999999999
+2020-03-09T14:45:09+00:00,skab-testbed,Accelerometer2RMS,0.0415683
+2020-03-09T14:45:09+00:00,skab-testbed,Current,1.08264
+2020-03-09T14:45:09+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:45:09+00:00,skab-testbed,Temperature,68.4101
+2020-03-09T14:45:09+00:00,skab-testbed,Thermocouple,24.5581
+2020-03-09T14:45:09+00:00,skab-testbed,Voltage,231.536
+2020-03-09T14:45:09+00:00,skab-testbed,Volume Flow RateRMS,31.028
+2020-03-09T14:45:10+00:00,skab-testbed,Accelerometer1RMS,0.0276192
+2020-03-09T14:45:10+00:00,skab-testbed,Accelerometer2RMS,0.0411949
+2020-03-09T14:45:10+00:00,skab-testbed,Current,1.06312
+2020-03-09T14:45:10+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:45:10+00:00,skab-testbed,Temperature,68.3167
+2020-03-09T14:45:10+00:00,skab-testbed,Thermocouple,24.56
+2020-03-09T14:45:10+00:00,skab-testbed,Voltage,236.603
+2020-03-09T14:45:10+00:00,skab-testbed,Volume Flow RateRMS,32.0
+2020-03-09T14:45:11+00:00,skab-testbed,Accelerometer1RMS,0.0277308
+2020-03-09T14:45:11+00:00,skab-testbed,Accelerometer2RMS,0.0409327
+2020-03-09T14:45:11+00:00,skab-testbed,Current,1.0795
+2020-03-09T14:45:11+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:11+00:00,skab-testbed,Temperature,68.2991
+2020-03-09T14:45:11+00:00,skab-testbed,Thermocouple,24.5611
+2020-03-09T14:45:11+00:00,skab-testbed,Voltage,227.308
+2020-03-09T14:45:11+00:00,skab-testbed,Volume Flow RateRMS,31.9728
+2020-03-09T14:45:12+00:00,skab-testbed,Accelerometer1RMS,0.0275411
+2020-03-09T14:45:12+00:00,skab-testbed,Accelerometer2RMS,0.0412209
+2020-03-09T14:45:12+00:00,skab-testbed,Current,1.19647
+2020-03-09T14:45:12+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:12+00:00,skab-testbed,Temperature,68.4236
+2020-03-09T14:45:12+00:00,skab-testbed,Thermocouple,24.5716
+2020-03-09T14:45:12+00:00,skab-testbed,Voltage,223.698
+2020-03-09T14:45:12+00:00,skab-testbed,Volume Flow RateRMS,31.0
+2020-03-09T14:45:13+00:00,skab-testbed,Accelerometer1RMS,0.0277928
+2020-03-09T14:45:13+00:00,skab-testbed,Accelerometer2RMS,0.0408485
+2020-03-09T14:45:13+00:00,skab-testbed,Current,1.12481
+2020-03-09T14:45:13+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:13+00:00,skab-testbed,Temperature,68.35
+2020-03-09T14:45:13+00:00,skab-testbed,Thermocouple,24.554
+2020-03-09T14:45:13+00:00,skab-testbed,Voltage,241.168
+2020-03-09T14:45:13+00:00,skab-testbed,Volume Flow RateRMS,31.0
+2020-03-09T14:45:14+00:00,skab-testbed,Accelerometer1RMS,0.0276689
+2020-03-09T14:45:14+00:00,skab-testbed,Accelerometer2RMS,0.0413788999999999
+2020-03-09T14:45:14+00:00,skab-testbed,Current,1.11574
+2020-03-09T14:45:14+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:14+00:00,skab-testbed,Temperature,68.3224
+2020-03-09T14:45:14+00:00,skab-testbed,Thermocouple,24.5504
+2020-03-09T14:45:14+00:00,skab-testbed,Voltage,240.496
+2020-03-09T14:45:14+00:00,skab-testbed,Volume Flow RateRMS,31.0
+2020-03-09T14:45:15+00:00,skab-testbed,Accelerometer1RMS,0.0277034
+2020-03-09T14:45:15+00:00,skab-testbed,Accelerometer2RMS,0.0411935
+2020-03-09T14:45:15+00:00,skab-testbed,Current,0.92933
+2020-03-09T14:45:15+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:15+00:00,skab-testbed,Temperature,68.2371
+2020-03-09T14:45:15+00:00,skab-testbed,Thermocouple,24.5587
+2020-03-09T14:45:15+00:00,skab-testbed,Voltage,229.64
+2020-03-09T14:45:15+00:00,skab-testbed,Volume Flow RateRMS,31.0
+2020-03-09T14:45:16+00:00,skab-testbed,Accelerometer1RMS,0.0274739
+2020-03-09T14:45:16+00:00,skab-testbed,Accelerometer2RMS,0.040588
+2020-03-09T14:45:16+00:00,skab-testbed,Current,1.48044
+2020-03-09T14:45:16+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:16+00:00,skab-testbed,Temperature,68.3228
+2020-03-09T14:45:16+00:00,skab-testbed,Thermocouple,24.5608
+2020-03-09T14:45:16+00:00,skab-testbed,Voltage,251.191
+2020-03-09T14:45:16+00:00,skab-testbed,Volume Flow RateRMS,31.0
+2020-03-09T14:45:17+00:00,skab-testbed,Accelerometer1RMS,0.0274575999999999
+2020-03-09T14:45:17+00:00,skab-testbed,Accelerometer2RMS,0.0402343
+2020-03-09T14:45:17+00:00,skab-testbed,Current,0.962378
+2020-03-09T14:45:17+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:45:17+00:00,skab-testbed,Temperature,68.3746
+2020-03-09T14:45:17+00:00,skab-testbed,Thermocouple,24.5572
+2020-03-09T14:45:17+00:00,skab-testbed,Voltage,244.421
+2020-03-09T14:45:17+00:00,skab-testbed,Volume Flow RateRMS,30.9728
+2020-03-09T14:45:18+00:00,skab-testbed,Accelerometer1RMS,0.028007
+2020-03-09T14:45:18+00:00,skab-testbed,Accelerometer2RMS,0.0404662
+2020-03-09T14:45:18+00:00,skab-testbed,Current,1.17001
+2020-03-09T14:45:18+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:18+00:00,skab-testbed,Temperature,68.4646
+2020-03-09T14:45:18+00:00,skab-testbed,Thermocouple,24.5564
+2020-03-09T14:45:18+00:00,skab-testbed,Voltage,226.488
+2020-03-09T14:45:18+00:00,skab-testbed,Volume Flow RateRMS,30.028
+2020-03-09T14:45:19+00:00,skab-testbed,Accelerometer1RMS,0.0272364
+2020-03-09T14:45:19+00:00,skab-testbed,Accelerometer2RMS,0.0404779
+2020-03-09T14:45:19+00:00,skab-testbed,Current,0.711353
+2020-03-09T14:45:19+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:19+00:00,skab-testbed,Temperature,68.4242
+2020-03-09T14:45:19+00:00,skab-testbed,Thermocouple,24.5597
+2020-03-09T14:45:19+00:00,skab-testbed,Voltage,220.36900000000003
+2020-03-09T14:45:19+00:00,skab-testbed,Volume Flow RateRMS,30.9728
+2020-03-09T14:45:20+00:00,skab-testbed,Accelerometer1RMS,0.0282221
+2020-03-09T14:45:20+00:00,skab-testbed,Accelerometer2RMS,0.0411376999999999
+2020-03-09T14:45:20+00:00,skab-testbed,Current,1.33897
+2020-03-09T14:45:20+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:20+00:00,skab-testbed,Temperature,68.1828
+2020-03-09T14:45:20+00:00,skab-testbed,Thermocouple,24.5602
+2020-03-09T14:45:20+00:00,skab-testbed,Voltage,240.601
+2020-03-09T14:45:20+00:00,skab-testbed,Volume Flow RateRMS,30.0
+2020-03-09T14:45:21+00:00,skab-testbed,Accelerometer1RMS,0.0280904999999999
+2020-03-09T14:45:21+00:00,skab-testbed,Accelerometer2RMS,0.0413261
+2020-03-09T14:45:21+00:00,skab-testbed,Current,1.24653
+2020-03-09T14:45:21+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:21+00:00,skab-testbed,Temperature,68.4205
+2020-03-09T14:45:21+00:00,skab-testbed,Thermocouple,24.5602
+2020-03-09T14:45:21+00:00,skab-testbed,Voltage,237.264
+2020-03-09T14:45:21+00:00,skab-testbed,Volume Flow RateRMS,30.0
+2020-03-09T14:45:22+00:00,skab-testbed,Accelerometer1RMS,0.0281572
+2020-03-09T14:45:22+00:00,skab-testbed,Accelerometer2RMS,0.0418156
+2020-03-09T14:45:22+00:00,skab-testbed,Current,1.10671
+2020-03-09T14:45:22+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:22+00:00,skab-testbed,Temperature,68.32300000000001
+2020-03-09T14:45:22+00:00,skab-testbed,Thermocouple,24.5583
+2020-03-09T14:45:22+00:00,skab-testbed,Voltage,244.767
+2020-03-09T14:45:22+00:00,skab-testbed,Volume Flow RateRMS,30.0
+2020-03-09T14:45:23+00:00,skab-testbed,Accelerometer1RMS,0.0278845
+2020-03-09T14:45:23+00:00,skab-testbed,Accelerometer2RMS,0.0417584
+2020-03-09T14:45:23+00:00,skab-testbed,Current,1.15955
+2020-03-09T14:45:23+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:23+00:00,skab-testbed,Temperature,68.4239
+2020-03-09T14:45:23+00:00,skab-testbed,Thermocouple,24.5491
+2020-03-09T14:45:23+00:00,skab-testbed,Voltage,239.52
+2020-03-09T14:45:23+00:00,skab-testbed,Volume Flow RateRMS,30.0
+2020-03-09T14:45:24+00:00,skab-testbed,Accelerometer1RMS,0.0275502
+2020-03-09T14:45:24+00:00,skab-testbed,Accelerometer2RMS,0.0412381999999999
+2020-03-09T14:45:24+00:00,skab-testbed,Current,1.23185
+2020-03-09T14:45:24+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:24+00:00,skab-testbed,Temperature,68.4106
+2020-03-09T14:45:24+00:00,skab-testbed,Thermocouple,24.5558
+2020-03-09T14:45:24+00:00,skab-testbed,Voltage,227.203
+2020-03-09T14:45:24+00:00,skab-testbed,Volume Flow RateRMS,29.9729
+2020-03-09T14:45:25+00:00,skab-testbed,Accelerometer1RMS,0.0278575
+2020-03-09T14:45:25+00:00,skab-testbed,Accelerometer2RMS,0.0410483
+2020-03-09T14:45:25+00:00,skab-testbed,Current,1.17198
+2020-03-09T14:45:25+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:25+00:00,skab-testbed,Temperature,68.3503
+2020-03-09T14:45:25+00:00,skab-testbed,Thermocouple,24.5598
+2020-03-09T14:45:25+00:00,skab-testbed,Voltage,230.178
+2020-03-09T14:45:25+00:00,skab-testbed,Volume Flow RateRMS,29.028
+2020-03-09T14:45:26+00:00,skab-testbed,Accelerometer1RMS,0.0276591
+2020-03-09T14:45:26+00:00,skab-testbed,Accelerometer2RMS,0.0404673
+2020-03-09T14:45:26+00:00,skab-testbed,Current,1.31336
+2020-03-09T14:45:26+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:26+00:00,skab-testbed,Temperature,68.4049
+2020-03-09T14:45:26+00:00,skab-testbed,Thermocouple,24.5627
+2020-03-09T14:45:26+00:00,skab-testbed,Voltage,242.17
+2020-03-09T14:45:26+00:00,skab-testbed,Volume Flow RateRMS,29.9729
+2020-03-09T14:45:27+00:00,skab-testbed,Accelerometer1RMS,0.0278447
+2020-03-09T14:45:27+00:00,skab-testbed,Accelerometer2RMS,0.0411915
+2020-03-09T14:45:27+00:00,skab-testbed,Current,1.23111
+2020-03-09T14:45:27+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:27+00:00,skab-testbed,Temperature,68.4831
+2020-03-09T14:45:27+00:00,skab-testbed,Thermocouple,24.5645
+2020-03-09T14:45:27+00:00,skab-testbed,Voltage,230.333
+2020-03-09T14:45:27+00:00,skab-testbed,Volume Flow RateRMS,29.0
+2020-03-09T14:45:29+00:00,skab-testbed,Accelerometer1RMS,0.0280817
+2020-03-09T14:45:29+00:00,skab-testbed,Accelerometer2RMS,0.0415909
+2020-03-09T14:45:29+00:00,skab-testbed,Current,1.11097
+2020-03-09T14:45:29+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:29+00:00,skab-testbed,Temperature,68.3742
+2020-03-09T14:45:29+00:00,skab-testbed,Thermocouple,24.5579
+2020-03-09T14:45:29+00:00,skab-testbed,Voltage,214.401
+2020-03-09T14:45:29+00:00,skab-testbed,Volume Flow RateRMS,28.9729
+2020-03-09T14:45:30+00:00,skab-testbed,Accelerometer1RMS,0.0275115999999999
+2020-03-09T14:45:30+00:00,skab-testbed,Accelerometer2RMS,0.0412084999999999
+2020-03-09T14:45:30+00:00,skab-testbed,Current,1.18153
+2020-03-09T14:45:30+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:30+00:00,skab-testbed,Temperature,68.3754
+2020-03-09T14:45:30+00:00,skab-testbed,Thermocouple,24.5592
+2020-03-09T14:45:30+00:00,skab-testbed,Voltage,226.685
+2020-03-09T14:45:30+00:00,skab-testbed,Volume Flow RateRMS,28.0281
+2020-03-09T14:45:31+00:00,skab-testbed,Accelerometer1RMS,0.0270188
+2020-03-09T14:45:31+00:00,skab-testbed,Accelerometer2RMS,0.0402902
+2020-03-09T14:45:31+00:00,skab-testbed,Current,0.876793
+2020-03-09T14:45:31+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:31+00:00,skab-testbed,Temperature,68.322
+2020-03-09T14:45:31+00:00,skab-testbed,Thermocouple,24.5553
+2020-03-09T14:45:31+00:00,skab-testbed,Voltage,207.003
+2020-03-09T14:45:31+00:00,skab-testbed,Volume Flow RateRMS,28.9729
+2020-03-09T14:45:32+00:00,skab-testbed,Accelerometer1RMS,0.027435
+2020-03-09T14:45:32+00:00,skab-testbed,Accelerometer2RMS,0.0399801999999999
+2020-03-09T14:45:32+00:00,skab-testbed,Current,1.23724
+2020-03-09T14:45:32+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:45:32+00:00,skab-testbed,Temperature,68.319
+2020-03-09T14:45:32+00:00,skab-testbed,Thermocouple,24.5456
+2020-03-09T14:45:32+00:00,skab-testbed,Voltage,225.099
+2020-03-09T14:45:32+00:00,skab-testbed,Volume Flow RateRMS,28.0
+2020-03-09T14:45:33+00:00,skab-testbed,Accelerometer1RMS,0.0280019
+2020-03-09T14:45:33+00:00,skab-testbed,Accelerometer2RMS,0.039855
+2020-03-09T14:45:33+00:00,skab-testbed,Current,1.3459
+2020-03-09T14:45:33+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:33+00:00,skab-testbed,Temperature,68.453
+2020-03-09T14:45:33+00:00,skab-testbed,Thermocouple,24.5609
+2020-03-09T14:45:33+00:00,skab-testbed,Voltage,236.961
+2020-03-09T14:45:33+00:00,skab-testbed,Volume Flow RateRMS,27.9467
+2020-03-09T14:45:34+00:00,skab-testbed,Accelerometer1RMS,0.028151
+2020-03-09T14:45:34+00:00,skab-testbed,Accelerometer2RMS,0.0408589
+2020-03-09T14:45:34+00:00,skab-testbed,Current,1.35236
+2020-03-09T14:45:34+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:34+00:00,skab-testbed,Temperature,68.3781
+2020-03-09T14:45:34+00:00,skab-testbed,Thermocouple,24.5493
+2020-03-09T14:45:34+00:00,skab-testbed,Voltage,241.736
+2020-03-09T14:45:34+00:00,skab-testbed,Volume Flow RateRMS,26.0281
+2020-03-09T14:45:35+00:00,skab-testbed,Accelerometer1RMS,0.0276539
+2020-03-09T14:45:35+00:00,skab-testbed,Accelerometer2RMS,0.0404168
+2020-03-09T14:45:35+00:00,skab-testbed,Current,1.33292
+2020-03-09T14:45:35+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:35+00:00,skab-testbed,Temperature,68.3436
+2020-03-09T14:45:35+00:00,skab-testbed,Thermocouple,24.5626
+2020-03-09T14:45:35+00:00,skab-testbed,Voltage,253.268
+2020-03-09T14:45:35+00:00,skab-testbed,Volume Flow RateRMS,27.0
+2020-03-09T14:45:36+00:00,skab-testbed,Accelerometer1RMS,0.0287274999999999
+2020-03-09T14:45:36+00:00,skab-testbed,Accelerometer2RMS,0.0417941
+2020-03-09T14:45:36+00:00,skab-testbed,Current,1.2179799999999998
+2020-03-09T14:45:36+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:36+00:00,skab-testbed,Temperature,68.3889
+2020-03-09T14:45:36+00:00,skab-testbed,Thermocouple,24.5448
+2020-03-09T14:45:36+00:00,skab-testbed,Voltage,231.598
+2020-03-09T14:45:36+00:00,skab-testbed,Volume Flow RateRMS,26.9729
+2020-03-09T14:45:37+00:00,skab-testbed,Accelerometer1RMS,0.0279864
+2020-03-09T14:45:37+00:00,skab-testbed,Accelerometer2RMS,0.0406066999999999
+2020-03-09T14:45:37+00:00,skab-testbed,Current,1.10775
+2020-03-09T14:45:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:37+00:00,skab-testbed,Temperature,68.2249
+2020-03-09T14:45:37+00:00,skab-testbed,Thermocouple,24.5516
+2020-03-09T14:45:37+00:00,skab-testbed,Voltage,221.986
+2020-03-09T14:45:37+00:00,skab-testbed,Volume Flow RateRMS,25.9729
+2020-03-09T14:45:38+00:00,skab-testbed,Accelerometer1RMS,0.0276827
+2020-03-09T14:45:38+00:00,skab-testbed,Accelerometer2RMS,0.0406634
+2020-03-09T14:45:38+00:00,skab-testbed,Current,1.3775700000000002
+2020-03-09T14:45:38+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:38+00:00,skab-testbed,Temperature,68.309
+2020-03-09T14:45:38+00:00,skab-testbed,Thermocouple,24.5425
+2020-03-09T14:45:38+00:00,skab-testbed,Voltage,242.173
+2020-03-09T14:45:38+00:00,skab-testbed,Volume Flow RateRMS,24.9729
+2020-03-09T14:45:39+00:00,skab-testbed,Accelerometer1RMS,0.0281199
+2020-03-09T14:45:39+00:00,skab-testbed,Accelerometer2RMS,0.040164
+2020-03-09T14:45:39+00:00,skab-testbed,Current,1.28243
+2020-03-09T14:45:39+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:39+00:00,skab-testbed,Temperature,68.2829
+2020-03-09T14:45:39+00:00,skab-testbed,Thermocouple,24.5551
+2020-03-09T14:45:39+00:00,skab-testbed,Voltage,232.105
+2020-03-09T14:45:39+00:00,skab-testbed,Volume Flow RateRMS,24.0281
+2020-03-09T14:45:40+00:00,skab-testbed,Accelerometer1RMS,0.0282709999999999
+2020-03-09T14:45:40+00:00,skab-testbed,Accelerometer2RMS,0.0414085
+2020-03-09T14:45:40+00:00,skab-testbed,Current,1.38752
+2020-03-09T14:45:40+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:40+00:00,skab-testbed,Temperature,68.476
+2020-03-09T14:45:40+00:00,skab-testbed,Thermocouple,24.554
+2020-03-09T14:45:40+00:00,skab-testbed,Voltage,241.278
+2020-03-09T14:45:40+00:00,skab-testbed,Volume Flow RateRMS,24.947
+2020-03-09T14:45:41+00:00,skab-testbed,Accelerometer1RMS,0.0279279999999999
+2020-03-09T14:45:41+00:00,skab-testbed,Accelerometer2RMS,0.0411973
+2020-03-09T14:45:41+00:00,skab-testbed,Current,1.26132
+2020-03-09T14:45:41+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:41+00:00,skab-testbed,Temperature,67.9726
+2020-03-09T14:45:41+00:00,skab-testbed,Thermocouple,24.5533
+2020-03-09T14:45:41+00:00,skab-testbed,Voltage,230.928
+2020-03-09T14:45:41+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:45:42+00:00,skab-testbed,Accelerometer1RMS,0.0276202999999999
+2020-03-09T14:45:42+00:00,skab-testbed,Accelerometer2RMS,0.0394714
+2020-03-09T14:45:42+00:00,skab-testbed,Current,1.20924
+2020-03-09T14:45:42+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:42+00:00,skab-testbed,Temperature,68.5374
+2020-03-09T14:45:42+00:00,skab-testbed,Thermocouple,24.5561
+2020-03-09T14:45:42+00:00,skab-testbed,Voltage,241.292
+2020-03-09T14:45:42+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:43+00:00,skab-testbed,Accelerometer1RMS,0.0281616
+2020-03-09T14:45:43+00:00,skab-testbed,Accelerometer2RMS,0.041161
+2020-03-09T14:45:43+00:00,skab-testbed,Current,1.30847
+2020-03-09T14:45:43+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:43+00:00,skab-testbed,Temperature,68.3295
+2020-03-09T14:45:43+00:00,skab-testbed,Thermocouple,24.5463
+2020-03-09T14:45:43+00:00,skab-testbed,Voltage,242.055
+2020-03-09T14:45:43+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:45:44+00:00,skab-testbed,Accelerometer1RMS,0.0278319
+2020-03-09T14:45:44+00:00,skab-testbed,Accelerometer2RMS,0.0407913
+2020-03-09T14:45:44+00:00,skab-testbed,Current,1.36818
+2020-03-09T14:45:44+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:44+00:00,skab-testbed,Temperature,68.185
+2020-03-09T14:45:44+00:00,skab-testbed,Thermocouple,24.5548
+2020-03-09T14:45:44+00:00,skab-testbed,Voltage,236.979
+2020-03-09T14:45:44+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:45:45+00:00,skab-testbed,Accelerometer1RMS,0.0274249
+2020-03-09T14:45:45+00:00,skab-testbed,Accelerometer2RMS,0.0399731
+2020-03-09T14:45:45+00:00,skab-testbed,Current,0.73958
+2020-03-09T14:45:45+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:45+00:00,skab-testbed,Temperature,68.1431
+2020-03-09T14:45:45+00:00,skab-testbed,Thermocouple,24.5571
+2020-03-09T14:45:45+00:00,skab-testbed,Voltage,232.1
+2020-03-09T14:45:45+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:46+00:00,skab-testbed,Accelerometer1RMS,0.0277387999999999
+2020-03-09T14:45:46+00:00,skab-testbed,Accelerometer2RMS,0.0393889
+2020-03-09T14:45:46+00:00,skab-testbed,Current,1.06556
+2020-03-09T14:45:46+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:46+00:00,skab-testbed,Temperature,68.1317
+2020-03-09T14:45:46+00:00,skab-testbed,Thermocouple,24.5417
+2020-03-09T14:45:46+00:00,skab-testbed,Voltage,234.916
+2020-03-09T14:45:46+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:47+00:00,skab-testbed,Accelerometer1RMS,0.0281647999999999
+2020-03-09T14:45:47+00:00,skab-testbed,Accelerometer2RMS,0.0413484
+2020-03-09T14:45:47+00:00,skab-testbed,Current,1.15418
+2020-03-09T14:45:47+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:47+00:00,skab-testbed,Temperature,68.3215
+2020-03-09T14:45:47+00:00,skab-testbed,Thermocouple,24.5428
+2020-03-09T14:45:47+00:00,skab-testbed,Voltage,221.663
+2020-03-09T14:45:47+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:45:48+00:00,skab-testbed,Accelerometer1RMS,0.0276749
+2020-03-09T14:45:48+00:00,skab-testbed,Accelerometer2RMS,0.0394618
+2020-03-09T14:45:48+00:00,skab-testbed,Current,1.03694
+2020-03-09T14:45:48+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:48+00:00,skab-testbed,Temperature,68.0533
+2020-03-09T14:45:48+00:00,skab-testbed,Thermocouple,24.5428
+2020-03-09T14:45:48+00:00,skab-testbed,Voltage,236.87
+2020-03-09T14:45:48+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:50+00:00,skab-testbed,Accelerometer1RMS,0.0278321
+2020-03-09T14:45:50+00:00,skab-testbed,Accelerometer2RMS,0.0398999
+2020-03-09T14:45:50+00:00,skab-testbed,Current,0.769406
+2020-03-09T14:45:50+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:50+00:00,skab-testbed,Temperature,68.1648
+2020-03-09T14:45:50+00:00,skab-testbed,Thermocouple,24.5438
+2020-03-09T14:45:50+00:00,skab-testbed,Voltage,236.526
+2020-03-09T14:45:50+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:45:51+00:00,skab-testbed,Accelerometer1RMS,0.0280388
+2020-03-09T14:45:51+00:00,skab-testbed,Accelerometer2RMS,0.0409964
+2020-03-09T14:45:51+00:00,skab-testbed,Current,1.05092
+2020-03-09T14:45:51+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:51+00:00,skab-testbed,Temperature,67.9771
+2020-03-09T14:45:51+00:00,skab-testbed,Thermocouple,24.5462
+2020-03-09T14:45:51+00:00,skab-testbed,Voltage,219.406
+2020-03-09T14:45:51+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:45:52+00:00,skab-testbed,Accelerometer1RMS,0.027391
+2020-03-09T14:45:52+00:00,skab-testbed,Accelerometer2RMS,0.0401958
+2020-03-09T14:45:52+00:00,skab-testbed,Current,1.22714
+2020-03-09T14:45:52+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:52+00:00,skab-testbed,Temperature,68.006
+2020-03-09T14:45:52+00:00,skab-testbed,Thermocouple,24.5537
+2020-03-09T14:45:52+00:00,skab-testbed,Voltage,244.345
+2020-03-09T14:45:52+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:53+00:00,skab-testbed,Accelerometer1RMS,0.0276822999999999
+2020-03-09T14:45:53+00:00,skab-testbed,Accelerometer2RMS,0.0389319
+2020-03-09T14:45:53+00:00,skab-testbed,Current,0.730125
+2020-03-09T14:45:53+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:53+00:00,skab-testbed,Temperature,68.1238
+2020-03-09T14:45:53+00:00,skab-testbed,Thermocouple,24.5455
+2020-03-09T14:45:53+00:00,skab-testbed,Voltage,231.542
+2020-03-09T14:45:53+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:54+00:00,skab-testbed,Accelerometer1RMS,0.0281341
+2020-03-09T14:45:54+00:00,skab-testbed,Accelerometer2RMS,0.0405411
+2020-03-09T14:45:54+00:00,skab-testbed,Current,1.11395
+2020-03-09T14:45:54+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:54+00:00,skab-testbed,Temperature,68.0098
+2020-03-09T14:45:54+00:00,skab-testbed,Thermocouple,24.5463
+2020-03-09T14:45:54+00:00,skab-testbed,Voltage,227.18400000000003
+2020-03-09T14:45:54+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:45:55+00:00,skab-testbed,Accelerometer1RMS,0.0279868
+2020-03-09T14:45:55+00:00,skab-testbed,Accelerometer2RMS,0.0411835
+2020-03-09T14:45:55+00:00,skab-testbed,Current,1.0909799999999998
+2020-03-09T14:45:55+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:55+00:00,skab-testbed,Temperature,67.9951
+2020-03-09T14:45:55+00:00,skab-testbed,Thermocouple,24.5385
+2020-03-09T14:45:55+00:00,skab-testbed,Voltage,223.524
+2020-03-09T14:45:55+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:45:56+00:00,skab-testbed,Accelerometer1RMS,0.0274411
+2020-03-09T14:45:56+00:00,skab-testbed,Accelerometer2RMS,0.040718
+2020-03-09T14:45:56+00:00,skab-testbed,Current,1.18301
+2020-03-09T14:45:56+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:56+00:00,skab-testbed,Temperature,68.1265
+2020-03-09T14:45:56+00:00,skab-testbed,Thermocouple,24.553
+2020-03-09T14:45:56+00:00,skab-testbed,Voltage,253.372
+2020-03-09T14:45:56+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:45:57+00:00,skab-testbed,Accelerometer1RMS,0.0273507
+2020-03-09T14:45:57+00:00,skab-testbed,Accelerometer2RMS,0.0391534
+2020-03-09T14:45:57+00:00,skab-testbed,Current,0.736258
+2020-03-09T14:45:57+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:45:57+00:00,skab-testbed,Temperature,68.0602
+2020-03-09T14:45:57+00:00,skab-testbed,Thermocouple,24.5402
+2020-03-09T14:45:57+00:00,skab-testbed,Voltage,204.754
+2020-03-09T14:45:57+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:45:58+00:00,skab-testbed,Accelerometer1RMS,0.0277860999999999
+2020-03-09T14:45:58+00:00,skab-testbed,Accelerometer2RMS,0.0400486
+2020-03-09T14:45:58+00:00,skab-testbed,Current,0.8369719999999999
+2020-03-09T14:45:58+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:45:58+00:00,skab-testbed,Temperature,68.2898
+2020-03-09T14:45:58+00:00,skab-testbed,Thermocouple,24.553
+2020-03-09T14:45:58+00:00,skab-testbed,Voltage,254.731
+2020-03-09T14:45:58+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:45:59+00:00,skab-testbed,Accelerometer1RMS,0.0276975
+2020-03-09T14:45:59+00:00,skab-testbed,Accelerometer2RMS,0.0403831
+2020-03-09T14:45:59+00:00,skab-testbed,Current,1.29681
+2020-03-09T14:45:59+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:45:59+00:00,skab-testbed,Temperature,68.1721
+2020-03-09T14:45:59+00:00,skab-testbed,Thermocouple,24.5528
+2020-03-09T14:45:59+00:00,skab-testbed,Voltage,231.661
+2020-03-09T14:45:59+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:00+00:00,skab-testbed,Accelerometer1RMS,0.0278459
+2020-03-09T14:46:00+00:00,skab-testbed,Accelerometer2RMS,0.0405993
+2020-03-09T14:46:00+00:00,skab-testbed,Current,1.27208
+2020-03-09T14:46:00+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:00+00:00,skab-testbed,Temperature,68.3008
+2020-03-09T14:46:00+00:00,skab-testbed,Thermocouple,24.5441
+2020-03-09T14:46:00+00:00,skab-testbed,Voltage,246.069
+2020-03-09T14:46:00+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:01+00:00,skab-testbed,Accelerometer1RMS,0.0270440999999999
+2020-03-09T14:46:01+00:00,skab-testbed,Accelerometer2RMS,0.0388895
+2020-03-09T14:46:01+00:00,skab-testbed,Current,1.10774
+2020-03-09T14:46:01+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:46:01+00:00,skab-testbed,Temperature,68.095
+2020-03-09T14:46:01+00:00,skab-testbed,Thermocouple,24.5598
+2020-03-09T14:46:01+00:00,skab-testbed,Voltage,242.823
+2020-03-09T14:46:01+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:02+00:00,skab-testbed,Accelerometer1RMS,0.0275625999999999
+2020-03-09T14:46:02+00:00,skab-testbed,Accelerometer2RMS,0.0387893
+2020-03-09T14:46:02+00:00,skab-testbed,Current,1.0751
+2020-03-09T14:46:02+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:02+00:00,skab-testbed,Temperature,68.0387
+2020-03-09T14:46:02+00:00,skab-testbed,Thermocouple,24.5534
+2020-03-09T14:46:02+00:00,skab-testbed,Voltage,227.683
+2020-03-09T14:46:02+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:03+00:00,skab-testbed,Accelerometer1RMS,0.0278983
+2020-03-09T14:46:03+00:00,skab-testbed,Accelerometer2RMS,0.0388682
+2020-03-09T14:46:03+00:00,skab-testbed,Current,0.754021
+2020-03-09T14:46:03+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:03+00:00,skab-testbed,Temperature,68.1451
+2020-03-09T14:46:03+00:00,skab-testbed,Thermocouple,24.5621
+2020-03-09T14:46:03+00:00,skab-testbed,Voltage,237.02
+2020-03-09T14:46:03+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:04+00:00,skab-testbed,Accelerometer1RMS,0.0279759999999999
+2020-03-09T14:46:04+00:00,skab-testbed,Accelerometer2RMS,0.041045
+2020-03-09T14:46:04+00:00,skab-testbed,Current,1.30206
+2020-03-09T14:46:04+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:04+00:00,skab-testbed,Temperature,67.9876
+2020-03-09T14:46:04+00:00,skab-testbed,Thermocouple,24.5723
+2020-03-09T14:46:04+00:00,skab-testbed,Voltage,234.73
+2020-03-09T14:46:04+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:05+00:00,skab-testbed,Accelerometer1RMS,0.0275689
+2020-03-09T14:46:05+00:00,skab-testbed,Accelerometer2RMS,0.0402525
+2020-03-09T14:46:05+00:00,skab-testbed,Current,1.30695
+2020-03-09T14:46:05+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:05+00:00,skab-testbed,Temperature,68.1629
+2020-03-09T14:46:05+00:00,skab-testbed,Thermocouple,24.5623
+2020-03-09T14:46:05+00:00,skab-testbed,Voltage,237.189
+2020-03-09T14:46:05+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:06+00:00,skab-testbed,Accelerometer1RMS,0.027305
+2020-03-09T14:46:06+00:00,skab-testbed,Accelerometer2RMS,0.0404494
+2020-03-09T14:46:06+00:00,skab-testbed,Current,0.675409
+2020-03-09T14:46:06+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:06+00:00,skab-testbed,Temperature,68.017
+2020-03-09T14:46:06+00:00,skab-testbed,Thermocouple,24.5571
+2020-03-09T14:46:06+00:00,skab-testbed,Voltage,226.278
+2020-03-09T14:46:06+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:07+00:00,skab-testbed,Accelerometer1RMS,0.0275582999999999
+2020-03-09T14:46:07+00:00,skab-testbed,Accelerometer2RMS,0.0389017
+2020-03-09T14:46:07+00:00,skab-testbed,Current,1.1084200000000002
+2020-03-09T14:46:07+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:46:07+00:00,skab-testbed,Temperature,68.124
+2020-03-09T14:46:07+00:00,skab-testbed,Thermocouple,24.5554
+2020-03-09T14:46:07+00:00,skab-testbed,Voltage,235.257
+2020-03-09T14:46:07+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:08+00:00,skab-testbed,Accelerometer1RMS,0.027799
+2020-03-09T14:46:08+00:00,skab-testbed,Accelerometer2RMS,0.0404741
+2020-03-09T14:46:08+00:00,skab-testbed,Current,0.7955949999999999
+2020-03-09T14:46:08+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:08+00:00,skab-testbed,Temperature,68.08
+2020-03-09T14:46:08+00:00,skab-testbed,Thermocouple,24.5557
+2020-03-09T14:46:08+00:00,skab-testbed,Voltage,252.535
+2020-03-09T14:46:08+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:10+00:00,skab-testbed,Accelerometer1RMS,0.0270237
+2020-03-09T14:46:10+00:00,skab-testbed,Accelerometer2RMS,0.0398259
+2020-03-09T14:46:10+00:00,skab-testbed,Current,1.07808
+2020-03-09T14:46:10+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:10+00:00,skab-testbed,Temperature,68.0843
+2020-03-09T14:46:10+00:00,skab-testbed,Thermocouple,24.5668
+2020-03-09T14:46:10+00:00,skab-testbed,Voltage,229.007
+2020-03-09T14:46:10+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:11+00:00,skab-testbed,Accelerometer1RMS,0.0273741
+2020-03-09T14:46:11+00:00,skab-testbed,Accelerometer2RMS,0.0392965
+2020-03-09T14:46:11+00:00,skab-testbed,Current,0.41058
+2020-03-09T14:46:11+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:11+00:00,skab-testbed,Temperature,68.1461
+2020-03-09T14:46:11+00:00,skab-testbed,Thermocouple,24.5658
+2020-03-09T14:46:11+00:00,skab-testbed,Voltage,216.006
+2020-03-09T14:46:11+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:12+00:00,skab-testbed,Accelerometer1RMS,0.0274086
+2020-03-09T14:46:12+00:00,skab-testbed,Accelerometer2RMS,0.0387354
+2020-03-09T14:46:12+00:00,skab-testbed,Current,0.648007
+2020-03-09T14:46:12+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:12+00:00,skab-testbed,Temperature,68.078
+2020-03-09T14:46:12+00:00,skab-testbed,Thermocouple,24.5709
+2020-03-09T14:46:12+00:00,skab-testbed,Voltage,224.186
+2020-03-09T14:46:12+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:13+00:00,skab-testbed,Accelerometer1RMS,0.0279728
+2020-03-09T14:46:13+00:00,skab-testbed,Accelerometer2RMS,0.0403319
+2020-03-09T14:46:13+00:00,skab-testbed,Current,0.707356
+2020-03-09T14:46:13+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:13+00:00,skab-testbed,Temperature,68.0989
+2020-03-09T14:46:13+00:00,skab-testbed,Thermocouple,24.5659
+2020-03-09T14:46:13+00:00,skab-testbed,Voltage,230.394
+2020-03-09T14:46:13+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:14+00:00,skab-testbed,Accelerometer1RMS,0.0276786
+2020-03-09T14:46:14+00:00,skab-testbed,Accelerometer2RMS,0.0405120999999999
+2020-03-09T14:46:14+00:00,skab-testbed,Current,0.714799
+2020-03-09T14:46:14+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:14+00:00,skab-testbed,Temperature,68.1318
+2020-03-09T14:46:14+00:00,skab-testbed,Thermocouple,24.5708
+2020-03-09T14:46:14+00:00,skab-testbed,Voltage,238.692
+2020-03-09T14:46:14+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:15+00:00,skab-testbed,Accelerometer1RMS,0.0271872
+2020-03-09T14:46:15+00:00,skab-testbed,Accelerometer2RMS,0.0394278
+2020-03-09T14:46:15+00:00,skab-testbed,Current,0.684098
+2020-03-09T14:46:15+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:15+00:00,skab-testbed,Temperature,68.1265
+2020-03-09T14:46:15+00:00,skab-testbed,Thermocouple,24.5714
+2020-03-09T14:46:15+00:00,skab-testbed,Voltage,232.801
+2020-03-09T14:46:15+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:16+00:00,skab-testbed,Accelerometer1RMS,0.0273565
+2020-03-09T14:46:16+00:00,skab-testbed,Accelerometer2RMS,0.0391715
+2020-03-09T14:46:16+00:00,skab-testbed,Current,1.0455
+2020-03-09T14:46:16+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:16+00:00,skab-testbed,Temperature,68.1555
+2020-03-09T14:46:16+00:00,skab-testbed,Thermocouple,24.5637
+2020-03-09T14:46:16+00:00,skab-testbed,Voltage,237.351
+2020-03-09T14:46:16+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:17+00:00,skab-testbed,Accelerometer1RMS,0.0273187
+2020-03-09T14:46:17+00:00,skab-testbed,Accelerometer2RMS,0.0385770999999999
+2020-03-09T14:46:17+00:00,skab-testbed,Current,1.21362
+2020-03-09T14:46:17+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:17+00:00,skab-testbed,Temperature,68.0777
+2020-03-09T14:46:17+00:00,skab-testbed,Thermocouple,24.5742
+2020-03-09T14:46:17+00:00,skab-testbed,Voltage,215.681
+2020-03-09T14:46:17+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:18+00:00,skab-testbed,Accelerometer1RMS,0.0279968999999999
+2020-03-09T14:46:18+00:00,skab-testbed,Accelerometer2RMS,0.0403576999999999
+2020-03-09T14:46:18+00:00,skab-testbed,Current,0.686692
+2020-03-09T14:46:18+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:18+00:00,skab-testbed,Temperature,68.0845
+2020-03-09T14:46:18+00:00,skab-testbed,Thermocouple,24.5744
+2020-03-09T14:46:18+00:00,skab-testbed,Voltage,204.861
+2020-03-09T14:46:18+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:19+00:00,skab-testbed,Accelerometer1RMS,0.0274101
+2020-03-09T14:46:19+00:00,skab-testbed,Accelerometer2RMS,0.0410604
+2020-03-09T14:46:19+00:00,skab-testbed,Current,1.10633
+2020-03-09T14:46:19+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:19+00:00,skab-testbed,Temperature,68.2132
+2020-03-09T14:46:19+00:00,skab-testbed,Thermocouple,24.5661
+2020-03-09T14:46:19+00:00,skab-testbed,Voltage,231.213
+2020-03-09T14:46:19+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:20+00:00,skab-testbed,Accelerometer1RMS,0.0273787
+2020-03-09T14:46:20+00:00,skab-testbed,Accelerometer2RMS,0.0401645999999999
+2020-03-09T14:46:20+00:00,skab-testbed,Current,0.424608
+2020-03-09T14:46:20+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:20+00:00,skab-testbed,Temperature,68.145
+2020-03-09T14:46:20+00:00,skab-testbed,Thermocouple,24.5698
+2020-03-09T14:46:20+00:00,skab-testbed,Voltage,209.203
+2020-03-09T14:46:20+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:21+00:00,skab-testbed,Accelerometer1RMS,0.0269094
+2020-03-09T14:46:21+00:00,skab-testbed,Accelerometer2RMS,0.0384733
+2020-03-09T14:46:21+00:00,skab-testbed,Current,0.653728
+2020-03-09T14:46:21+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:21+00:00,skab-testbed,Temperature,68.1048
+2020-03-09T14:46:21+00:00,skab-testbed,Thermocouple,24.5732
+2020-03-09T14:46:21+00:00,skab-testbed,Voltage,233.165
+2020-03-09T14:46:21+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:22+00:00,skab-testbed,Accelerometer1RMS,0.0277456999999999
+2020-03-09T14:46:22+00:00,skab-testbed,Accelerometer2RMS,0.0395908
+2020-03-09T14:46:22+00:00,skab-testbed,Current,0.970018
+2020-03-09T14:46:22+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:46:22+00:00,skab-testbed,Temperature,68.1695
+2020-03-09T14:46:22+00:00,skab-testbed,Thermocouple,24.5682
+2020-03-09T14:46:22+00:00,skab-testbed,Voltage,231.751
+2020-03-09T14:46:22+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:23+00:00,skab-testbed,Accelerometer1RMS,0.0273729
+2020-03-09T14:46:23+00:00,skab-testbed,Accelerometer2RMS,0.0398991999999999
+2020-03-09T14:46:23+00:00,skab-testbed,Current,1.14234
+2020-03-09T14:46:23+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:46:23+00:00,skab-testbed,Temperature,68.0922
+2020-03-09T14:46:23+00:00,skab-testbed,Thermocouple,24.574
+2020-03-09T14:46:23+00:00,skab-testbed,Voltage,241.154
+2020-03-09T14:46:23+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:24+00:00,skab-testbed,Accelerometer1RMS,0.0275802
+2020-03-09T14:46:24+00:00,skab-testbed,Accelerometer2RMS,0.0409413999999999
+2020-03-09T14:46:24+00:00,skab-testbed,Current,0.66455
+2020-03-09T14:46:24+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:24+00:00,skab-testbed,Temperature,68.2903
+2020-03-09T14:46:24+00:00,skab-testbed,Thermocouple,24.5672
+2020-03-09T14:46:24+00:00,skab-testbed,Voltage,234.406
+2020-03-09T14:46:24+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:25+00:00,skab-testbed,Accelerometer1RMS,0.02715
+2020-03-09T14:46:25+00:00,skab-testbed,Accelerometer2RMS,0.0389821
+2020-03-09T14:46:25+00:00,skab-testbed,Current,0.972939
+2020-03-09T14:46:25+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:25+00:00,skab-testbed,Temperature,68.0297
+2020-03-09T14:46:25+00:00,skab-testbed,Thermocouple,24.5629
+2020-03-09T14:46:25+00:00,skab-testbed,Voltage,239.655
+2020-03-09T14:46:25+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:26+00:00,skab-testbed,Accelerometer1RMS,0.0275944
+2020-03-09T14:46:26+00:00,skab-testbed,Accelerometer2RMS,0.0388229
+2020-03-09T14:46:26+00:00,skab-testbed,Current,0.790399
+2020-03-09T14:46:26+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:26+00:00,skab-testbed,Temperature,68.1097
+2020-03-09T14:46:26+00:00,skab-testbed,Thermocouple,24.566
+2020-03-09T14:46:26+00:00,skab-testbed,Voltage,235.482
+2020-03-09T14:46:26+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:27+00:00,skab-testbed,Accelerometer1RMS,0.0279010999999999
+2020-03-09T14:46:27+00:00,skab-testbed,Accelerometer2RMS,0.0402755
+2020-03-09T14:46:27+00:00,skab-testbed,Current,1.07344
+2020-03-09T14:46:27+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:27+00:00,skab-testbed,Temperature,68.1975
+2020-03-09T14:46:27+00:00,skab-testbed,Thermocouple,24.5672
+2020-03-09T14:46:27+00:00,skab-testbed,Voltage,238.639
+2020-03-09T14:46:27+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:29+00:00,skab-testbed,Accelerometer1RMS,0.0279640999999999
+2020-03-09T14:46:29+00:00,skab-testbed,Accelerometer2RMS,0.0402758
+2020-03-09T14:46:29+00:00,skab-testbed,Current,0.648493
+2020-03-09T14:46:29+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:29+00:00,skab-testbed,Temperature,68.2579
+2020-03-09T14:46:29+00:00,skab-testbed,Thermocouple,24.5696
+2020-03-09T14:46:29+00:00,skab-testbed,Voltage,218.875
+2020-03-09T14:46:29+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:30+00:00,skab-testbed,Accelerometer1RMS,0.0270374
+2020-03-09T14:46:30+00:00,skab-testbed,Accelerometer2RMS,0.0398926999999999
+2020-03-09T14:46:30+00:00,skab-testbed,Current,0.715837
+2020-03-09T14:46:30+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:46:30+00:00,skab-testbed,Temperature,68.1389
+2020-03-09T14:46:30+00:00,skab-testbed,Thermocouple,24.5744
+2020-03-09T14:46:30+00:00,skab-testbed,Voltage,224.485
+2020-03-09T14:46:30+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:31+00:00,skab-testbed,Accelerometer1RMS,0.0275074999999999
+2020-03-09T14:46:31+00:00,skab-testbed,Accelerometer2RMS,0.0392935
+2020-03-09T14:46:31+00:00,skab-testbed,Current,0.664902
+2020-03-09T14:46:31+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:46:31+00:00,skab-testbed,Temperature,68.0942
+2020-03-09T14:46:31+00:00,skab-testbed,Thermocouple,24.5759
+2020-03-09T14:46:31+00:00,skab-testbed,Voltage,236.478
+2020-03-09T14:46:31+00:00,skab-testbed,Volume Flow RateRMS,23.0575
+2020-03-09T14:46:32+00:00,skab-testbed,Accelerometer1RMS,0.0277035
+2020-03-09T14:46:32+00:00,skab-testbed,Accelerometer2RMS,0.040661
+2020-03-09T14:46:32+00:00,skab-testbed,Current,0.665276
+2020-03-09T14:46:32+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:32+00:00,skab-testbed,Temperature,68.1153
+2020-03-09T14:46:32+00:00,skab-testbed,Thermocouple,24.5702
+2020-03-09T14:46:32+00:00,skab-testbed,Voltage,235.133
+2020-03-09T14:46:32+00:00,skab-testbed,Volume Flow RateRMS,24.947
+2020-03-09T14:46:33+00:00,skab-testbed,Accelerometer1RMS,0.027699
+2020-03-09T14:46:33+00:00,skab-testbed,Accelerometer2RMS,0.0413408
+2020-03-09T14:46:33+00:00,skab-testbed,Current,0.854375
+2020-03-09T14:46:33+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:33+00:00,skab-testbed,Temperature,68.3079
+2020-03-09T14:46:33+00:00,skab-testbed,Thermocouple,24.5794
+2020-03-09T14:46:33+00:00,skab-testbed,Voltage,237.58900000000003
+2020-03-09T14:46:33+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:34+00:00,skab-testbed,Accelerometer1RMS,0.0268172
+2020-03-09T14:46:34+00:00,skab-testbed,Accelerometer2RMS,0.0405911
+2020-03-09T14:46:34+00:00,skab-testbed,Current,0.6103529999999999
+2020-03-09T14:46:34+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:34+00:00,skab-testbed,Temperature,68.128
+2020-03-09T14:46:34+00:00,skab-testbed,Thermocouple,24.5811
+2020-03-09T14:46:34+00:00,skab-testbed,Voltage,224.965
+2020-03-09T14:46:34+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:35+00:00,skab-testbed,Accelerometer1RMS,0.0272408
+2020-03-09T14:46:35+00:00,skab-testbed,Accelerometer2RMS,0.0396981
+2020-03-09T14:46:35+00:00,skab-testbed,Current,0.99662
+2020-03-09T14:46:35+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:35+00:00,skab-testbed,Temperature,68.14699999999999
+2020-03-09T14:46:35+00:00,skab-testbed,Thermocouple,24.5811
+2020-03-09T14:46:35+00:00,skab-testbed,Voltage,235.382
+2020-03-09T14:46:35+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:36+00:00,skab-testbed,Accelerometer1RMS,0.0274097
+2020-03-09T14:46:36+00:00,skab-testbed,Accelerometer2RMS,0.03947
+2020-03-09T14:46:36+00:00,skab-testbed,Current,1.07267
+2020-03-09T14:46:36+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:36+00:00,skab-testbed,Temperature,68.3188
+2020-03-09T14:46:36+00:00,skab-testbed,Thermocouple,24.5741
+2020-03-09T14:46:36+00:00,skab-testbed,Voltage,237.784
+2020-03-09T14:46:36+00:00,skab-testbed,Volume Flow RateRMS,24.0281
+2020-03-09T14:46:37+00:00,skab-testbed,Accelerometer1RMS,0.0277705999999999
+2020-03-09T14:46:37+00:00,skab-testbed,Accelerometer2RMS,0.0416481999999999
+2020-03-09T14:46:37+00:00,skab-testbed,Current,0.582557
+2020-03-09T14:46:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:37+00:00,skab-testbed,Temperature,68.1008
+2020-03-09T14:46:37+00:00,skab-testbed,Thermocouple,24.5749
+2020-03-09T14:46:37+00:00,skab-testbed,Voltage,223.493
+2020-03-09T14:46:37+00:00,skab-testbed,Volume Flow RateRMS,24.9729
+2020-03-09T14:46:38+00:00,skab-testbed,Accelerometer1RMS,0.02797
+2020-03-09T14:46:38+00:00,skab-testbed,Accelerometer2RMS,0.0409270999999999
+2020-03-09T14:46:38+00:00,skab-testbed,Current,0.926301
+2020-03-09T14:46:38+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:38+00:00,skab-testbed,Temperature,68.1115
+2020-03-09T14:46:38+00:00,skab-testbed,Thermocouple,24.5785
+2020-03-09T14:46:38+00:00,skab-testbed,Voltage,235.443
+2020-03-09T14:46:38+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:39+00:00,skab-testbed,Accelerometer1RMS,0.0273714
+2020-03-09T14:46:39+00:00,skab-testbed,Accelerometer2RMS,0.0404104
+2020-03-09T14:46:39+00:00,skab-testbed,Current,0.940708
+2020-03-09T14:46:39+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:39+00:00,skab-testbed,Temperature,68.1189
+2020-03-09T14:46:39+00:00,skab-testbed,Thermocouple,24.5837
+2020-03-09T14:46:39+00:00,skab-testbed,Voltage,231.172
+2020-03-09T14:46:39+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:40+00:00,skab-testbed,Accelerometer1RMS,0.027699
+2020-03-09T14:46:40+00:00,skab-testbed,Accelerometer2RMS,0.0401589
+2020-03-09T14:46:40+00:00,skab-testbed,Current,0.859756
+2020-03-09T14:46:40+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:40+00:00,skab-testbed,Temperature,68.1983
+2020-03-09T14:46:40+00:00,skab-testbed,Thermocouple,24.5778
+2020-03-09T14:46:40+00:00,skab-testbed,Voltage,224.886
+2020-03-09T14:46:40+00:00,skab-testbed,Volume Flow RateRMS,23.973000000000003
+2020-03-09T14:46:41+00:00,skab-testbed,Accelerometer1RMS,0.0277629
+2020-03-09T14:46:41+00:00,skab-testbed,Accelerometer2RMS,0.0402284
+2020-03-09T14:46:41+00:00,skab-testbed,Current,0.8163159999999999
+2020-03-09T14:46:41+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:41+00:00,skab-testbed,Temperature,68.1259
+2020-03-09T14:46:41+00:00,skab-testbed,Thermocouple,24.571
+2020-03-09T14:46:41+00:00,skab-testbed,Voltage,234.1
+2020-03-09T14:46:41+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:46:42+00:00,skab-testbed,Accelerometer1RMS,0.0286649
+2020-03-09T14:46:42+00:00,skab-testbed,Accelerometer2RMS,0.0428957
+2020-03-09T14:46:42+00:00,skab-testbed,Current,0.822416
+2020-03-09T14:46:42+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:46:42+00:00,skab-testbed,Temperature,68.2006
+2020-03-09T14:46:42+00:00,skab-testbed,Thermocouple,24.5691
+2020-03-09T14:46:42+00:00,skab-testbed,Voltage,235.943
+2020-03-09T14:46:42+00:00,skab-testbed,Volume Flow RateRMS,23.0282
+2020-03-09T14:46:43+00:00,skab-testbed,Accelerometer1RMS,0.0277561
+2020-03-09T14:46:43+00:00,skab-testbed,Accelerometer2RMS,0.0417633
+2020-03-09T14:46:43+00:00,skab-testbed,Current,0.484584
+2020-03-09T14:46:43+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:43+00:00,skab-testbed,Temperature,68.2129
+2020-03-09T14:46:43+00:00,skab-testbed,Thermocouple,24.5701
+2020-03-09T14:46:43+00:00,skab-testbed,Voltage,229.892
+2020-03-09T14:46:43+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:44+00:00,skab-testbed,Accelerometer1RMS,0.0273005999999999
+2020-03-09T14:46:44+00:00,skab-testbed,Accelerometer2RMS,0.0416221
+2020-03-09T14:46:44+00:00,skab-testbed,Current,0.569405
+2020-03-09T14:46:44+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:44+00:00,skab-testbed,Temperature,68.1545
+2020-03-09T14:46:44+00:00,skab-testbed,Thermocouple,24.5707
+2020-03-09T14:46:44+00:00,skab-testbed,Voltage,220.16
+2020-03-09T14:46:44+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:45+00:00,skab-testbed,Accelerometer1RMS,0.0278395
+2020-03-09T14:46:45+00:00,skab-testbed,Accelerometer2RMS,0.0413283
+2020-03-09T14:46:45+00:00,skab-testbed,Current,0.575549
+2020-03-09T14:46:45+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:45+00:00,skab-testbed,Temperature,68.3335
+2020-03-09T14:46:45+00:00,skab-testbed,Thermocouple,24.5742
+2020-03-09T14:46:45+00:00,skab-testbed,Voltage,227.169
+2020-03-09T14:46:45+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:47+00:00,skab-testbed,Accelerometer1RMS,0.0277409
+2020-03-09T14:46:47+00:00,skab-testbed,Accelerometer2RMS,0.0426394
+2020-03-09T14:46:47+00:00,skab-testbed,Current,0.398792
+2020-03-09T14:46:47+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:47+00:00,skab-testbed,Temperature,68.2128
+2020-03-09T14:46:47+00:00,skab-testbed,Thermocouple,24.5704
+2020-03-09T14:46:47+00:00,skab-testbed,Voltage,219.566
+2020-03-09T14:46:47+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:48+00:00,skab-testbed,Accelerometer1RMS,0.0278235
+2020-03-09T14:46:48+00:00,skab-testbed,Accelerometer2RMS,0.0418802
+2020-03-09T14:46:48+00:00,skab-testbed,Current,0.46411
+2020-03-09T14:46:48+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:48+00:00,skab-testbed,Temperature,68.1834
+2020-03-09T14:46:48+00:00,skab-testbed,Thermocouple,24.5703
+2020-03-09T14:46:48+00:00,skab-testbed,Voltage,212.746
+2020-03-09T14:46:48+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:49+00:00,skab-testbed,Accelerometer1RMS,0.0271558
+2020-03-09T14:46:49+00:00,skab-testbed,Accelerometer2RMS,0.0406126999999999
+2020-03-09T14:46:49+00:00,skab-testbed,Current,0.938894
+2020-03-09T14:46:49+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:49+00:00,skab-testbed,Temperature,68.2727
+2020-03-09T14:46:49+00:00,skab-testbed,Thermocouple,24.5575
+2020-03-09T14:46:49+00:00,skab-testbed,Voltage,234.74400000000003
+2020-03-09T14:46:49+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:50+00:00,skab-testbed,Accelerometer1RMS,0.0278869
+2020-03-09T14:46:50+00:00,skab-testbed,Accelerometer2RMS,0.0400511
+2020-03-09T14:46:50+00:00,skab-testbed,Current,0.635736
+2020-03-09T14:46:50+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:50+00:00,skab-testbed,Temperature,68.17
+2020-03-09T14:46:50+00:00,skab-testbed,Thermocouple,24.5682
+2020-03-09T14:46:50+00:00,skab-testbed,Voltage,234.344
+2020-03-09T14:46:50+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:51+00:00,skab-testbed,Accelerometer1RMS,0.0275913
+2020-03-09T14:46:51+00:00,skab-testbed,Accelerometer2RMS,0.0422656
+2020-03-09T14:46:51+00:00,skab-testbed,Current,0.56575
+2020-03-09T14:46:51+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:51+00:00,skab-testbed,Temperature,68.2771
+2020-03-09T14:46:51+00:00,skab-testbed,Thermocouple,24.566
+2020-03-09T14:46:51+00:00,skab-testbed,Voltage,208.816
+2020-03-09T14:46:51+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:52+00:00,skab-testbed,Accelerometer1RMS,0.0274232
+2020-03-09T14:46:52+00:00,skab-testbed,Accelerometer2RMS,0.0411911
+2020-03-09T14:46:52+00:00,skab-testbed,Current,0.987965
+2020-03-09T14:46:52+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:52+00:00,skab-testbed,Temperature,68.2166
+2020-03-09T14:46:52+00:00,skab-testbed,Thermocouple,24.5741
+2020-03-09T14:46:52+00:00,skab-testbed,Voltage,215.322
+2020-03-09T14:46:52+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:46:53+00:00,skab-testbed,Accelerometer1RMS,0.0276065
+2020-03-09T14:46:53+00:00,skab-testbed,Accelerometer2RMS,0.0404261
+2020-03-09T14:46:53+00:00,skab-testbed,Current,0.705576
+2020-03-09T14:46:53+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:53+00:00,skab-testbed,Temperature,68.2193
+2020-03-09T14:46:53+00:00,skab-testbed,Thermocouple,24.572
+2020-03-09T14:46:53+00:00,skab-testbed,Voltage,227.841
+2020-03-09T14:46:53+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:46:54+00:00,skab-testbed,Accelerometer1RMS,0.027672
+2020-03-09T14:46:54+00:00,skab-testbed,Accelerometer2RMS,0.0394494
+2020-03-09T14:46:54+00:00,skab-testbed,Current,0.969876
+2020-03-09T14:46:54+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:54+00:00,skab-testbed,Temperature,68.3419
+2020-03-09T14:46:54+00:00,skab-testbed,Thermocouple,24.572
+2020-03-09T14:46:54+00:00,skab-testbed,Voltage,217.767
+2020-03-09T14:46:54+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:55+00:00,skab-testbed,Accelerometer1RMS,0.0281873
+2020-03-09T14:46:55+00:00,skab-testbed,Accelerometer2RMS,0.0403369
+2020-03-09T14:46:55+00:00,skab-testbed,Current,0.8957959999999999
+2020-03-09T14:46:55+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:46:55+00:00,skab-testbed,Temperature,68.1564
+2020-03-09T14:46:55+00:00,skab-testbed,Thermocouple,24.5761
+2020-03-09T14:46:55+00:00,skab-testbed,Voltage,220.633
+2020-03-09T14:46:55+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:56+00:00,skab-testbed,Accelerometer1RMS,0.0280058
+2020-03-09T14:46:56+00:00,skab-testbed,Accelerometer2RMS,0.0420051
+2020-03-09T14:46:56+00:00,skab-testbed,Current,1.10563
+2020-03-09T14:46:56+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:56+00:00,skab-testbed,Temperature,68.1595
+2020-03-09T14:46:56+00:00,skab-testbed,Thermocouple,24.5709
+2020-03-09T14:46:56+00:00,skab-testbed,Voltage,248.639
+2020-03-09T14:46:56+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:46:57+00:00,skab-testbed,Accelerometer1RMS,0.0274554
+2020-03-09T14:46:57+00:00,skab-testbed,Accelerometer2RMS,0.0418873
+2020-03-09T14:46:57+00:00,skab-testbed,Current,1.13556
+2020-03-09T14:46:57+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:46:57+00:00,skab-testbed,Temperature,68.2112
+2020-03-09T14:46:57+00:00,skab-testbed,Thermocouple,24.5721
+2020-03-09T14:46:57+00:00,skab-testbed,Voltage,230.97
+2020-03-09T14:46:57+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:46:58+00:00,skab-testbed,Accelerometer1RMS,0.0268887
+2020-03-09T14:46:58+00:00,skab-testbed,Accelerometer2RMS,0.0397625999999999
+2020-03-09T14:46:58+00:00,skab-testbed,Current,1.19771
+2020-03-09T14:46:58+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:46:58+00:00,skab-testbed,Temperature,68.0193
+2020-03-09T14:46:58+00:00,skab-testbed,Thermocouple,24.5786
+2020-03-09T14:46:58+00:00,skab-testbed,Voltage,237.85
+2020-03-09T14:46:58+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:46:59+00:00,skab-testbed,Accelerometer1RMS,0.0277903
+2020-03-09T14:46:59+00:00,skab-testbed,Accelerometer2RMS,0.0399383
+2020-03-09T14:46:59+00:00,skab-testbed,Current,1.0973
+2020-03-09T14:46:59+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:46:59+00:00,skab-testbed,Temperature,68.1402
+2020-03-09T14:46:59+00:00,skab-testbed,Thermocouple,24.5756
+2020-03-09T14:46:59+00:00,skab-testbed,Voltage,221.668
+2020-03-09T14:46:59+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:00+00:00,skab-testbed,Accelerometer1RMS,0.0275066
+2020-03-09T14:47:00+00:00,skab-testbed,Accelerometer2RMS,0.0414884
+2020-03-09T14:47:00+00:00,skab-testbed,Current,0.7269979999999999
+2020-03-09T14:47:00+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:00+00:00,skab-testbed,Temperature,68.2059
+2020-03-09T14:47:00+00:00,skab-testbed,Thermocouple,24.5761
+2020-03-09T14:47:00+00:00,skab-testbed,Voltage,213.24400000000003
+2020-03-09T14:47:00+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:47:01+00:00,skab-testbed,Accelerometer1RMS,0.0271077
+2020-03-09T14:47:01+00:00,skab-testbed,Accelerometer2RMS,0.0404195
+2020-03-09T14:47:01+00:00,skab-testbed,Current,1.11405
+2020-03-09T14:47:01+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:01+00:00,skab-testbed,Temperature,68.153
+2020-03-09T14:47:01+00:00,skab-testbed,Thermocouple,24.5826
+2020-03-09T14:47:01+00:00,skab-testbed,Voltage,228.066
+2020-03-09T14:47:01+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:02+00:00,skab-testbed,Accelerometer1RMS,0.0269044
+2020-03-09T14:47:02+00:00,skab-testbed,Accelerometer2RMS,0.0407179
+2020-03-09T14:47:02+00:00,skab-testbed,Current,0.768998
+2020-03-09T14:47:02+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:02+00:00,skab-testbed,Temperature,68.1731
+2020-03-09T14:47:02+00:00,skab-testbed,Thermocouple,24.5823
+2020-03-09T14:47:02+00:00,skab-testbed,Voltage,253.142
+2020-03-09T14:47:02+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:47:04+00:00,skab-testbed,Accelerometer1RMS,0.0276843999999999
+2020-03-09T14:47:04+00:00,skab-testbed,Accelerometer2RMS,0.0421375
+2020-03-09T14:47:04+00:00,skab-testbed,Current,1.15621
+2020-03-09T14:47:04+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:47:04+00:00,skab-testbed,Temperature,68.1849
+2020-03-09T14:47:04+00:00,skab-testbed,Thermocouple,24.5827
+2020-03-09T14:47:04+00:00,skab-testbed,Voltage,223.038
+2020-03-09T14:47:04+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:05+00:00,skab-testbed,Accelerometer1RMS,0.0270042
+2020-03-09T14:47:05+00:00,skab-testbed,Accelerometer2RMS,0.0410493
+2020-03-09T14:47:05+00:00,skab-testbed,Current,0.763141
+2020-03-09T14:47:05+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:05+00:00,skab-testbed,Temperature,68.2078
+2020-03-09T14:47:05+00:00,skab-testbed,Thermocouple,24.5888
+2020-03-09T14:47:05+00:00,skab-testbed,Voltage,233.586
+2020-03-09T14:47:05+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:06+00:00,skab-testbed,Accelerometer1RMS,0.0275024
+2020-03-09T14:47:06+00:00,skab-testbed,Accelerometer2RMS,0.0406856
+2020-03-09T14:47:06+00:00,skab-testbed,Current,0.8077340000000001
+2020-03-09T14:47:06+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:06+00:00,skab-testbed,Temperature,68.1406
+2020-03-09T14:47:06+00:00,skab-testbed,Thermocouple,24.5827
+2020-03-09T14:47:06+00:00,skab-testbed,Voltage,236.97
+2020-03-09T14:47:06+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:07+00:00,skab-testbed,Accelerometer1RMS,0.0274185999999999
+2020-03-09T14:47:07+00:00,skab-testbed,Accelerometer2RMS,0.0404275
+2020-03-09T14:47:07+00:00,skab-testbed,Current,1.26123
+2020-03-09T14:47:07+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:07+00:00,skab-testbed,Temperature,68.1504
+2020-03-09T14:47:07+00:00,skab-testbed,Thermocouple,24.5917
+2020-03-09T14:47:07+00:00,skab-testbed,Voltage,228.381
+2020-03-09T14:47:07+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:08+00:00,skab-testbed,Accelerometer1RMS,0.0280857
+2020-03-09T14:47:08+00:00,skab-testbed,Accelerometer2RMS,0.043613
+2020-03-09T14:47:08+00:00,skab-testbed,Current,0.810864
+2020-03-09T14:47:08+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:08+00:00,skab-testbed,Temperature,68.1435
+2020-03-09T14:47:08+00:00,skab-testbed,Thermocouple,24.5855
+2020-03-09T14:47:08+00:00,skab-testbed,Voltage,231.105
+2020-03-09T14:47:08+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:09+00:00,skab-testbed,Accelerometer1RMS,0.0274834
+2020-03-09T14:47:09+00:00,skab-testbed,Accelerometer2RMS,0.0427547
+2020-03-09T14:47:09+00:00,skab-testbed,Current,1.14713
+2020-03-09T14:47:09+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:09+00:00,skab-testbed,Temperature,68.0992
+2020-03-09T14:47:09+00:00,skab-testbed,Thermocouple,24.5806
+2020-03-09T14:47:09+00:00,skab-testbed,Voltage,233.377
+2020-03-09T14:47:09+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:10+00:00,skab-testbed,Accelerometer1RMS,0.0272373
+2020-03-09T14:47:10+00:00,skab-testbed,Accelerometer2RMS,0.0417526
+2020-03-09T14:47:10+00:00,skab-testbed,Current,0.975781
+2020-03-09T14:47:10+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:10+00:00,skab-testbed,Temperature,68.2065
+2020-03-09T14:47:10+00:00,skab-testbed,Thermocouple,24.5842
+2020-03-09T14:47:10+00:00,skab-testbed,Voltage,220.606
+2020-03-09T14:47:10+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:11+00:00,skab-testbed,Accelerometer1RMS,0.0277937
+2020-03-09T14:47:11+00:00,skab-testbed,Accelerometer2RMS,0.0423643
+2020-03-09T14:47:11+00:00,skab-testbed,Current,1.27367
+2020-03-09T14:47:11+00:00,skab-testbed,Pressure,-0.92907
+2020-03-09T14:47:11+00:00,skab-testbed,Temperature,68.1646
+2020-03-09T14:47:11+00:00,skab-testbed,Thermocouple,24.5886
+2020-03-09T14:47:11+00:00,skab-testbed,Voltage,236.554
+2020-03-09T14:47:11+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:12+00:00,skab-testbed,Accelerometer1RMS,0.0280423
+2020-03-09T14:47:12+00:00,skab-testbed,Accelerometer2RMS,0.0436876999999999
+2020-03-09T14:47:12+00:00,skab-testbed,Current,1.18183
+2020-03-09T14:47:12+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:12+00:00,skab-testbed,Temperature,68.095
+2020-03-09T14:47:12+00:00,skab-testbed,Thermocouple,24.5825
+2020-03-09T14:47:12+00:00,skab-testbed,Voltage,226.044
+2020-03-09T14:47:12+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:13+00:00,skab-testbed,Accelerometer1RMS,0.0277031
+2020-03-09T14:47:13+00:00,skab-testbed,Accelerometer2RMS,0.0436245
+2020-03-09T14:47:13+00:00,skab-testbed,Current,0.84914
+2020-03-09T14:47:13+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:13+00:00,skab-testbed,Temperature,68.0729
+2020-03-09T14:47:13+00:00,skab-testbed,Thermocouple,24.5813
+2020-03-09T14:47:13+00:00,skab-testbed,Voltage,223.972
+2020-03-09T14:47:13+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:14+00:00,skab-testbed,Accelerometer1RMS,0.0273788999999999
+2020-03-09T14:47:14+00:00,skab-testbed,Accelerometer2RMS,0.0425773
+2020-03-09T14:47:14+00:00,skab-testbed,Current,1.33882
+2020-03-09T14:47:14+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:14+00:00,skab-testbed,Temperature,68.1433
+2020-03-09T14:47:14+00:00,skab-testbed,Thermocouple,24.5898
+2020-03-09T14:47:14+00:00,skab-testbed,Voltage,207.389
+2020-03-09T14:47:14+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:15+00:00,skab-testbed,Accelerometer1RMS,0.0276091
+2020-03-09T14:47:15+00:00,skab-testbed,Accelerometer2RMS,0.0423973
+2020-03-09T14:47:15+00:00,skab-testbed,Current,1.15833
+2020-03-09T14:47:15+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:15+00:00,skab-testbed,Temperature,68.0374
+2020-03-09T14:47:15+00:00,skab-testbed,Thermocouple,24.5879
+2020-03-09T14:47:15+00:00,skab-testbed,Voltage,221.653
+2020-03-09T14:47:15+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:16+00:00,skab-testbed,Accelerometer1RMS,0.0283586
+2020-03-09T14:47:16+00:00,skab-testbed,Accelerometer2RMS,0.0428623
+2020-03-09T14:47:16+00:00,skab-testbed,Current,1.47636
+2020-03-09T14:47:16+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:16+00:00,skab-testbed,Temperature,68.01899999999999
+2020-03-09T14:47:16+00:00,skab-testbed,Thermocouple,24.5875
+2020-03-09T14:47:16+00:00,skab-testbed,Voltage,243.783
+2020-03-09T14:47:16+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:17+00:00,skab-testbed,Accelerometer1RMS,0.0282072999999999
+2020-03-09T14:47:17+00:00,skab-testbed,Accelerometer2RMS,0.0438588
+2020-03-09T14:47:17+00:00,skab-testbed,Current,0.923708
+2020-03-09T14:47:17+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:17+00:00,skab-testbed,Temperature,68.1312
+2020-03-09T14:47:17+00:00,skab-testbed,Thermocouple,24.5883
+2020-03-09T14:47:17+00:00,skab-testbed,Voltage,224.371
+2020-03-09T14:47:17+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:18+00:00,skab-testbed,Accelerometer1RMS,0.0274353
+2020-03-09T14:47:18+00:00,skab-testbed,Accelerometer2RMS,0.0425214
+2020-03-09T14:47:18+00:00,skab-testbed,Current,1.23739
+2020-03-09T14:47:18+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:18+00:00,skab-testbed,Temperature,67.9984
+2020-03-09T14:47:18+00:00,skab-testbed,Thermocouple,24.5864
+2020-03-09T14:47:18+00:00,skab-testbed,Voltage,222.225
+2020-03-09T14:47:18+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:19+00:00,skab-testbed,Accelerometer1RMS,0.0279971999999999
+2020-03-09T14:47:19+00:00,skab-testbed,Accelerometer2RMS,0.0420339
+2020-03-09T14:47:19+00:00,skab-testbed,Current,1.16821
+2020-03-09T14:47:19+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:47:19+00:00,skab-testbed,Temperature,68.0514
+2020-03-09T14:47:19+00:00,skab-testbed,Thermocouple,24.5851
+2020-03-09T14:47:19+00:00,skab-testbed,Voltage,234.859
+2020-03-09T14:47:19+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:20+00:00,skab-testbed,Accelerometer1RMS,0.0274437999999999
+2020-03-09T14:47:20+00:00,skab-testbed,Accelerometer2RMS,0.0417291999999999
+2020-03-09T14:47:20+00:00,skab-testbed,Current,1.30799
+2020-03-09T14:47:20+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:20+00:00,skab-testbed,Temperature,68.0985
+2020-03-09T14:47:20+00:00,skab-testbed,Thermocouple,24.5855
+2020-03-09T14:47:20+00:00,skab-testbed,Voltage,232.46400000000003
+2020-03-09T14:47:20+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:21+00:00,skab-testbed,Accelerometer1RMS,0.028444
+2020-03-09T14:47:21+00:00,skab-testbed,Accelerometer2RMS,0.0427505
+2020-03-09T14:47:21+00:00,skab-testbed,Current,1.36002
+2020-03-09T14:47:21+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:21+00:00,skab-testbed,Temperature,68.1269
+2020-03-09T14:47:21+00:00,skab-testbed,Thermocouple,24.5952
+2020-03-09T14:47:21+00:00,skab-testbed,Voltage,253.742
+2020-03-09T14:47:21+00:00,skab-testbed,Volume Flow RateRMS,24.0284
+2020-03-09T14:47:23+00:00,skab-testbed,Accelerometer1RMS,0.0276745
+2020-03-09T14:47:23+00:00,skab-testbed,Accelerometer2RMS,0.0423568
+2020-03-09T14:47:23+00:00,skab-testbed,Current,1.29694
+2020-03-09T14:47:23+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:23+00:00,skab-testbed,Temperature,68.0303
+2020-03-09T14:47:23+00:00,skab-testbed,Thermocouple,24.5925
+2020-03-09T14:47:23+00:00,skab-testbed,Voltage,231.228
+2020-03-09T14:47:23+00:00,skab-testbed,Volume Flow RateRMS,24.9465
+2020-03-09T14:47:24+00:00,skab-testbed,Accelerometer1RMS,0.0276672
+2020-03-09T14:47:24+00:00,skab-testbed,Accelerometer2RMS,0.0416775
+2020-03-09T14:47:24+00:00,skab-testbed,Current,1.43949
+2020-03-09T14:47:24+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:24+00:00,skab-testbed,Temperature,68.0999
+2020-03-09T14:47:24+00:00,skab-testbed,Thermocouple,24.5836
+2020-03-09T14:47:24+00:00,skab-testbed,Voltage,228.274
+2020-03-09T14:47:24+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:25+00:00,skab-testbed,Accelerometer1RMS,0.0281267999999999
+2020-03-09T14:47:25+00:00,skab-testbed,Accelerometer2RMS,0.0433476
+2020-03-09T14:47:25+00:00,skab-testbed,Current,1.3821
+2020-03-09T14:47:25+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:25+00:00,skab-testbed,Temperature,68.0895
+2020-03-09T14:47:25+00:00,skab-testbed,Thermocouple,24.5797
+2020-03-09T14:47:25+00:00,skab-testbed,Voltage,251.421
+2020-03-09T14:47:25+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:26+00:00,skab-testbed,Accelerometer1RMS,0.027532
+2020-03-09T14:47:26+00:00,skab-testbed,Accelerometer2RMS,0.0424531999999999
+2020-03-09T14:47:26+00:00,skab-testbed,Current,1.28927
+2020-03-09T14:47:26+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:26+00:00,skab-testbed,Temperature,68.0594
+2020-03-09T14:47:26+00:00,skab-testbed,Thermocouple,24.5846
+2020-03-09T14:47:26+00:00,skab-testbed,Voltage,232.288
+2020-03-09T14:47:26+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:27+00:00,skab-testbed,Accelerometer1RMS,0.0273212
+2020-03-09T14:47:27+00:00,skab-testbed,Accelerometer2RMS,0.0414075
+2020-03-09T14:47:27+00:00,skab-testbed,Current,1.2998
+2020-03-09T14:47:27+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:27+00:00,skab-testbed,Temperature,68.1068
+2020-03-09T14:47:27+00:00,skab-testbed,Thermocouple,24.5786
+2020-03-09T14:47:27+00:00,skab-testbed,Voltage,227.833
+2020-03-09T14:47:27+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:47:28+00:00,skab-testbed,Accelerometer1RMS,0.0273607
+2020-03-09T14:47:28+00:00,skab-testbed,Accelerometer2RMS,0.041696
+2020-03-09T14:47:28+00:00,skab-testbed,Current,1.33682
+2020-03-09T14:47:28+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:28+00:00,skab-testbed,Temperature,68.0549
+2020-03-09T14:47:28+00:00,skab-testbed,Thermocouple,24.5841
+2020-03-09T14:47:28+00:00,skab-testbed,Voltage,235.27
+2020-03-09T14:47:28+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:29+00:00,skab-testbed,Accelerometer1RMS,0.0280507
+2020-03-09T14:47:29+00:00,skab-testbed,Accelerometer2RMS,0.041295
+2020-03-09T14:47:29+00:00,skab-testbed,Current,1.36727
+2020-03-09T14:47:29+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:29+00:00,skab-testbed,Temperature,68.0426
+2020-03-09T14:47:29+00:00,skab-testbed,Thermocouple,24.5853
+2020-03-09T14:47:29+00:00,skab-testbed,Voltage,237.479
+2020-03-09T14:47:29+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:30+00:00,skab-testbed,Accelerometer1RMS,0.0281515
+2020-03-09T14:47:30+00:00,skab-testbed,Accelerometer2RMS,0.0426202
+2020-03-09T14:47:30+00:00,skab-testbed,Current,1.16878
+2020-03-09T14:47:30+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:30+00:00,skab-testbed,Temperature,67.99
+2020-03-09T14:47:30+00:00,skab-testbed,Thermocouple,24.5737
+2020-03-09T14:47:30+00:00,skab-testbed,Voltage,229.666
+2020-03-09T14:47:30+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:31+00:00,skab-testbed,Accelerometer1RMS,0.0274579
+2020-03-09T14:47:31+00:00,skab-testbed,Accelerometer2RMS,0.0414974
+2020-03-09T14:47:31+00:00,skab-testbed,Current,1.39855
+2020-03-09T14:47:31+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:31+00:00,skab-testbed,Temperature,68.0892
+2020-03-09T14:47:31+00:00,skab-testbed,Thermocouple,24.5746
+2020-03-09T14:47:31+00:00,skab-testbed,Voltage,243.375
+2020-03-09T14:47:31+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:32+00:00,skab-testbed,Accelerometer1RMS,0.0274596
+2020-03-09T14:47:32+00:00,skab-testbed,Accelerometer2RMS,0.0410147
+2020-03-09T14:47:32+00:00,skab-testbed,Current,1.03865
+2020-03-09T14:47:32+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:32+00:00,skab-testbed,Temperature,68.2935
+2020-03-09T14:47:32+00:00,skab-testbed,Thermocouple,24.5764
+2020-03-09T14:47:32+00:00,skab-testbed,Voltage,231.55900000000003
+2020-03-09T14:47:32+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:33+00:00,skab-testbed,Accelerometer1RMS,0.0274101
+2020-03-09T14:47:33+00:00,skab-testbed,Accelerometer2RMS,0.0398115999999999
+2020-03-09T14:47:33+00:00,skab-testbed,Current,1.11638
+2020-03-09T14:47:33+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:33+00:00,skab-testbed,Temperature,68.1027
+2020-03-09T14:47:33+00:00,skab-testbed,Thermocouple,24.5781
+2020-03-09T14:47:33+00:00,skab-testbed,Voltage,233.3
+2020-03-09T14:47:33+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:34+00:00,skab-testbed,Accelerometer1RMS,0.0282467
+2020-03-09T14:47:34+00:00,skab-testbed,Accelerometer2RMS,0.042724
+2020-03-09T14:47:34+00:00,skab-testbed,Current,1.39438
+2020-03-09T14:47:34+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:34+00:00,skab-testbed,Temperature,68.11
+2020-03-09T14:47:34+00:00,skab-testbed,Thermocouple,24.5773
+2020-03-09T14:47:34+00:00,skab-testbed,Voltage,231.909
+2020-03-09T14:47:34+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:35+00:00,skab-testbed,Accelerometer1RMS,0.0277596
+2020-03-09T14:47:35+00:00,skab-testbed,Accelerometer2RMS,0.0420023
+2020-03-09T14:47:35+00:00,skab-testbed,Current,1.204
+2020-03-09T14:47:35+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:47:35+00:00,skab-testbed,Temperature,68.2292
+2020-03-09T14:47:35+00:00,skab-testbed,Thermocouple,24.5712
+2020-03-09T14:47:35+00:00,skab-testbed,Voltage,235.828
+2020-03-09T14:47:35+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:36+00:00,skab-testbed,Accelerometer1RMS,0.027338
+2020-03-09T14:47:36+00:00,skab-testbed,Accelerometer2RMS,0.0419049
+2020-03-09T14:47:36+00:00,skab-testbed,Current,1.23992
+2020-03-09T14:47:36+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:36+00:00,skab-testbed,Temperature,68.2075
+2020-03-09T14:47:36+00:00,skab-testbed,Thermocouple,24.5723
+2020-03-09T14:47:36+00:00,skab-testbed,Voltage,219.754
+2020-03-09T14:47:36+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:37+00:00,skab-testbed,Accelerometer1RMS,0.0272774999999999
+2020-03-09T14:47:37+00:00,skab-testbed,Accelerometer2RMS,0.0403816999999999
+2020-03-09T14:47:37+00:00,skab-testbed,Current,1.44782
+2020-03-09T14:47:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:37+00:00,skab-testbed,Temperature,68.1007
+2020-03-09T14:47:37+00:00,skab-testbed,Thermocouple,24.5729
+2020-03-09T14:47:37+00:00,skab-testbed,Voltage,223.693
+2020-03-09T14:47:37+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:38+00:00,skab-testbed,Accelerometer1RMS,0.0279526999999999
+2020-03-09T14:47:38+00:00,skab-testbed,Accelerometer2RMS,0.0416256999999999
+2020-03-09T14:47:38+00:00,skab-testbed,Current,0.647918
+2020-03-09T14:47:38+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:38+00:00,skab-testbed,Temperature,68.4111
+2020-03-09T14:47:38+00:00,skab-testbed,Thermocouple,24.5698
+2020-03-09T14:47:38+00:00,skab-testbed,Voltage,207.122
+2020-03-09T14:47:38+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:39+00:00,skab-testbed,Accelerometer1RMS,0.0274474
+2020-03-09T14:47:39+00:00,skab-testbed,Accelerometer2RMS,0.0427024
+2020-03-09T14:47:39+00:00,skab-testbed,Current,1.18331
+2020-03-09T14:47:39+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:39+00:00,skab-testbed,Temperature,68.4397
+2020-03-09T14:47:39+00:00,skab-testbed,Thermocouple,24.5647
+2020-03-09T14:47:39+00:00,skab-testbed,Voltage,247.968
+2020-03-09T14:47:39+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:40+00:00,skab-testbed,Accelerometer1RMS,0.0272579
+2020-03-09T14:47:40+00:00,skab-testbed,Accelerometer2RMS,0.0406693
+2020-03-09T14:47:40+00:00,skab-testbed,Current,1.06856
+2020-03-09T14:47:40+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:40+00:00,skab-testbed,Temperature,68.3601
+2020-03-09T14:47:40+00:00,skab-testbed,Thermocouple,24.5663
+2020-03-09T14:47:40+00:00,skab-testbed,Voltage,230.534
+2020-03-09T14:47:40+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:41+00:00,skab-testbed,Accelerometer1RMS,0.0271154999999999
+2020-03-09T14:47:41+00:00,skab-testbed,Accelerometer2RMS,0.0412966
+2020-03-09T14:47:41+00:00,skab-testbed,Current,1.12179
+2020-03-09T14:47:41+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:41+00:00,skab-testbed,Temperature,68.4206
+2020-03-09T14:47:41+00:00,skab-testbed,Thermocouple,24.5687
+2020-03-09T14:47:41+00:00,skab-testbed,Voltage,224.795
+2020-03-09T14:47:41+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:42+00:00,skab-testbed,Accelerometer1RMS,0.0280925
+2020-03-09T14:47:42+00:00,skab-testbed,Accelerometer2RMS,0.0413852
+2020-03-09T14:47:42+00:00,skab-testbed,Current,1.34878
+2020-03-09T14:47:42+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:42+00:00,skab-testbed,Temperature,68.377
+2020-03-09T14:47:42+00:00,skab-testbed,Thermocouple,24.5553
+2020-03-09T14:47:42+00:00,skab-testbed,Voltage,232.29
+2020-03-09T14:47:42+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:44+00:00,skab-testbed,Accelerometer1RMS,0.0269392999999999
+2020-03-09T14:47:44+00:00,skab-testbed,Accelerometer2RMS,0.0408356999999999
+2020-03-09T14:47:44+00:00,skab-testbed,Current,0.6478649999999999
+2020-03-09T14:47:44+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:44+00:00,skab-testbed,Temperature,68.3416
+2020-03-09T14:47:44+00:00,skab-testbed,Thermocouple,24.562
+2020-03-09T14:47:44+00:00,skab-testbed,Voltage,231.016
+2020-03-09T14:47:44+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:45+00:00,skab-testbed,Accelerometer1RMS,0.0276868
+2020-03-09T14:47:45+00:00,skab-testbed,Accelerometer2RMS,0.0405684
+2020-03-09T14:47:45+00:00,skab-testbed,Current,0.7563850000000001
+2020-03-09T14:47:45+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:45+00:00,skab-testbed,Temperature,68.2573
+2020-03-09T14:47:45+00:00,skab-testbed,Thermocouple,24.563
+2020-03-09T14:47:45+00:00,skab-testbed,Voltage,252.373
+2020-03-09T14:47:45+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:46+00:00,skab-testbed,Accelerometer1RMS,0.0274909
+2020-03-09T14:47:46+00:00,skab-testbed,Accelerometer2RMS,0.041336
+2020-03-09T14:47:46+00:00,skab-testbed,Current,1.16399
+2020-03-09T14:47:46+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:46+00:00,skab-testbed,Temperature,68.3667
+2020-03-09T14:47:46+00:00,skab-testbed,Thermocouple,24.5562
+2020-03-09T14:47:46+00:00,skab-testbed,Voltage,234.896
+2020-03-09T14:47:46+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:47+00:00,skab-testbed,Accelerometer1RMS,0.0280704999999999
+2020-03-09T14:47:47+00:00,skab-testbed,Accelerometer2RMS,0.0424453
+2020-03-09T14:47:47+00:00,skab-testbed,Current,0.771524
+2020-03-09T14:47:47+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:47+00:00,skab-testbed,Temperature,68.2871
+2020-03-09T14:47:47+00:00,skab-testbed,Thermocouple,24.5639
+2020-03-09T14:47:47+00:00,skab-testbed,Voltage,247.319
+2020-03-09T14:47:47+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:48+00:00,skab-testbed,Accelerometer1RMS,0.0272924
+2020-03-09T14:47:48+00:00,skab-testbed,Accelerometer2RMS,0.0415511999999999
+2020-03-09T14:47:48+00:00,skab-testbed,Current,0.739793
+2020-03-09T14:47:48+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:48+00:00,skab-testbed,Temperature,68.3318
+2020-03-09T14:47:48+00:00,skab-testbed,Thermocouple,24.5583
+2020-03-09T14:47:48+00:00,skab-testbed,Voltage,254.391
+2020-03-09T14:47:48+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:49+00:00,skab-testbed,Accelerometer1RMS,0.0275207999999999
+2020-03-09T14:47:49+00:00,skab-testbed,Accelerometer2RMS,0.0403372
+2020-03-09T14:47:49+00:00,skab-testbed,Current,0.687902
+2020-03-09T14:47:49+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:49+00:00,skab-testbed,Temperature,68.3874
+2020-03-09T14:47:49+00:00,skab-testbed,Thermocouple,24.5598
+2020-03-09T14:47:49+00:00,skab-testbed,Voltage,230.14
+2020-03-09T14:47:49+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:50+00:00,skab-testbed,Accelerometer1RMS,0.0277679
+2020-03-09T14:47:50+00:00,skab-testbed,Accelerometer2RMS,0.0421468
+2020-03-09T14:47:50+00:00,skab-testbed,Current,0.682652
+2020-03-09T14:47:50+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:50+00:00,skab-testbed,Temperature,68.2794
+2020-03-09T14:47:50+00:00,skab-testbed,Thermocouple,24.5544
+2020-03-09T14:47:50+00:00,skab-testbed,Voltage,219.795
+2020-03-09T14:47:50+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:51+00:00,skab-testbed,Accelerometer1RMS,0.0277187
+2020-03-09T14:47:51+00:00,skab-testbed,Accelerometer2RMS,0.0418439
+2020-03-09T14:47:51+00:00,skab-testbed,Current,1.06421
+2020-03-09T14:47:51+00:00,skab-testbed,Pressure,0.710565
+2020-03-09T14:47:51+00:00,skab-testbed,Temperature,68.4096
+2020-03-09T14:47:51+00:00,skab-testbed,Thermocouple,24.5663
+2020-03-09T14:47:51+00:00,skab-testbed,Voltage,234.47
+2020-03-09T14:47:51+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:52+00:00,skab-testbed,Accelerometer1RMS,0.0267367
+2020-03-09T14:47:52+00:00,skab-testbed,Accelerometer2RMS,0.0412934
+2020-03-09T14:47:52+00:00,skab-testbed,Current,0.591066
+2020-03-09T14:47:52+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:47:52+00:00,skab-testbed,Temperature,68.3308
+2020-03-09T14:47:52+00:00,skab-testbed,Thermocouple,24.5694
+2020-03-09T14:47:52+00:00,skab-testbed,Voltage,216.642
+2020-03-09T14:47:52+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:47:53+00:00,skab-testbed,Accelerometer1RMS,0.0277524
+2020-03-09T14:47:53+00:00,skab-testbed,Accelerometer2RMS,0.0407863
+2020-03-09T14:47:53+00:00,skab-testbed,Current,0.664741
+2020-03-09T14:47:53+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:53+00:00,skab-testbed,Temperature,68.3911
+2020-03-09T14:47:53+00:00,skab-testbed,Thermocouple,24.5665
+2020-03-09T14:47:53+00:00,skab-testbed,Voltage,231.571
+2020-03-09T14:47:53+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:54+00:00,skab-testbed,Accelerometer1RMS,0.0272522
+2020-03-09T14:47:54+00:00,skab-testbed,Accelerometer2RMS,0.0416007
+2020-03-09T14:47:54+00:00,skab-testbed,Current,0.708148
+2020-03-09T14:47:54+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:54+00:00,skab-testbed,Temperature,68.37
+2020-03-09T14:47:54+00:00,skab-testbed,Thermocouple,24.5589
+2020-03-09T14:47:54+00:00,skab-testbed,Voltage,231.219
+2020-03-09T14:47:54+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:47:55+00:00,skab-testbed,Accelerometer1RMS,0.0279115999999999
+2020-03-09T14:47:55+00:00,skab-testbed,Accelerometer2RMS,0.0420118
+2020-03-09T14:47:55+00:00,skab-testbed,Current,1.29571
+2020-03-09T14:47:55+00:00,skab-testbed,Pressure,-0.601143
+2020-03-09T14:47:55+00:00,skab-testbed,Temperature,68.3541
+2020-03-09T14:47:55+00:00,skab-testbed,Thermocouple,24.5548
+2020-03-09T14:47:55+00:00,skab-testbed,Voltage,236.885
+2020-03-09T14:47:55+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:56+00:00,skab-testbed,Accelerometer1RMS,0.0268177
+2020-03-09T14:47:56+00:00,skab-testbed,Accelerometer2RMS,0.0407973
+2020-03-09T14:47:56+00:00,skab-testbed,Current,0.624996
+2020-03-09T14:47:56+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:56+00:00,skab-testbed,Temperature,68.3626
+2020-03-09T14:47:56+00:00,skab-testbed,Thermocouple,24.5548
+2020-03-09T14:47:56+00:00,skab-testbed,Voltage,217.836
+2020-03-09T14:47:56+00:00,skab-testbed,Volume Flow RateRMS,23.0
+2020-03-09T14:47:57+00:00,skab-testbed,Accelerometer1RMS,0.0276723
+2020-03-09T14:47:57+00:00,skab-testbed,Accelerometer2RMS,0.0398004
+2020-03-09T14:47:57+00:00,skab-testbed,Current,1.2676
+2020-03-09T14:47:57+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:57+00:00,skab-testbed,Temperature,68.315
+2020-03-09T14:47:57+00:00,skab-testbed,Thermocouple,24.5542
+2020-03-09T14:47:57+00:00,skab-testbed,Voltage,244.966
+2020-03-09T14:47:57+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:47:58+00:00,skab-testbed,Accelerometer1RMS,0.0276214999999999
+2020-03-09T14:47:58+00:00,skab-testbed,Accelerometer2RMS,0.0413261
+2020-03-09T14:47:58+00:00,skab-testbed,Current,0.773416
+2020-03-09T14:47:58+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:47:58+00:00,skab-testbed,Temperature,68.3063
+2020-03-09T14:47:58+00:00,skab-testbed,Thermocouple,24.5572
+2020-03-09T14:47:58+00:00,skab-testbed,Voltage,240.194
+2020-03-09T14:47:58+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:47:59+00:00,skab-testbed,Accelerometer1RMS,0.0273101
+2020-03-09T14:47:59+00:00,skab-testbed,Accelerometer2RMS,0.041005
+2020-03-09T14:47:59+00:00,skab-testbed,Current,0.6151439999999999
+2020-03-09T14:47:59+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:47:59+00:00,skab-testbed,Temperature,68.17399999999999
+2020-03-09T14:47:59+00:00,skab-testbed,Thermocouple,24.5546
+2020-03-09T14:47:59+00:00,skab-testbed,Voltage,220.266
+2020-03-09T14:47:59+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:00+00:00,skab-testbed,Accelerometer1RMS,0.0274993
+2020-03-09T14:48:00+00:00,skab-testbed,Accelerometer2RMS,0.0411777
+2020-03-09T14:48:00+00:00,skab-testbed,Current,1.01316
+2020-03-09T14:48:00+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:00+00:00,skab-testbed,Temperature,68.4071
+2020-03-09T14:48:00+00:00,skab-testbed,Thermocouple,24.5523
+2020-03-09T14:48:00+00:00,skab-testbed,Voltage,231.961
+2020-03-09T14:48:00+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:01+00:00,skab-testbed,Accelerometer1RMS,0.0270964
+2020-03-09T14:48:01+00:00,skab-testbed,Accelerometer2RMS,0.0399202
+2020-03-09T14:48:01+00:00,skab-testbed,Current,0.651249
+2020-03-09T14:48:01+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:01+00:00,skab-testbed,Temperature,68.3456
+2020-03-09T14:48:01+00:00,skab-testbed,Thermocouple,24.5582
+2020-03-09T14:48:01+00:00,skab-testbed,Voltage,222.836
+2020-03-09T14:48:01+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:02+00:00,skab-testbed,Accelerometer1RMS,0.0276312999999999
+2020-03-09T14:48:02+00:00,skab-testbed,Accelerometer2RMS,0.0401963
+2020-03-09T14:48:02+00:00,skab-testbed,Current,1.15941
+2020-03-09T14:48:02+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:02+00:00,skab-testbed,Temperature,68.3324
+2020-03-09T14:48:02+00:00,skab-testbed,Thermocouple,24.5494
+2020-03-09T14:48:02+00:00,skab-testbed,Voltage,223.178
+2020-03-09T14:48:02+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:04+00:00,skab-testbed,Accelerometer1RMS,0.0277596
+2020-03-09T14:48:04+00:00,skab-testbed,Accelerometer2RMS,0.0415755
+2020-03-09T14:48:04+00:00,skab-testbed,Current,0.8255549999999999
+2020-03-09T14:48:04+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:04+00:00,skab-testbed,Temperature,68.181
+2020-03-09T14:48:04+00:00,skab-testbed,Thermocouple,24.5477
+2020-03-09T14:48:04+00:00,skab-testbed,Voltage,240.152
+2020-03-09T14:48:04+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:05+00:00,skab-testbed,Accelerometer1RMS,0.0271327
+2020-03-09T14:48:05+00:00,skab-testbed,Accelerometer2RMS,0.0410014
+2020-03-09T14:48:05+00:00,skab-testbed,Current,0.435268
+2020-03-09T14:48:05+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:05+00:00,skab-testbed,Temperature,68.3297
+2020-03-09T14:48:05+00:00,skab-testbed,Thermocouple,24.5468
+2020-03-09T14:48:05+00:00,skab-testbed,Voltage,206.048
+2020-03-09T14:48:05+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:06+00:00,skab-testbed,Accelerometer1RMS,0.0275892
+2020-03-09T14:48:06+00:00,skab-testbed,Accelerometer2RMS,0.040045
+2020-03-09T14:48:06+00:00,skab-testbed,Current,0.695041
+2020-03-09T14:48:06+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:06+00:00,skab-testbed,Temperature,68.2729
+2020-03-09T14:48:06+00:00,skab-testbed,Thermocouple,24.5433
+2020-03-09T14:48:06+00:00,skab-testbed,Voltage,223.375
+2020-03-09T14:48:06+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:07+00:00,skab-testbed,Accelerometer1RMS,0.0275112
+2020-03-09T14:48:07+00:00,skab-testbed,Accelerometer2RMS,0.0406286
+2020-03-09T14:48:07+00:00,skab-testbed,Current,0.8413120000000001
+2020-03-09T14:48:07+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:07+00:00,skab-testbed,Temperature,68.1867
+2020-03-09T14:48:07+00:00,skab-testbed,Thermocouple,24.5465
+2020-03-09T14:48:07+00:00,skab-testbed,Voltage,242.051
+2020-03-09T14:48:07+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:08+00:00,skab-testbed,Accelerometer1RMS,0.0281429
+2020-03-09T14:48:08+00:00,skab-testbed,Accelerometer2RMS,0.0419174
+2020-03-09T14:48:08+00:00,skab-testbed,Current,0.769513
+2020-03-09T14:48:08+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:08+00:00,skab-testbed,Temperature,68.2424
+2020-03-09T14:48:08+00:00,skab-testbed,Thermocouple,24.5588
+2020-03-09T14:48:08+00:00,skab-testbed,Voltage,227.907
+2020-03-09T14:48:08+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:09+00:00,skab-testbed,Accelerometer1RMS,0.0273895999999999
+2020-03-09T14:48:09+00:00,skab-testbed,Accelerometer2RMS,0.0406556
+2020-03-09T14:48:09+00:00,skab-testbed,Current,0.711117
+2020-03-09T14:48:09+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:09+00:00,skab-testbed,Temperature,68.1964
+2020-03-09T14:48:09+00:00,skab-testbed,Thermocouple,24.5441
+2020-03-09T14:48:09+00:00,skab-testbed,Voltage,230.753
+2020-03-09T14:48:09+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:10+00:00,skab-testbed,Accelerometer1RMS,0.0280272999999999
+2020-03-09T14:48:10+00:00,skab-testbed,Accelerometer2RMS,0.0400333
+2020-03-09T14:48:10+00:00,skab-testbed,Current,0.5949800000000001
+2020-03-09T14:48:10+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:10+00:00,skab-testbed,Temperature,68.2281
+2020-03-09T14:48:10+00:00,skab-testbed,Thermocouple,24.5512
+2020-03-09T14:48:10+00:00,skab-testbed,Voltage,223.827
+2020-03-09T14:48:10+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:11+00:00,skab-testbed,Accelerometer1RMS,0.0281106
+2020-03-09T14:48:11+00:00,skab-testbed,Accelerometer2RMS,0.0415484
+2020-03-09T14:48:11+00:00,skab-testbed,Current,0.8983549999999999
+2020-03-09T14:48:11+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:11+00:00,skab-testbed,Temperature,68.1407
+2020-03-09T14:48:11+00:00,skab-testbed,Thermocouple,24.5403
+2020-03-09T14:48:11+00:00,skab-testbed,Voltage,234.878
+2020-03-09T14:48:11+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:12+00:00,skab-testbed,Accelerometer1RMS,0.0274299
+2020-03-09T14:48:12+00:00,skab-testbed,Accelerometer2RMS,0.0403841
+2020-03-09T14:48:12+00:00,skab-testbed,Current,0.72164
+2020-03-09T14:48:12+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:12+00:00,skab-testbed,Temperature,68.331
+2020-03-09T14:48:12+00:00,skab-testbed,Thermocouple,24.5494
+2020-03-09T14:48:12+00:00,skab-testbed,Voltage,232.539
+2020-03-09T14:48:12+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:13+00:00,skab-testbed,Accelerometer1RMS,0.0276373
+2020-03-09T14:48:13+00:00,skab-testbed,Accelerometer2RMS,0.0408818
+2020-03-09T14:48:13+00:00,skab-testbed,Current,0.652877
+2020-03-09T14:48:13+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:13+00:00,skab-testbed,Temperature,68.2669
+2020-03-09T14:48:13+00:00,skab-testbed,Thermocouple,24.5504
+2020-03-09T14:48:13+00:00,skab-testbed,Voltage,232.024
+2020-03-09T14:48:13+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:14+00:00,skab-testbed,Accelerometer1RMS,0.0274535
+2020-03-09T14:48:14+00:00,skab-testbed,Accelerometer2RMS,0.0400068
+2020-03-09T14:48:14+00:00,skab-testbed,Current,1.02394
+2020-03-09T14:48:14+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:14+00:00,skab-testbed,Temperature,68.0863
+2020-03-09T14:48:14+00:00,skab-testbed,Thermocouple,24.5527
+2020-03-09T14:48:14+00:00,skab-testbed,Voltage,232.558
+2020-03-09T14:48:14+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:15+00:00,skab-testbed,Accelerometer1RMS,0.0280955
+2020-03-09T14:48:15+00:00,skab-testbed,Accelerometer2RMS,0.0422462
+2020-03-09T14:48:15+00:00,skab-testbed,Current,0.5541
+2020-03-09T14:48:15+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:15+00:00,skab-testbed,Temperature,68.2123
+2020-03-09T14:48:15+00:00,skab-testbed,Thermocouple,24.5572
+2020-03-09T14:48:15+00:00,skab-testbed,Voltage,210.185
+2020-03-09T14:48:15+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:16+00:00,skab-testbed,Accelerometer1RMS,0.0282019
+2020-03-09T14:48:16+00:00,skab-testbed,Accelerometer2RMS,0.0416853
+2020-03-09T14:48:16+00:00,skab-testbed,Current,0.595539
+2020-03-09T14:48:16+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:16+00:00,skab-testbed,Temperature,68.1368
+2020-03-09T14:48:16+00:00,skab-testbed,Thermocouple,24.5513
+2020-03-09T14:48:16+00:00,skab-testbed,Voltage,222.406
+2020-03-09T14:48:16+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:17+00:00,skab-testbed,Accelerometer1RMS,0.0274518
+2020-03-09T14:48:17+00:00,skab-testbed,Accelerometer2RMS,0.0416044
+2020-03-09T14:48:17+00:00,skab-testbed,Current,0.545435
+2020-03-09T14:48:17+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:17+00:00,skab-testbed,Temperature,68.0843
+2020-03-09T14:48:17+00:00,skab-testbed,Thermocouple,24.5484
+2020-03-09T14:48:17+00:00,skab-testbed,Voltage,213.112
+2020-03-09T14:48:17+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:18+00:00,skab-testbed,Accelerometer1RMS,0.0276271999999999
+2020-03-09T14:48:18+00:00,skab-testbed,Accelerometer2RMS,0.040673
+2020-03-09T14:48:18+00:00,skab-testbed,Current,0.7323689999999999
+2020-03-09T14:48:18+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:18+00:00,skab-testbed,Temperature,68.2222
+2020-03-09T14:48:18+00:00,skab-testbed,Thermocouple,24.544
+2020-03-09T14:48:18+00:00,skab-testbed,Voltage,216.285
+2020-03-09T14:48:18+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:19+00:00,skab-testbed,Accelerometer1RMS,0.0279142
+2020-03-09T14:48:19+00:00,skab-testbed,Accelerometer2RMS,0.0423156
+2020-03-09T14:48:19+00:00,skab-testbed,Current,0.992802
+2020-03-09T14:48:19+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:19+00:00,skab-testbed,Temperature,68.1846
+2020-03-09T14:48:19+00:00,skab-testbed,Thermocouple,24.5493
+2020-03-09T14:48:19+00:00,skab-testbed,Voltage,241.271
+2020-03-09T14:48:19+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:20+00:00,skab-testbed,Accelerometer1RMS,0.0278377
+2020-03-09T14:48:20+00:00,skab-testbed,Accelerometer2RMS,0.0421864
+2020-03-09T14:48:20+00:00,skab-testbed,Current,0.976878
+2020-03-09T14:48:20+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:20+00:00,skab-testbed,Temperature,68.0369
+2020-03-09T14:48:20+00:00,skab-testbed,Thermocouple,24.546
+2020-03-09T14:48:20+00:00,skab-testbed,Voltage,240.844
+2020-03-09T14:48:20+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:21+00:00,skab-testbed,Accelerometer1RMS,0.0277839
+2020-03-09T14:48:21+00:00,skab-testbed,Accelerometer2RMS,0.0422554
+2020-03-09T14:48:21+00:00,skab-testbed,Current,0.914595
+2020-03-09T14:48:21+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:21+00:00,skab-testbed,Temperature,68.1957
+2020-03-09T14:48:21+00:00,skab-testbed,Thermocouple,24.5436
+2020-03-09T14:48:21+00:00,skab-testbed,Voltage,228.192
+2020-03-09T14:48:21+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:22+00:00,skab-testbed,Accelerometer1RMS,0.0272304
+2020-03-09T14:48:22+00:00,skab-testbed,Accelerometer2RMS,0.0412114
+2020-03-09T14:48:22+00:00,skab-testbed,Current,0.7401260000000001
+2020-03-09T14:48:22+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:22+00:00,skab-testbed,Temperature,68.0256
+2020-03-09T14:48:22+00:00,skab-testbed,Thermocouple,24.5475
+2020-03-09T14:48:22+00:00,skab-testbed,Voltage,224.469
+2020-03-09T14:48:22+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:23+00:00,skab-testbed,Accelerometer1RMS,0.0280445
+2020-03-09T14:48:23+00:00,skab-testbed,Accelerometer2RMS,0.0421549
+2020-03-09T14:48:23+00:00,skab-testbed,Current,0.9361
+2020-03-09T14:48:23+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:23+00:00,skab-testbed,Temperature,68.1189
+2020-03-09T14:48:23+00:00,skab-testbed,Thermocouple,24.5473
+2020-03-09T14:48:23+00:00,skab-testbed,Voltage,237.57
+2020-03-09T14:48:23+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:25+00:00,skab-testbed,Accelerometer1RMS,0.0276424
+2020-03-09T14:48:25+00:00,skab-testbed,Accelerometer2RMS,0.0416097
+2020-03-09T14:48:25+00:00,skab-testbed,Current,0.6406729999999999
+2020-03-09T14:48:25+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:25+00:00,skab-testbed,Temperature,68.0497
+2020-03-09T14:48:25+00:00,skab-testbed,Thermocouple,24.5455
+2020-03-09T14:48:25+00:00,skab-testbed,Voltage,227.053
+2020-03-09T14:48:25+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:26+00:00,skab-testbed,Accelerometer1RMS,0.0275793
+2020-03-09T14:48:26+00:00,skab-testbed,Accelerometer2RMS,0.0420383
+2020-03-09T14:48:26+00:00,skab-testbed,Current,0.5194270000000001
+2020-03-09T14:48:26+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:26+00:00,skab-testbed,Temperature,68.3086
+2020-03-09T14:48:26+00:00,skab-testbed,Thermocouple,24.535
+2020-03-09T14:48:26+00:00,skab-testbed,Voltage,221.105
+2020-03-09T14:48:26+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:27+00:00,skab-testbed,Accelerometer1RMS,0.0272505
+2020-03-09T14:48:27+00:00,skab-testbed,Accelerometer2RMS,0.0400888
+2020-03-09T14:48:27+00:00,skab-testbed,Current,1.2160799999999998
+2020-03-09T14:48:27+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:27+00:00,skab-testbed,Temperature,68.143
+2020-03-09T14:48:27+00:00,skab-testbed,Thermocouple,24.5435
+2020-03-09T14:48:27+00:00,skab-testbed,Voltage,231.32
+2020-03-09T14:48:27+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:28+00:00,skab-testbed,Accelerometer1RMS,0.0277832999999999
+2020-03-09T14:48:28+00:00,skab-testbed,Accelerometer2RMS,0.0409353
+2020-03-09T14:48:28+00:00,skab-testbed,Current,1.03662
+2020-03-09T14:48:28+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:28+00:00,skab-testbed,Temperature,68.0805
+2020-03-09T14:48:28+00:00,skab-testbed,Thermocouple,24.5387
+2020-03-09T14:48:28+00:00,skab-testbed,Voltage,236.918
+2020-03-09T14:48:28+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:29+00:00,skab-testbed,Accelerometer1RMS,0.0279846
+2020-03-09T14:48:29+00:00,skab-testbed,Accelerometer2RMS,0.0417806
+2020-03-09T14:48:29+00:00,skab-testbed,Current,0.41246
+2020-03-09T14:48:29+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:29+00:00,skab-testbed,Temperature,68.1955
+2020-03-09T14:48:29+00:00,skab-testbed,Thermocouple,24.5387
+2020-03-09T14:48:29+00:00,skab-testbed,Voltage,217.502
+2020-03-09T14:48:29+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:30+00:00,skab-testbed,Accelerometer1RMS,0.0276919
+2020-03-09T14:48:30+00:00,skab-testbed,Accelerometer2RMS,0.0415613
+2020-03-09T14:48:30+00:00,skab-testbed,Current,0.7187399999999999
+2020-03-09T14:48:30+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:30+00:00,skab-testbed,Temperature,68.1105
+2020-03-09T14:48:30+00:00,skab-testbed,Thermocouple,24.5482
+2020-03-09T14:48:30+00:00,skab-testbed,Voltage,229.356
+2020-03-09T14:48:30+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:31+00:00,skab-testbed,Accelerometer1RMS,0.0269810999999999
+2020-03-09T14:48:31+00:00,skab-testbed,Accelerometer2RMS,0.0412482
+2020-03-09T14:48:31+00:00,skab-testbed,Current,0.746971
+2020-03-09T14:48:31+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:31+00:00,skab-testbed,Temperature,68.0906
+2020-03-09T14:48:31+00:00,skab-testbed,Thermocouple,24.5391
+2020-03-09T14:48:31+00:00,skab-testbed,Voltage,231.438
+2020-03-09T14:48:31+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:32+00:00,skab-testbed,Accelerometer1RMS,0.0271675
+2020-03-09T14:48:32+00:00,skab-testbed,Accelerometer2RMS,0.0394559
+2020-03-09T14:48:32+00:00,skab-testbed,Current,0.7477090000000001
+2020-03-09T14:48:32+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:32+00:00,skab-testbed,Temperature,68.1036
+2020-03-09T14:48:32+00:00,skab-testbed,Thermocouple,24.5449
+2020-03-09T14:48:32+00:00,skab-testbed,Voltage,209.149
+2020-03-09T14:48:32+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:33+00:00,skab-testbed,Accelerometer1RMS,0.0273829999999999
+2020-03-09T14:48:33+00:00,skab-testbed,Accelerometer2RMS,0.0400068
+2020-03-09T14:48:33+00:00,skab-testbed,Current,0.7199479999999999
+2020-03-09T14:48:33+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:33+00:00,skab-testbed,Temperature,68.2299
+2020-03-09T14:48:33+00:00,skab-testbed,Thermocouple,24.5491
+2020-03-09T14:48:33+00:00,skab-testbed,Voltage,229.571
+2020-03-09T14:48:33+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:34+00:00,skab-testbed,Accelerometer1RMS,0.0275845
+2020-03-09T14:48:34+00:00,skab-testbed,Accelerometer2RMS,0.0405163
+2020-03-09T14:48:34+00:00,skab-testbed,Current,0.6282979999999999
+2020-03-09T14:48:34+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:34+00:00,skab-testbed,Temperature,68.03699999999999
+2020-03-09T14:48:34+00:00,skab-testbed,Thermocouple,24.5401
+2020-03-09T14:48:34+00:00,skab-testbed,Voltage,231.362
+2020-03-09T14:48:34+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:35+00:00,skab-testbed,Accelerometer1RMS,0.0276906
+2020-03-09T14:48:35+00:00,skab-testbed,Accelerometer2RMS,0.0410426999999999
+2020-03-09T14:48:35+00:00,skab-testbed,Current,0.7944939999999999
+2020-03-09T14:48:35+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:35+00:00,skab-testbed,Temperature,68.1644
+2020-03-09T14:48:35+00:00,skab-testbed,Thermocouple,24.5401
+2020-03-09T14:48:35+00:00,skab-testbed,Voltage,233.606
+2020-03-09T14:48:35+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:36+00:00,skab-testbed,Accelerometer1RMS,0.0269678
+2020-03-09T14:48:36+00:00,skab-testbed,Accelerometer2RMS,0.0395842
+2020-03-09T14:48:36+00:00,skab-testbed,Current,1.08244
+2020-03-09T14:48:36+00:00,skab-testbed,Pressure,-0.2732159999999999
+2020-03-09T14:48:36+00:00,skab-testbed,Temperature,68.2707
+2020-03-09T14:48:36+00:00,skab-testbed,Thermocouple,24.5401
+2020-03-09T14:48:36+00:00,skab-testbed,Voltage,209.047
+2020-03-09T14:48:36+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:37+00:00,skab-testbed,Accelerometer1RMS,0.0277643
+2020-03-09T14:48:37+00:00,skab-testbed,Accelerometer2RMS,0.0397065999999999
+2020-03-09T14:48:37+00:00,skab-testbed,Current,0.778049
+2020-03-09T14:48:37+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:37+00:00,skab-testbed,Temperature,68.0853
+2020-03-09T14:48:37+00:00,skab-testbed,Thermocouple,24.5489
+2020-03-09T14:48:37+00:00,skab-testbed,Voltage,246.415
+2020-03-09T14:48:37+00:00,skab-testbed,Volume Flow RateRMS,23.9727
+2020-03-09T14:48:38+00:00,skab-testbed,Accelerometer1RMS,0.0275625
+2020-03-09T14:48:38+00:00,skab-testbed,Accelerometer2RMS,0.0402716
+2020-03-09T14:48:38+00:00,skab-testbed,Current,1.13636
+2020-03-09T14:48:38+00:00,skab-testbed,Pressure,0.382638
+2020-03-09T14:48:38+00:00,skab-testbed,Temperature,68.0635
+2020-03-09T14:48:38+00:00,skab-testbed,Thermocouple,24.5403
+2020-03-09T14:48:38+00:00,skab-testbed,Voltage,226.307
+2020-03-09T14:48:38+00:00,skab-testbed,Volume Flow RateRMS,23.0284
+2020-03-09T14:48:39+00:00,skab-testbed,Accelerometer1RMS,0.0276678
+2020-03-09T14:48:39+00:00,skab-testbed,Accelerometer2RMS,0.041173
+2020-03-09T14:48:39+00:00,skab-testbed,Current,0.7242689999999999
+2020-03-09T14:48:39+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:39+00:00,skab-testbed,Temperature,68.1158
+2020-03-09T14:48:39+00:00,skab-testbed,Thermocouple,24.5397
+2020-03-09T14:48:39+00:00,skab-testbed,Voltage,231.259
+2020-03-09T14:48:39+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:40+00:00,skab-testbed,Accelerometer1RMS,0.0272932
+2020-03-09T14:48:40+00:00,skab-testbed,Accelerometer2RMS,0.0391108
+2020-03-09T14:48:40+00:00,skab-testbed,Current,1.12863
+2020-03-09T14:48:40+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:40+00:00,skab-testbed,Temperature,68.1542
+2020-03-09T14:48:40+00:00,skab-testbed,Thermocouple,24.5373
+2020-03-09T14:48:40+00:00,skab-testbed,Voltage,231.036
+2020-03-09T14:48:40+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:41+00:00,skab-testbed,Accelerometer1RMS,0.0276682
+2020-03-09T14:48:41+00:00,skab-testbed,Accelerometer2RMS,0.0401688
+2020-03-09T14:48:41+00:00,skab-testbed,Current,1.11225
+2020-03-09T14:48:41+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:41+00:00,skab-testbed,Temperature,68.1554
+2020-03-09T14:48:41+00:00,skab-testbed,Thermocouple,24.5522
+2020-03-09T14:48:41+00:00,skab-testbed,Voltage,233.044
+2020-03-09T14:48:41+00:00,skab-testbed,Volume Flow RateRMS,24.0
+2020-03-09T14:48:42+00:00,skab-testbed,Accelerometer1RMS,0.0279901
+2020-03-09T14:48:42+00:00,skab-testbed,Accelerometer2RMS,0.0411046999999999
+2020-03-09T14:48:42+00:00,skab-testbed,Current,1.0579
+2020-03-09T14:48:42+00:00,skab-testbed,Pressure,0.054711
+2020-03-09T14:48:42+00:00,skab-testbed,Temperature,68.1375
+2020-03-09T14:48:42+00:00,skab-testbed,Thermocouple,24.5522
+2020-03-09T14:48:42+00:00,skab-testbed,Voltage,232.484
+2020-03-09T14:48:42+00:00,skab-testbed,Volume Flow RateRMS,24.0

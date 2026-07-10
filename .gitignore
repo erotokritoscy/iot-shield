@@ -16,6 +16,9 @@ build/
 
 # Local artifacts (generated models, run outputs, local demo databases)
 artifacts/
+# ...but committed, trained model artifacts (source of truth, shipped in the
+# wheel) are the exception, not transient output (ADR-0012).
+!src/iotshield/detect/team3/artifacts/
 logs/
 *.db
 

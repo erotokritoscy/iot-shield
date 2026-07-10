@@ -56,14 +56,20 @@ which overrides the config file's `database_url` (ADR-0010); the config file
 keeps its SQLite default for host runs. Schema creation is owned by the one-shot
 `python -m iotshield.storage.init` step (which the API, dashboard, and runner
 depend on in compose); the read-only API never creates the schema, and the
-runner still creates it for standalone host runs. The image is intentionally
-unhardened until the first real detector (team3) settles the dependency surface.
+runner still creates it for standalone host runs. The first real detector (team3,
+ADR-0012) settled the runtime dependency surface as **numpy-only** (sklearn/torch
+deferred to future per-model ADRs); image hardening is now unblocked but not yet done.
 
-Two demo runs exercise both normalizer adapters: `config/demo.yaml` +
-`data/demo/demo.csv` (telemetry → the `stub` normalizer → detections/alerts), and
+Three demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
+(telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
 normalizer, re-implemented from team4 → LOG-lane events; no detections by
-design — ADR-0011).
+design — ADR-0011); and `config/demo_team3.yaml` + `data/demo/demo_team3.csv`
+(telemetry → the `team3_zscore` detector, vendored from team3, on a real SKAB
+valve fault → one collective detection → one alert — ADR-0012).
+
+The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
+regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
 
 ## Layout
 
