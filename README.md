@@ -67,6 +67,17 @@ The input is telemetry that ramps from normal into a sustained valve anomaly, so
 this run produces a real detection (one collective anomaly episode) and a
 prioritized alert on the `skab-testbed` asset.
 
+The alert engine is swappable the same way. `config/demo_weighted.yaml` runs the
+same detections through the `weighted` engine (team2-derived multiplicative,
+explainable scoring — ADR-0013) instead of the stub:
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo.csv --config config/demo_weighted.yaml
+```
+
+Same detections, richer prioritization and per-factor rationale — compare its
+alerts against the stub engine's from `config/demo.yaml`.
+
 ## Serve the API
 
 ```

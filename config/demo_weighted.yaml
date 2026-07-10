@@ -1,0 +1,32 @@
+# Weighted-alert-engine demo — the same pipeline as demo.yaml, but swaps the
+# alert engine to `weighted` (team2-derived multiplicative, explainable scoring;
+# ADR-0013). The detections are identical; only the prioritization and the
+# rationale differ — which is the point of the swap (proof-of-concept for the
+# AlertEngine port). Compare its alerts against demo.yaml's stub-engine alerts.
+
+database_url: "sqlite:///demo.db"
+source_format: stub-csv
+normalizer: stub
+
+detectors:
+  - name: stub_threshold
+    params:
+      threshold: 80.0
+      lane: telemetry
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+assets:
+  - asset_id: pump-02
+    name: Feed pump 2
+    asset_type: pump
+    location: line-1
+    criticality: high
+  - asset_id: pump-03
+    name: Feed pump 3
+    asset_type: pump
+    location: line-1
+    criticality: medium

@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from iotshield.alert import AlertEngine, StubAlertEngine
+from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
 from iotshield.contracts import Asset, Criticality, DetectionResult, Lane
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -51,7 +51,10 @@ class AlertEngineCase:
     make: Callable[[], AlertEngine]
 
 
-CASES = [pytest.param(AlertEngineCase(make=StubAlertEngine), id="stub-alert-engine")]
+CASES = [
+    pytest.param(AlertEngineCase(make=StubAlertEngine), id="stub-alert-engine"),
+    pytest.param(AlertEngineCase(make=WeightedAlertEngine), id="weighted-alert-engine"),
+]
 
 
 @pytest.fixture(params=CASES)
