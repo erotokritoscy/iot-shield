@@ -54,6 +54,17 @@ uv run python -m iotshield.pipeline --input data/demo/demo_syslog.log --config c
 Syslog records land in the LOG lane, so this run's visible results are events and
 captured malformed lines, not detections (the telemetry detector ignores them).
 
+The alert engine is swappable the same way. `config/demo_weighted.yaml` runs the
+same detections through the `weighted` engine (team2-derived multiplicative,
+explainable scoring — ADR-0013) instead of the stub:
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo.csv --config config/demo_weighted.yaml
+```
+
+Same detections, richer prioritization and per-factor rationale — compare its
+alerts against the stub engine's from `config/demo.yaml`.
+
 ## Serve the API
 
 ```

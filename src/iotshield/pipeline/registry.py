@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from datetime import timedelta
 from typing import Any, TypeVar
 
-from iotshield.alert import AlertEngine, StubAlertEngine
+from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
 from iotshield.contracts import Lane
 from iotshield.detect import Detector, StubThresholdDetector
 from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
@@ -24,11 +24,19 @@ def _stub_threshold(threshold: float = 80.0, lane: str = "telemetry") -> StubThr
     return StubThresholdDetector(threshold=float(threshold), lane=Lane(lane))
 
 
-def _stub_alert_engine(bucket_minutes: float = 5.0) -> StubAlertEngine:
+def _bucket_timedelta(bucket_minutes: float) -> timedelta:
     minutes = float(bucket_minutes)
     if minutes <= 0:
         raise ValueError(f"bucket_minutes must be positive, got {minutes}")
-    return StubAlertEngine(bucket=timedelta(minutes=minutes))
+    return timedelta(minutes=minutes)
+
+
+def _stub_alert_engine(bucket_minutes: float = 5.0) -> StubAlertEngine:
+    return StubAlertEngine(bucket=_bucket_timedelta(bucket_minutes))
+
+
+def _weighted_alert_engine(bucket_minutes: float = 5.0) -> WeightedAlertEngine:
+    return WeightedAlertEngine(bucket=_bucket_timedelta(bucket_minutes))
 
 
 NORMALIZERS: dict[str, Callable[..., Normalizer]] = {
@@ -42,6 +50,7 @@ DETECTORS: dict[str, Callable[..., Detector]] = {
 
 ALERT_ENGINES: dict[str, Callable[..., AlertEngine]] = {
     "stub": _stub_alert_engine,
+    "weighted": _weighted_alert_engine,
 }
 
 

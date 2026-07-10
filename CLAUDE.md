@@ -72,7 +72,7 @@ src/iotshield/
   contracts/    frozen data contracts (pydantic v2) — the product's core
   normalize/    Normalizer port + adapters (stub, syslog, ...)
   detect/       Detector port + adapters (stub threshold, telemetry-ad, ...)
-  alert/        scoring/correlation port + adapters (stub, team2 formula)
+  alert/        scoring/correlation port + adapters (stub, weighted, ...)
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     batch runner wiring ports together (run_pipeline entry point)
   api/          FastAPI service (read-side: events/detections/alerts/assets)
