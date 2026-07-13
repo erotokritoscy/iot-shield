@@ -30,6 +30,15 @@ garbage line
 2026-07-07T12:02:00,pump-02,Pressure,50.0
 """
 
+# One parseable telemetry line and three that aren't: a 75% reject rate, the
+# signature of the wrong normalizer for the data (ADR-0017), not a few corrupt lines.
+MOSTLY_MALFORMED_CSV = """\
+2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0
+not a telemetry row
+also not a row
+neither is this
+"""
+
 
 def make_config(tmp_path: Path, **overrides: Any) -> PipelineConfig:
     base: dict[str, Any] = {
@@ -136,6 +145,15 @@ class TestEndToEnd:
         with pytest.raises(ValueError, match="incompatible pipeline configuration"):
             run_pipeline(config, write_input(tmp_path))
 
+    def test_high_malformed_rate_warns_of_likely_wrong_normalizer(self, tmp_path: Path) -> None:
+        # Most input rejected -> the run is probably pointed at the wrong normalizer;
+        # the report must say so, not hide it as a big malformed pile (ADR-0017). The
+        # run still completes and the malformed records are still captured.
+        report = run_pipeline(make_config(tmp_path), write_input(tmp_path, MOSTLY_MALFORMED_CSV))
+        assert report.malformed > report.events
+        assert any("rejected" in w and "may not match" in w for w in report.warnings)
+        assert "Warnings:" in report.render()
+
 
 class TestDemoArtifacts:
     """The committed demo files are covered by exact counts: the demo cannot rot."""
@@ -219,3 +237,27 @@ class TestDemoArtifacts:
         # guard surfaces that as a warning rather than refusing the showcase run.
         assert any("will not fire" in warning for warning in report.warnings)
         assert "Warnings:" in report.render()
+        # ... and the 20% reject rate stays below the malformed-rate threshold, so the
+        # showcase is not falsely flagged as a wrong-normalizer misconfig (ADR-0017).
+        assert not any("may not match" in warning for warning in report.warnings)
+
+
+class TestMalformedRateWarning:
+    """The threshold logic behind the input-appropriateness warning (ADR-0017)."""
+
+    @pytest.mark.parametrize(
+        "events,malformed,warns",
+        [
+            (0, 0, False),  # empty input: no data, no signal
+            (10, 0, False),  # a clean feed
+            (10, 3, False),  # 23% rejects: normal partial corruption, below threshold
+            (1, 1, True),  # 50%: at the threshold
+            (1, 3, True),  # 75%: mostly rejected
+            (0, 5, True),  # nothing parsed at all
+        ],
+    )
+    def test_threshold(self, events: int, malformed: int, warns: bool) -> None:
+        warning = runner_module._high_malformed_warning("stub", events, malformed)
+        assert (warning is not None) == warns
+        if warning is not None:
+            assert "stub" in warning and "may not match" in warning

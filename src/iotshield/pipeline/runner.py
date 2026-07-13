@@ -25,6 +25,11 @@ from iotshield.storage import (
 
 TOP_ALERTS_IN_REPORT = 5
 
+# Above this fraction of rejected input, a run is probably misconfigured (the wrong
+# normalizer for the data) rather than merely carrying a few corrupt lines, so the
+# report says so (ADR-0017). A default only — not yet operator-tunable.
+_MALFORMED_WARN_RATE = 0.5
+
 
 @dataclass(frozen=True)
 class RunReport:
@@ -82,6 +87,26 @@ def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
         engine.dispose()
 
 
+def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str | None:
+    """Flag a run where most input failed to parse — usually the wrong normalizer.
+
+    A few rejects in a healthy feed are normal ("capture, never drop" — ADR-0011); a
+    *high* reject rate instead means the input probably doesn't match the chosen
+    normalizer at all (e.g. CSV fed to the syslog normalizer), which otherwise hides
+    as a big malformed pile that reads like a successful run. The signal is the
+    normalizer's own reject count, so there is no rival format-sniffer to disagree
+    with it (ADR-0017). Returns None when there is nothing to say.
+    """
+    total = events + malformed
+    if total == 0 or malformed / total < _MALFORMED_WARN_RATE:
+        return None
+    pct = round(100 * malformed / total)
+    return (
+        f"the {normalizer!r} normalizer rejected {pct}% of input "
+        f"({malformed}/{total} records); the input may not match the chosen normalizer"
+    )
+
+
 def execute_run(
     config: PipelineConfig,
     text: str,
@@ -95,7 +120,8 @@ def execute_run(
     run_on_text, which owns a per-run engine) and the Pipeline API (which reuses its
     long-lived engine) both land here. Runs inside ONE transaction — a crash leaves
     zero half-written rows. The schema is assumed to exist (the caller owns it).
-    Guard ERRORs block before any row is written; WARNINGs ride along in the report.
+    Guard ERRORs block before any row is written; WARNINGs ride along in the report,
+    alongside a data-quality WARNING when most of the input failed to parse (ADR-0017).
     """
     warnings = [
         f"[{issue.stage}] {issue.message}"
@@ -125,6 +151,12 @@ def execute_run(
         assets = {asset.asset_id: asset for asset in repository.list_assets(session)}
         alerts = alert_engine.build_alerts(detections, assets)
         repository.insert_alerts(session, alerts)
+
+    # Content-appropriateness, distinct from the guard's structural checks: a run that
+    # rejected most of its input is probably pointed at the wrong normalizer (ADR-0017).
+    quality = _high_malformed_warning(config.normalizer, len(result.events), len(result.malformed))
+    if quality is not None:
+        warnings.append(f"[input] {quality}")
 
     return RunReport(
         input_path=origin,
