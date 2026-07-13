@@ -164,3 +164,47 @@ class TestDemoArtifacts:
         top = report.top_alerts[0]
         assert top.asset_id == "skab-testbed"
         assert top.severity == AlertSeverity.CRITICAL
+
+    def test_triage_demo_ranks_by_severity_criticality_and_volume(self, tmp_path: Path) -> None:
+        # The flagship: two detectors (team3_zscore + stub_threshold) feed the
+        # weighted engine over four assets, so the ranked queue exercises every
+        # single-lane priority factor at once (ADR-0012 + ADR-0013). The stub
+        # threshold (300) sits above SKAB's largest channel, so the two detectors
+        # never overlap: team3 owns skab-testbed, stub owns the pumps.
+        from iotshield.contracts import AlertSeverity
+        from iotshield.pipeline import load_config
+
+        config = load_config(REPO_ROOT / "config" / "demo_triage.yaml").model_copy(
+            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
+        )
+        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_triage.csv")
+        assert (report.events, report.malformed, report.detections, report.alerts) == (
+            2414,
+            0,
+            8,
+            4,
+        )
+        ranked = [(alert.asset_id, alert.severity) for alert in report.top_alerts]
+        assert ranked == [
+            ("skab-testbed", AlertSeverity.HIGH),  # real team3 anomaly, severity saturated
+            ("reactor-pump", AlertSeverity.HIGH),  # 750 breach x CRITICAL asset
+            ("utility-pump", AlertSeverity.MEDIUM),  # IDENTICAL breach, LOW asset -> demoted
+            ("boiler-pump", AlertSeverity.MEDIUM),  # mild readings but 5x -> volume escalates
+        ]
+
+    def test_syslog_demo_normalizes_multi_host_logs(self, tmp_path: Path) -> None:
+        # The normalizer showcase: two syslog dialects across three hosts, no
+        # numeric readings, so the telemetry detector fires on nothing. The visible
+        # results are LOG events and the quarantined malformed lines (ADR-0011).
+        from iotshield.pipeline import load_config
+
+        config = load_config(REPO_ROOT / "config" / "demo_syslog.yaml").model_copy(
+            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
+        )
+        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_syslog.log")
+        assert (report.events, report.malformed, report.detections, report.alerts) == (
+            12,
+            3,
+            0,
+            0,
+        )
