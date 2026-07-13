@@ -5,8 +5,10 @@ Deliberately dumb and permanent: reference implementation for the port suite
 and the pre-committed fallback for the detection stage.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
 
 
@@ -47,3 +49,13 @@ class StubThresholdDetector:
                     )
                 )
         return detections
+
+
+def capability(params: Mapping[str, Any]) -> Capability:
+    """This detector's lane is configurable, so its declared capability follows params.
+
+    Mirrors the factory's default (``registry._stub_threshold``); the meta-test in
+    tests/pipeline/test_capabilities.py pins the two together against a built instance.
+    """
+    lane = Lane(params.get("lane", Lane.TELEMETRY))
+    return Capability.of(consumes={LaneToken(lane)}, produces={DETECTIONS})

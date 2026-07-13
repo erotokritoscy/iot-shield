@@ -32,11 +32,15 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from iotshield.capabilities import Capability, FormatToken, LaneToken
 from iotshield.contracts import Lane, Severity
 from iotshield.normalize._linewise import LineParseError, normalize_linewise
 from iotshield.normalize.port import NormalizeResult
 
 SOURCE_FORMAT = "syslog"
+
+# Consumes syslog text; every event it emits is log-lane. Declared for the guard.
+CAPABILITY = Capability.of(consumes={FormatToken(SOURCE_FORMAT)}, produces={LaneToken(Lane.LOG)})
 
 # Zone attributed to timestamps that arrive without one (D2, ADR-0011).
 _ASSUMED_TZ = UTC

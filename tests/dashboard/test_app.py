@@ -11,6 +11,7 @@ from streamlit.testing.v1 import AppTest
 import iotshield.dashboard.app as dashboard_app
 from iotshield.contracts import PrioritizedAlert
 from iotshield.dashboard.client import ApiClient
+from iotshield.dashboard.control_client import ControlClient
 from tests.dashboard.conftest import SeededDashboard
 
 # AppTest runs the entry SCRIPT; it imports main() from the real module, so
@@ -118,3 +119,46 @@ def test_contract_drift_mid_page_shows_error_not_traceback(
     at.run()
     assert not at.exception
     assert at.error
+
+
+class TestCompose:
+    """The orchestration page: compose a chain, see it validated, trigger a run."""
+
+    def _open(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> AppTest:
+        # The compose page uses only the Pipeline API; a healthy (empty) read client
+        # keeps the initial Triage render clean before we switch pages.
+        monkeypatch.setattr(dashboard_app, "get_client", lambda: empty_client)
+        monkeypatch.setattr(dashboard_app, "get_control_client", lambda: control_client)
+        at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+        at.run()
+        at.sidebar.radio[0].set_value("Compose & run").run()
+        assert not at.exception
+        return at
+
+    def test_default_chain_validates_as_compatible(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, control_client)
+        assert any("compatible" in str(s.value).lower() for s in at.success)
+
+    def test_run_button_triggers_a_pipeline_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.text_area[0].set_value("2026-07-07T12:00:00+00:00,pump-02,Pressure,96.0").run()
+        at.button[0].click().run()
+        assert not at.exception
+        assert any("Run complete" in str(s.value) for s in at.success)
+        # events, malformed, detections, alerts for the single over-threshold reading
+        assert [m.value for m in at.metric] == ["1", "0", "1", "1"]

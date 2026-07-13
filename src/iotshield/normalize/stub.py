@@ -12,11 +12,18 @@ raises) live once in ``normalize_linewise``.
 
 from typing import Any
 
+from iotshield.capabilities import Capability, FormatToken, LaneToken
 from iotshield.contracts import Lane
 from iotshield.normalize._linewise import LineParseError, normalize_linewise
 from iotshield.normalize.port import NormalizeResult
 
 SOURCE_FORMAT = "stub-csv"
+
+# Consumes the stub CSV format; every event it emits is telemetry-lane. Declared
+# here so the compatibility guard can read it without constructing the adapter.
+CAPABILITY = Capability.of(
+    consumes={FormatToken(SOURCE_FORMAT)}, produces={LaneToken(Lane.TELEMETRY)}
+)
 
 
 def _parse_line(line: str) -> dict[str, Any]:

@@ -6,18 +6,23 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 
 import json
 import os
+from typing import Any
 
 import httpx
 import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
+from iotshield.api.control import ParamInfo
 from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import severity_bar, telemetry_timeline
 from iotshield.dashboard.client import ApiClient
+from iotshield.dashboard.control_client import ControlClient
 
 API_URL_ENV = "IOTSHIELD_API_URL"
 DEFAULT_API_URL = "http://127.0.0.1:8000"
+PIPELINE_API_URL_ENV = "IOTSHIELD_PIPELINE_API_URL"
+DEFAULT_PIPELINE_API_URL = "http://127.0.0.1:8100"
 
 # Everything that can go wrong talking to the API: transport/status errors
 # (httpx), a response that no longer matches a contract (ValidationError — the
@@ -28,6 +33,10 @@ _API_ERRORS = (httpx.HTTPError, ValidationError, json.JSONDecodeError)
 
 def get_client() -> ApiClient:
     return ApiClient.from_url(os.environ.get(API_URL_ENV, DEFAULT_API_URL))
+
+
+def get_control_client() -> ControlClient:
+    return ControlClient.from_url(os.environ.get(PIPELINE_API_URL_ENV, DEFAULT_PIPELINE_API_URL))
 
 
 def _asset_label(asset: Asset) -> str:
@@ -166,8 +175,143 @@ def data_health_page(client: ApiClient) -> None:
     )
 
 
+def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
+    # One input per adapter param, typed off the /modules schema. Values are still
+    # validated by the guard and the contracts, so free-text entry is safe here.
+    values: dict[str, Any] = {}
+    for param in params:
+        key = f"{prefix}_{param.name}"
+        if param.type == "float":
+            values[param.name] = st.number_input(
+                param.name, value=float(param.default or 0.0), key=key
+            )
+        elif param.type == "int":
+            values[param.name] = st.number_input(
+                param.name, value=int(param.default or 0), step=1, key=key
+            )
+        else:
+            default = "" if param.default is None else str(param.default)
+            values[param.name] = st.text_input(param.name, value=default, key=key)
+    return values
+
+
+def compose_page(client: ControlClient) -> None:
+    st.title("Compose & run a pipeline")
+    st.caption("Pick modules, validate the chain, then trigger a run. Results appear under Triage.")
+    try:
+        catalogue = client.modules()
+    except _API_ERRORS as exc:
+        st.error(
+            f"Pipeline API unreachable ({exc}). Start it with: "
+            "IOTSHIELD_DATABASE_URL=sqlite:///demo.db python -m iotshield.api.control"
+        )
+        return
+
+    normalizers = {module.name: module for module in catalogue.normalizers}
+    detectors = {module.name: module for module in catalogue.detectors}
+    engines = {module.name: module for module in catalogue.alert_engines}
+    if not (normalizers and detectors and engines):
+        st.error("The Pipeline API reports no adapters — nothing to compose.")
+        return
+
+    st.subheader("1 · Input format & normalizer")
+    normalizer_name = st.selectbox("Normalizer", sorted(normalizers), key="compose_normalizer")
+    formats = normalizers[normalizer_name].formats
+    source_format = (
+        st.selectbox("Input format", formats, key="compose_format")
+        if len(formats) > 1
+        else (formats[0] if formats else "")
+    )
+    st.caption(f"Expected input format: `{source_format or 'unknown'}`")
+
+    st.subheader("2 · Detectors")
+    selected = st.multiselect(
+        "Detectors", sorted(detectors), default=[sorted(detectors)[0]], key="compose_detectors"
+    )
+    detector_specs: list[dict[str, Any]] = []
+    for name in selected:
+        with st.expander(f"{name} parameters"):
+            params = _param_widgets(f"det_{name}", detectors[name].params)
+        detector_specs.append({"name": name, "params": params})
+
+    st.subheader("3 · Alert engine")
+    engine_name = st.selectbox("Alert engine", sorted(engines), key="compose_engine")
+    with st.expander(f"{engine_name} parameters"):
+        engine_params = _param_widgets(f"eng_{engine_name}", engines[engine_name].params)
+
+    if not detector_specs:
+        st.info("Pick at least one detector to continue.")
+        return
+
+    spec: dict[str, Any] = {
+        "source_format": source_format,
+        "normalizer": normalizer_name,
+        "detectors": detector_specs,
+        "alert_engine": {"name": engine_name, "params": engine_params},
+    }
+
+    st.subheader("4 · Validate & run")
+    try:
+        validation = client.validate(spec)
+    except _API_ERRORS as exc:
+        st.error(f"Validation request failed: {exc}")
+        return
+    for issue in validation.issues:
+        line = f"[{issue.stage}] {issue.message}"
+        if issue.level == "error":
+            st.error(line)
+        else:
+            st.warning(line)
+    if validation.ok and not validation.issues:
+        st.success("Chain is compatible.")
+
+    input_text = st.text_area(
+        "Input data",
+        key="compose_input",
+        height=160,
+        placeholder="Paste records here (CSV for stub-csv, log lines for syslog).",
+    )
+    disabled = (not validation.ok) or (not input_text.strip())
+    if st.button("Run pipeline", disabled=disabled, key="compose_run"):
+        try:
+            result = client.run(spec, input_text=input_text, origin="dashboard")
+        except _API_ERRORS as exc:
+            st.error(f"Run failed: {exc}")
+            return
+        st.success("Run complete — open the Triage page for the full results.")
+        columns = st.columns(4)
+        for column, key in zip(
+            columns, ("events", "malformed", "detections", "alerts"), strict=True
+        ):
+            column.metric(key, getattr(result, key))
+        for warning in result.warnings:
+            st.warning(warning)
+        if result.top_alerts:
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "severity": [a.severity.value for a in result.top_alerts],
+                        "priority": [round(a.priority_score, 1) for a in result.top_alerts],
+                        "asset": [a.asset_id for a in result.top_alerts],
+                        "rationale": [a.rationale for a in result.top_alerts],
+                    }
+                ),
+                hide_index=True,
+            )
+
+
 def main() -> None:
     st.set_page_config(page_title="iotshield", layout="wide")
+    page = st.sidebar.radio(
+        "View", ["Triage", "Assets & telemetry", "Data health", "Compose & run"]
+    )
+
+    # The orchestration page talks only to the Pipeline API, not the read API, so it
+    # handles its own reachability and returns before the read-side health gate.
+    if page == "Compose & run":
+        compose_page(get_control_client())
+        return
+
     client = get_client()
     try:
         client.health()
@@ -179,7 +323,6 @@ def main() -> None:
         )
         st.stop()
 
-    page = st.sidebar.radio("View", ["Triage", "Assets & telemetry", "Data health"])
     try:
         if page == "Triage":
             triage_page(client)

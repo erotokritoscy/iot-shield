@@ -12,15 +12,18 @@ graduate-student modules as swappable adapters behind frozen data contracts.
 The whole stack on real Postgres, reproducibly, in two commands:
 
 ```
-docker compose up -d           # postgres -> schema init -> API -> dashboard
+docker compose up -d           # postgres -> init -> read API + Pipeline API -> dashboard
 docker compose run --rm runner # run the demo pipeline to populate the database
 ```
 
-Then open the dashboard at http://localhost:8501 and the API at
-http://localhost:8000/docs. Services find each other by name on the compose
-network (the API reaches Postgres at `postgres`, the dashboard reaches the API
-at `api`); credentials come from `.env` (copy `.env.example`), with defaults that
-run out of the box. `docker compose down -v` tears it all down, volume included.
+Then open the dashboard at http://localhost:8501, the read API at
+http://localhost:8000/docs, and the write-side **Pipeline API** at
+http://localhost:8100/docs (compose a pipeline and trigger runs — also driven from
+the dashboard's "Compose & run" page). Services find each other by name on the
+compose network (the APIs reach Postgres at `postgres`, the dashboard reaches them
+at `api` and `pipeline-api`); credentials come from `.env` (copy `.env.example`),
+with defaults that run out of the box. `docker compose down -v` tears it all down,
+volume included.
 
 The `runner` is a job, not a long-lived service — it runs once and exits, so it
 sits behind the `jobs` profile and is invoked with `docker compose run`, not
@@ -78,6 +81,20 @@ uv run python -m iotshield.pipeline --input data/demo/demo.csv --config config/d
 Same detections, richer prioritization and per-factor rationale — compare its
 alerts against the stub engine's from `config/demo.yaml`.
 
+Finally, `config/demo_triage.yaml` puts it all together — **both** detectors
+(`team3_zscore` and `stub_threshold`) feeding the `weighted` engine over four
+assets:
+
+```
+uv run python -m iotshield.pipeline --input data/demo/demo_triage.csv --config config/demo_triage.yaml
+```
+
+The result is a *ranked* triage queue, not a single alert: the real SKAB anomaly
+tops it (saturated severity), two pumps with an identical threshold breach split
+across the HIGH/MEDIUM line purely by asset criticality, and a fourth is escalated
+by repeated (volume) detections — the three single-lane priority factors, each
+visible in the ordering.
+
 ## Serve the API
 
 ```
@@ -90,16 +107,32 @@ Read-side endpoints over whatever the pipeline stored: `/health`, `/assets`,
 `/summary` — interactive docs at `/docs`. Responses are the data contracts,
 serialized as-is.
 
+## Serve the Pipeline API (compose & run)
+
+```
+$env:IOTSHIELD_DATABASE_URL = "sqlite:///demo.db"   # same database as the read API
+uv run python -m iotshield.api.control
+```
+
+The write side (ADR-0015), on port 8100 by default. `GET /modules` lists the
+available adapters with their capabilities and parameters; `POST /runs/validate`
+checks a composed chain without running it; `POST /runs` validates, runs, and
+returns a summary (results persist — read them back from the read API). Interactive
+docs at `/docs`. It's a separate service from the read API so the read side stays
+write-free and independently scalable.
+
 ## Open the dashboard
 
 ```
-$env:IOTSHIELD_API_URL = "http://127.0.0.1:8000"   # optional, this is the default
+$env:IOTSHIELD_API_URL = "http://127.0.0.1:8000"            # read API (default)
+$env:IOTSHIELD_PIPELINE_API_URL = "http://127.0.0.1:8100"   # Pipeline API (default)
 uv run streamlit run src/iotshield/dashboard/streamlit_app.py
 ```
 
-Three pages against the API: Triage (ranked alert queue + drill-down to
-evidence), Assets & telemetry (per-asset timeline with detection overlays),
-Data health (counts + the malformed-input audit).
+Four pages: Triage (ranked alert queue + drill-down to evidence), Assets &
+telemetry (per-asset timeline with detection overlays), Data health (counts + the
+malformed-input audit), and **Compose & run** (pick modules, validate the chain,
+and trigger a run against the Pipeline API — its results then appear under Triage).
 
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).

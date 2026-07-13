@@ -65,6 +65,27 @@ services:
       timeout: 3s
       retries: 10
 
+  # Write-side Pipeline API (ADR-0015): compose a pipeline and trigger runs. A
+  # separate role from the read API so the read plane stays write-free and
+  # independently scalable, and a slow/crashing run can't take the read side down.
+  pipeline-api:
+    <<: *app
+    command: ["python", "-m", "iotshield.api.control"]
+    environment:
+      <<: *db-env
+      IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
+      IOTSHIELD_PIPELINE_API_PORT: "8100"
+    ports:
+      - "8100:8100"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   dashboard:
     <<: *app
     command:
@@ -75,10 +96,13 @@ services:
       - --server.port=8501
     environment:
       IOTSHIELD_API_URL: http://api:8000
+      IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
     ports:
       - "8501:8501"
     depends_on:
       api:
+        condition: service_healthy
+      pipeline-api:
         condition: service_healthy
 
   # Batch job, not a service: runs once and exits. Profile-gated so `up` never

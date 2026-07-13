@@ -1,0 +1,252 @@
+"""FastAPI write-side service — the Pipeline API (control plane).
+
+The operator-facing surface of the productized pipeline: it accepts a ``PipelineSpec``
+(which adapters to run) plus input text, validates the chain with the compatibility
+guard, runs it, and returns a run summary. Results persist as today; the read-side API
+serves them to the dashboard (the deployment-agnostic result sink is deferred, week-2 §9-A).
+
+Where results are stored is the server's decision, not the caller's: the app is built
+around an injected engine (like the read API) and supplies ``database_url`` itself, so a
+caller can never point a run at another database — the tenancy boundary.
+
+This is a *writer* — it evolves ADR-0007's "the runner is the only writer" (the run logic
+is still the runner's, now invocable over HTTP). It is a separate app/role from the read
+API so the read plane stays write-free, independently scalable, and unaffected by a slow
+or crashing run (ADR-0015). Serve: python -m iotshield.api.control
+"""
+
+import inspect
+import os
+import sys
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import Engine, select
+
+import iotshield
+from iotshield.capabilities import formats_in
+from iotshield.contracts import PrioritizedAlert
+from iotshield.pipeline.compat import (
+    CompatIssue,
+    IncompatiblePipelineError,
+    check_compatibility,
+    has_errors,
+)
+from iotshield.pipeline.config import PipelineSpec, config_from_spec
+from iotshield.pipeline.registry import ALERT_ENGINES, DETECTORS, NORMALIZERS, AdapterSpec
+from iotshield.pipeline.runner import RunReport, execute_run
+from iotshield.storage import (
+    database_url_from_env,
+    describe_location,
+    make_engine,
+    make_session_factory,
+)
+
+# --- Wire models: the Pipeline API's request/response schema -----------------
+
+
+class ParamInfo(BaseModel):
+    """One tunable of an adapter, introspected from its factory signature."""
+
+    name: str
+    type: str | None = None
+    default: Any = None
+    required: bool
+
+
+class ModuleInfo(BaseModel):
+    name: str
+    kind: str
+    consumes: list[str]
+    produces: list[str]
+    formats: list[str]  # input formats decoded from `consumes` (normalizers); [] otherwise
+    params: list[ParamInfo]
+
+
+class ModulesResponse(BaseModel):
+    """The adapter catalogue that drives the orchestration UI's menus."""
+
+    normalizers: list[ModuleInfo]
+    detectors: list[ModuleInfo]
+    alert_engines: list[ModuleInfo]
+
+
+class IssueInfo(BaseModel):
+    level: str
+    stage: str
+    message: str
+
+
+class ValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spec: PipelineSpec
+
+
+class ValidateResponse(BaseModel):
+    ok: bool  # True when there are no ERROR-level issues (WARNINGs still ok)
+    issues: list[IssueInfo]
+
+
+class RunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spec: PipelineSpec
+    input: str = Field(description="Raw input payload to normalize")
+    origin: str = Field(default="api-run", description="Provenance label for events/rejects")
+
+
+class RunResponse(BaseModel):
+    """A run summary. Full results are read back from the read-side API."""
+
+    events: int
+    malformed: int
+    detections: int
+    alerts: int
+    warnings: list[str]
+    top_alerts: list[PrioritizedAlert]
+
+
+# --- Registry introspection (drives /modules) --------------------------------
+
+
+def _describe_params(factory: Any) -> list[ParamInfo]:
+    try:
+        signature = inspect.signature(factory)
+    except (TypeError, ValueError):
+        return []
+    params: list[ParamInfo] = []
+    for name, parameter in signature.parameters.items():
+        if name == "self" or parameter.kind in (
+            inspect.Parameter.VAR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        ):
+            continue
+        annotation = parameter.annotation
+        empty = inspect.Parameter.empty
+        type_name = None if annotation is empty else getattr(annotation, "__name__", None)
+        has_default = parameter.default is not empty
+        params.append(
+            ParamInfo(
+                name=name,
+                type=type_name,
+                default=parameter.default if has_default else None,
+                required=not has_default,
+            )
+        )
+    return params
+
+
+def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:
+    # Default-params shape; the UI edits params to change a param-driven capability.
+    capability = spec.capability({})
+    return ModuleInfo(
+        name=name,
+        kind=kind,
+        consumes=sorted(token.render() for token in capability.consumes),
+        produces=sorted(token.render() for token in capability.produces),
+        formats=sorted(formats_in(capability.consumes)),
+        params=_describe_params(spec.factory),
+    )
+
+
+def _issue_info(issue: CompatIssue) -> IssueInfo:
+    return IssueInfo(level=issue.level.value, stage=issue.stage, message=issue.message)
+
+
+def _run_response(report: RunReport) -> RunResponse:
+    return RunResponse(
+        events=report.events,
+        malformed=report.malformed,
+        detections=report.detections,
+        alerts=report.alerts,
+        warnings=report.warnings,
+        top_alerts=report.top_alerts,
+    )
+
+
+# The adapter catalogue is invariant for the process (the registries are module-level
+# constants), so build it once rather than re-introspecting every factory per request.
+_MODULES_RESPONSE = ModulesResponse(
+    normalizers=[_module_info("normalizer", n, s) for n, s in NORMALIZERS.items()],
+    detectors=[_module_info("detector", n, s) for n, s in DETECTORS.items()],
+    alert_engines=[_module_info("alert_engine", n, s) for n, s in ALERT_ENGINES.items()],
+)
+
+
+# --- App ---------------------------------------------------------------------
+
+
+def create_control_app(engine: Engine) -> FastAPI:
+    """Build the Pipeline API around an injected engine (tests pass SQLite; prod Postgres)."""
+    app = FastAPI(title="iotshield Pipeline API", version=iotshield.__version__)
+    app.state.session_factory = make_session_factory(engine)
+    # Only used to fill the run report's (unexposed) location field; the run persists
+    # through the injected engine, never a caller-named database.
+    app.state.database_url = engine.url.render_as_string(hide_password=False)
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        with app.state.session_factory() as session:
+            session.execute(select(1))  # prove DB connectivity, not just liveness
+        return {"status": "ok", "version": iotshield.__version__}
+
+    @app.get("/modules")
+    def modules() -> ModulesResponse:
+        """The adapter catalogue: names, capabilities, and param schemas (built once)."""
+        return _MODULES_RESPONSE
+
+    @app.post("/runs/validate")
+    def validate_run(request: ValidateRequest) -> ValidateResponse:
+        """Dry-run the compatibility guard: no execution, just the issues (for live UI feedback)."""
+        config = config_from_spec(request.spec, app.state.database_url)
+        issues = check_compatibility(config)
+        return ValidateResponse(ok=not has_errors(issues), issues=[_issue_info(i) for i in issues])
+
+    @app.post("/runs")
+    def create_run(request: RunRequest) -> RunResponse:
+        """Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
+
+        The guard runs once, inside execute_run, which raises IncompatiblePipelineError on
+        an ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map
+        its typed error to a structured 422. It raises before any row is written.
+        """
+        config = config_from_spec(request.spec, app.state.database_url)
+        try:
+            report = execute_run(
+                config,
+                request.input,
+                origin=request.origin,
+                session_factory=app.state.session_factory,
+            )
+        except IncompatiblePipelineError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "incompatible pipeline configuration",
+                    "issues": [_issue_info(i).model_dump() for i in exc.issues],
+                },
+            ) from exc
+        return _run_response(report)
+
+    return app
+
+
+def main() -> int:
+    url = database_url_from_env()
+    if url is None:
+        return 2
+    host = os.environ.get("IOTSHIELD_PIPELINE_API_HOST", "127.0.0.1")
+    port = int(os.environ.get("IOTSHIELD_PIPELINE_API_PORT", "8100"))
+    print(
+        f"iotshield Pipeline API on {host}:{port} using database: {describe_location(url)}",
+        file=sys.stderr,
+    )
+    uvicorn.run(create_control_app(make_engine(url)), host=host, port=port)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

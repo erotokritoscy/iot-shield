@@ -35,13 +35,38 @@ class AlertEngineConfig(_ConfigModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class PipelineConfig(_ConfigModel):
-    database_url: str = Field(min_length=1)
+class PipelineSpec(_ConfigModel):
+    """The operator-chosen shape of a run: which adapters, over what input format.
+
+    Deliberately excludes ``database_url`` — where results are stored is a
+    *deployment* decision, not an operator one (a tenant must never point a run at an
+    arbitrary database). The Pipeline API accepts a ``PipelineSpec`` and the server
+    supplies ``database_url`` from its environment; the CLI's ``load_config`` produces
+    a full ``PipelineConfig`` directly. This split is also where a future output-sink
+    selection will live, alongside the database (ADR-0015 / week-2 §9-A).
+    """
+
     source_format: str = Field(min_length=1)
     normalizer: str = "stub"
     detectors: list[DetectorConfig] = Field(min_length=1)
     alert_engine: AlertEngineConfig = Field(default_factory=AlertEngineConfig)
     assets: list[Asset] = Field(default_factory=list, description="Seed registrations")
+
+
+class PipelineConfig(PipelineSpec):
+    """A runnable config: an operator's spec plus the deployment's database."""
+
+    database_url: str = Field(min_length=1)
+
+
+def config_from_spec(spec: PipelineSpec, database_url: str) -> PipelineConfig:
+    """Assemble a runnable config from an operator spec + a deployment-supplied database.
+
+    The seam that keeps database choice server-side: the API validates a spec off the
+    wire, then this stitches in the environment's ``database_url`` — the caller never
+    names it.
+    """
+    return PipelineConfig.model_validate({**spec.model_dump(), "database_url": database_url})
 
 
 def load_config(path: Path) -> PipelineConfig:

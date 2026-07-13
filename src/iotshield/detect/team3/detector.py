@@ -27,10 +27,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import featurewise_robust_z
 from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
+
+# Fixed telemetry-lane detector; declared for the compatibility guard.
+CAPABILITY = Capability.of(consumes={LaneToken(Lane.TELEMETRY)}, produces={DETECTIONS})
 
 _MIN_COLLECTIVE = 3  # run length at/above which an episode is "collective" (team3 postprocess)
 _TOP_CHANNELS = 3

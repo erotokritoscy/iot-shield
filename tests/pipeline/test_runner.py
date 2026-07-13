@@ -129,6 +129,13 @@ class TestEndToEnd:
         report = run_pipeline(make_config(tmp_path), path)
         assert report.events == 4  # first line survived the BOM
 
+    def test_incompatible_config_is_refused_up_front(self, tmp_path: Path) -> None:
+        # An unsupported source_format would crash the normalizer; the guard blocks
+        # it before any adapter is built or any database touched.
+        config = make_config(tmp_path, source_format="sislog")
+        with pytest.raises(ValueError, match="incompatible pipeline configuration"):
+            run_pipeline(config, write_input(tmp_path))
+
 
 class TestDemoArtifacts:
     """The committed demo files are covered by exact counts: the demo cannot rot."""
@@ -208,3 +215,7 @@ class TestDemoArtifacts:
             0,
             0,
         )
+        # The telemetry detector on log-lane data idles by design (ADR-0011): the
+        # guard surfaces that as a warning rather than refusing the showcase run.
+        assert any("will not fire" in warning for warning in report.warnings)
+        assert "Warnings:" in report.render()
