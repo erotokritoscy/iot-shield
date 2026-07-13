@@ -26,10 +26,20 @@ the runner).
   live on each rerun and rendering the issues — ERRORs in red, WARNINGs in amber. The run button
   is disabled until validation reports no errors and input is present.
 
-- **Trigger + confirm; read the rest under Triage.** On run, the page calls `POST /runs` and shows
-  the returned summary (counts, warnings, top alerts) with a pointer to the Triage page, which
-  reads the full results from the read API exactly as before. The write path (compose→run) and the
-  read path (browse results) stay cleanly separated.
+- **Trigger + confirm; read the rest under Triage.** On run, the page calls `POST /runs` and shows a
+  **lightweight receipt** — the counts and any warnings — then **hands off** to Triage for the
+  ranked, explained alerts (read from the read API exactly as before). The run surface deliberately
+  does *not* render the alerts itself: composing/running (write plane) and browsing results (read
+  plane) are separated in the UI just as they are in the two APIs, so each surface does one job.
+  (The `POST /runs` response still carries `top_alerts` for programmatic callers that want the
+  summary without a second call.)
+
+- **The sidebar reflects the two planes.** Views are grouped into **Monitor** (Triage / Assets /
+  Health — the read plane) and **Operate** (Compose & run — the write plane), so the analyst's
+  daily monitoring mode and the operator's occasional compose-and-run mode read as distinct even
+  while sharing one app. This keeps write-capable controls out of the analyst's steady-state view,
+  and sets up the eventual split into two deployables (an analyst dashboard and an operator console)
+  as just *promoting* the Operate group — which already talks only to the Pipeline API.
 
 - **The page is self-contained** on the read side: it uses only the Pipeline API and returns before
   the read-API health gate, so the two surfaces fail independently.

@@ -278,7 +278,7 @@ def compose_page(client: ControlClient) -> None:
         except _API_ERRORS as exc:
             st.error(f"Run failed: {exc}")
             return
-        st.success("Run complete — open the Triage page for the full results.")
+        st.success("Run complete.")
         columns = st.columns(4)
         for column, key in zip(
             columns, ("events", "malformed", "detections", "alerts"), strict=True
@@ -286,31 +286,34 @@ def compose_page(client: ControlClient) -> None:
             column.metric(key, getattr(result, key))
         for warning in result.warnings:
             st.warning(warning)
-        if result.top_alerts:
-            st.dataframe(
-                pd.DataFrame(
-                    {
-                        "severity": [a.severity.value for a in result.top_alerts],
-                        "priority": [round(a.priority_score, 1) for a in result.top_alerts],
-                        "asset": [a.asset_id for a in result.top_alerts],
-                        "rationale": [a.rationale for a in result.top_alerts],
-                    }
-                ),
-                hide_index=True,
+        # A receipt, not a results view: the ranked, explained alerts live on the read
+        # plane. Hand off to Triage rather than half-rendering them here, so the run
+        # surface (write) and the browse surface (read) each do one job.
+        if result.alerts:
+            st.info(
+                f"{result.alerts} alert(s) written — see them ranked and explained "
+                "under **Monitor → Triage**."
             )
+        else:
+            st.caption("No alerts produced by this run.")
 
 
 def main() -> None:
     st.set_page_config(page_title="iotshield", layout="wide")
-    page = st.sidebar.radio(
-        "View", ["Triage", "Assets & telemetry", "Data health", "Compose & run"]
-    )
+    st.sidebar.title("iotshield")
+    # Two modes, mirroring the two planes: Operate (write — compose & run, backed by
+    # the Pipeline API) vs Monitor (read — browse results, backed by the read API).
+    # Grouping them keeps the analyst's daily view free of the operator's controls;
+    # a future split into two deployables is then just promoting the Operate mode.
+    mode = st.sidebar.radio("Mode", ["Monitor", "Operate"])
 
-    # The orchestration page talks only to the Pipeline API, not the read API, so it
-    # handles its own reachability and returns before the read-side health gate.
-    if page == "Compose & run":
+    # Operate talks only to the Pipeline API and handles its own reachability, so it
+    # returns before the read-side health gate the Monitor views depend on.
+    if mode == "Operate":
         compose_page(get_control_client())
         return
+
+    page = st.sidebar.radio("View", ["Triage", "Assets & telemetry", "Data health"])
 
     client = get_client()
     try:

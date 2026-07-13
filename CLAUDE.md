@@ -89,7 +89,7 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     batch runner + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app (consumes the APIs only: Triage/Assets/Health + Compose & run)
+  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run)
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run)

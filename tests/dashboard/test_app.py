@@ -24,7 +24,8 @@ def run_app(monkeypatch: pytest.MonkeyPatch, client: ApiClient, page: str | None
     at = AppTest.from_file(str(APP_PATH), default_timeout=15)
     at.run()
     if page is not None:
-        at.sidebar.radio[0].set_value(page).run()
+        # radio[0] is Mode (Monitor/Operate); radio[1] is the Monitor View picker.
+        at.sidebar.radio[1].set_value(page).run()
     assert not at.exception, f"page raised: {at.exception}"
     return at
 
@@ -136,7 +137,7 @@ class TestCompose:
         monkeypatch.setattr(dashboard_app, "get_control_client", lambda: control_client)
         at = AppTest.from_file(str(APP_PATH), default_timeout=30)
         at.run()
-        at.sidebar.radio[0].set_value("Compose & run").run()
+        at.sidebar.radio[0].set_value("Operate").run()  # Mode: Monitor -> Operate
         assert not at.exception
         return at
 
