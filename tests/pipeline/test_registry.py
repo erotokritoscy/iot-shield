@@ -4,7 +4,14 @@ from iotshield.alert import AlertEngine
 from iotshield.contracts import Lane
 from iotshield.detect import Detector
 from iotshield.normalize import Normalizer
-from iotshield.pipeline.registry import build_alert_engine, build_detector, build_normalizer
+from iotshield.pipeline.registry import (
+    build_alert_engine,
+    build_detector,
+    build_normalizer,
+    build_sink,
+    sink_requires_database,
+)
+from iotshield.sink import ResultSink, SinkResources
 
 
 def test_built_adapters_satisfy_their_ports() -> None:
@@ -60,3 +67,26 @@ def test_team3_unknown_artifact_fails_fast_and_names_adapter() -> None:
         ValueError, match=r"invalid params for detector 'team3_zscore'.*unknown team3 artifact"
     ):
         build_detector("team3_zscore", {"artifact": "nope"})
+
+
+def test_build_file_sink_satisfies_the_port() -> None:
+    sink: ResultSink = build_sink("file", {"path": "out.jsonl"}, SinkResources())
+    assert sink is not None
+
+
+def test_unknown_sink_lists_known_alternatives() -> None:
+    with pytest.raises(ValueError, match=r"unknown sink 'nope'.*postgres"):
+        build_sink("nope", {}, SinkResources())
+
+
+def test_postgres_sink_without_a_database_fails_and_names_it() -> None:
+    # The postgres sink needs an injected session factory; without one it fails, named.
+    with pytest.raises(
+        ValueError, match=r"invalid params for sink 'postgres'.*requires a database"
+    ):
+        build_sink("postgres", {}, SinkResources())
+
+
+def test_sink_requires_database_flags_only_db_sinks() -> None:
+    assert sink_requires_database("postgres") is True
+    assert sink_requires_database("file") is False

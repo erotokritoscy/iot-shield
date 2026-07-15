@@ -68,6 +68,10 @@ class TestHealthAndModules:
         assert "format:syslog" in normalizers["syslog"]["consumes"]
         assert normalizers["syslog"]["formats"] == ["syslog"]  # decoded server-side
         assert {e["name"] for e in body["alert_engines"]} == {"stub", "weighted"}
+        sinks = {s["name"]: s for s in body["sinks"]}
+        assert set(sinks) == {"postgres", "file"}
+        assert sinks["postgres"]["params"] == []  # the injected 'resources' is not a param
+        assert {p["name"] for p in sinks["file"]["params"]} == {"path"}
 
 
 class TestValidate:

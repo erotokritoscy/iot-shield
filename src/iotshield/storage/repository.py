@@ -18,12 +18,12 @@ from sqlalchemy.orm import Session, selectinload
 from iotshield.contracts import (
     AlertStatus,
     Asset,
-    Criticality,
     DetectionResult,
     Lane,
     MalformedRecord,
     NormalizedEvent,
     PrioritizedAlert,
+    discovered_asset,
 )
 from iotshield.storage.orm import (
     AlertDetectionRow,
@@ -65,14 +65,7 @@ def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
         session.scalars(select(AssetRow.asset_id).where(AssetRow.asset_id.in_(asset_ids)))
     )
     for asset_id in sorted(asset_ids - existing):
-        stub = Asset(
-            asset_id=asset_id,
-            name=asset_id,
-            asset_type="unknown",
-            criticality=Criticality.MEDIUM,  # neutral policy default, stated explicitly
-            metadata={"auto_discovered": True},
-        )
-        session.add(AssetRow.from_contract(stub))
+        session.add(AssetRow.from_contract(discovered_asset(asset_id)))
     # No flush here: callers flush, and the unit of work orders stub inserts
     # before their FK-dependent rows within that single flush.
 

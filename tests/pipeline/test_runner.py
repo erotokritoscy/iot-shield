@@ -5,6 +5,8 @@ The inline fixture has known-exact counts so every causal link in the chain
 a real (file-backed SQLite) database inspected by a second engine.
 """
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,8 +14,8 @@ from typing import Any
 import pytest
 from sqlalchemy.orm import Session
 
-from iotshield.contracts import Criticality
-from iotshield.pipeline import PipelineConfig, run_pipeline
+from iotshield.contracts import Asset, Criticality, Lane, NormalizedEvent
+from iotshield.pipeline import PipelineConfig, compute_run, run_pipeline
 from iotshield.pipeline import runner as runner_module
 from iotshield.storage import make_engine, make_session_factory, repository
 
@@ -57,6 +59,7 @@ def write_input(tmp_path: Path, text: str = INLINE_CSV) -> Path:
 
 def open_db(config: PipelineConfig) -> Session:
     """Open a second engine onto the database a completed run already created."""
+    assert config.database_url is not None  # these fixtures always configure a postgres sink
     return make_session_factory(make_engine(config.database_url))()
 
 
@@ -128,7 +131,7 @@ class TestEndToEnd:
         assert "events: 4" in text and "alerts: 2" in text
         assert "pump-02" in text  # top alert names its asset
         assert "detection(s)" in text  # ... and carries a rationale
-        assert "database:" in text  # resolved DB location, so a cwd mismatch is visible
+        assert "destinations:" in text and "postgres" in text  # where results went
 
     def test_utf8_bom_input_is_not_rejected(self, tmp_path: Path) -> None:
         # A UTF-8 BOM (Excel/Notepad default on Windows) must not glue onto the
@@ -169,6 +172,22 @@ class TestDemoArtifacts:
         # Registered high-criticality pump outranks the discovered gateway.
         assert report.top_alerts[0].asset_id == "pump-02"
         assert report.top_alerts[1].asset_id == "gw-01"
+
+    def test_file_demo_config_writes_jsonl_with_no_database(self, tmp_path: Path) -> None:
+        # The file-only demo: the same normalize+detect as demo.yaml, but a file sink and
+        # no database at all (ADR-0018). Redirect the output into tmp so the run is hermetic.
+        from iotshield.pipeline import SinkConfig, load_config
+
+        out = tmp_path / "results.jsonl"
+        config = load_config(REPO_ROOT / "config" / "demo_file.yaml").model_copy(
+            update={"sinks": [SinkConfig(name="file", params={"path": str(out)})]}
+        )
+        assert config.database_url is None
+        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo.csv")
+        assert (report.events, report.malformed, report.detections) == (19, 3, 4)
+        assert report.destinations == ["file"]
+        record = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+        assert len(record["events"]) == 19
 
     def test_team3_demo_produces_a_real_detection_and_alert(self, tmp_path: Path) -> None:
         # The team3 detector on a real SKAB valve fault: one sustained anomaly
@@ -261,3 +280,68 @@ class TestMalformedRateWarning:
         assert (warning is not None) == warns
         if warning is not None:
             assert "stub" in warning and "may not match" in warning
+
+
+def _event(asset_id: str) -> NormalizedEvent:
+    return NormalizedEvent(
+        timestamp=datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
+        asset_id=asset_id,
+        source_type=Lane.TELEMETRY,
+        source_format="stub-csv",
+        raw="x",
+    )
+
+
+class TestStoreAgnosticCompute:
+    """The compute phase produces a full result without touching any store (ADR-0018)."""
+
+    def test_compute_run_touches_no_database(self, tmp_path: Path) -> None:
+        # make_config points database_url at run.db; compute_run must never open it.
+        config = make_config(tmp_path)
+        result = compute_run(config, INLINE_CSV, origin="inline")
+        counts = (
+            len(result.events),
+            len(result.malformed),
+            len(result.detections),
+            len(result.alerts),
+        )
+        assert counts == (4, 2, 3, 2)
+        assert {a.asset_id for a in result.assets} == {"pump-02", "gw-01"}
+        assert not (tmp_path / "run.db").exists()  # no database was created or opened
+
+    def test_resolve_assets_registration_beats_discovery(self) -> None:
+        seeded = [
+            Asset(
+                asset_id="pump-02",
+                name="Feed pump 2",
+                asset_type="pump",
+                criticality=Criticality.HIGH,
+            )
+        ]
+        resolved = {
+            a.asset_id: a
+            for a in runner_module.resolve_assets(seeded, [_event("pump-02"), _event("gw-01")])
+        }
+        assert resolved["pump-02"].criticality is Criticality.HIGH  # registration kept
+        assert resolved["pump-02"].metadata == {}  # not a discovered stub
+        assert resolved["gw-01"].criticality is Criticality.MEDIUM  # discovered default
+        assert resolved["gw-01"].metadata == {"auto_discovered": True}
+
+    def test_file_only_run_writes_jsonl_without_a_database(self, tmp_path: Path) -> None:
+        out = tmp_path / "out.jsonl"
+        config = PipelineConfig.model_validate(
+            {
+                "source_format": "stub-csv",
+                "detectors": [{"name": "stub_threshold", "params": {"threshold": 80.0}}],
+                "sinks": [{"name": "file", "params": {"path": str(out)}}],
+            }
+        )
+        assert config.database_url is None  # a file-only run needs no database
+        report = run_pipeline(config, write_input(tmp_path))
+        assert (report.events, report.malformed, report.detections, report.alerts) == (4, 2, 3, 2)
+        assert report.destinations == ["file"]
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1  # one self-contained record for this run
+        record = json.loads(lines[0])
+        assert record["normalizer"] == "stub"
+        assert len(record["events"]) == 4 and len(record["alerts"]) == 2

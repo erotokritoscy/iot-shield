@@ -75,8 +75,14 @@ services:
       <<: *db-env
       IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
       IOTSHIELD_PIPELINE_API_PORT: "8100"
+      # File-sink output dir (ADR-0018): bind-mounted to the host below, so a file-sink
+      # run's JSONL is visible on the host and survives container recreation. A
+      # caller-supplied filename is confined to this dir (sink/file.py).
+      IOTSHIELD_OUTPUT_DIR: "/app/results"
     ports:
       - "8100:8100"
+    volumes:
+      - ./results:/app/results
     depends_on:
       init:
         condition: service_completed_successfully

@@ -21,6 +21,7 @@ from iotshield.contracts.models import (
     NormalizedEvent,
     PrioritizedAlert,
     UtcDatetime,
+    discovered_asset,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "PrioritizedAlert",
     "Severity",
     "UtcDatetime",
+    "discovered_asset",
 ]

@@ -26,8 +26,12 @@ from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
 from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
 from iotshield.normalize.stub import CAPABILITY as _STUB_NORMALIZER_CAPABILITY
 from iotshield.normalize.syslog import CAPABILITY as _SYSLOG_NORMALIZER_CAPABILITY
+from iotshield.sink import ResultSink, SinkResources
+from iotshield.sink.file import build as _build_file_sink
+from iotshield.sink.postgres import build as _build_postgres_sink
 
 T = TypeVar("T")
+V = TypeVar("V")
 
 
 @dataclass(frozen=True)
@@ -88,7 +92,33 @@ ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {
 }
 
 
-def _lookup(kind: str, registry: Mapping[str, AdapterSpec[T]], name: str) -> AdapterSpec[T]:
+@dataclass(frozen=True)
+class SinkSpec:
+    """A registered result sink: how to build it, and whether it needs a database.
+
+    A lighter record than ``AdapterSpec``: sinks carry no ``Capability`` because they are
+    terminal consumers of the whole ``RunResult``, not typed joints the guard reasons
+    about (ADR-0018). ``requires_database`` lets a host run build a DB engine only when a
+    configured sink actually needs one — so a file-only run needs no database at all. The
+    factory takes the deployment's ``SinkResources`` first, then its config ``params``.
+    """
+
+    factory: Callable[..., ResultSink]
+    requires_database: bool = False
+
+
+SINKS: dict[str, SinkSpec] = {
+    "postgres": SinkSpec(_build_postgres_sink, requires_database=True),
+    "file": SinkSpec(_build_file_sink),
+}
+
+
+def _lookup(kind: str, registry: Mapping[str, V], name: str) -> V:
+    """Resolve a registered spec by name, or raise naming the known alternatives.
+
+    Generic over the spec type (``AdapterSpec`` or ``SinkSpec``): it only indexes and
+    lists keys, so both the transform ports and the terminal sinks share it.
+    """
     try:
         return registry[name]
     except KeyError:
@@ -96,18 +126,25 @@ def _lookup(kind: str, registry: Mapping[str, AdapterSpec[T]], name: str) -> Ada
         raise ValueError(f"unknown {kind} {name!r}; known: {known}") from None
 
 
+def _construct(kind: str, name: str, build: Callable[[], T]) -> T:
+    """Build an adapter, turning a construction failure into a named config error.
+
+    TypeError: an unknown/misspelled param name. ValueError: a bad param *value*
+    (non-numeric threshold, non-positive bucket, unknown Lane) or a missing required
+    resource (the postgres sink with no database). Both fail here at construction —
+    before any run side effect — named, so the operator knows which entry is wrong.
+    """
+    try:
+        return build()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid params for {kind} {name!r}: {exc}") from exc
+
+
 def _build(
     kind: str, registry: Mapping[str, AdapterSpec[T]], name: str, params: Mapping[str, Any]
 ) -> T:
     spec = _lookup(kind, registry, name)
-    try:
-        return spec.factory(**params)
-    except (TypeError, ValueError) as exc:
-        # TypeError: unknown/misspelled param name. ValueError: a bad param
-        # *value* (non-numeric threshold, non-positive bucket, unknown Lane) —
-        # both fail here at construction, before any database is touched, and
-        # name the adapter so the operator knows which config entry is wrong.
-        raise ValueError(f"invalid params for {kind} {name!r}: {exc}") from exc
+    return _construct(kind, name, lambda: spec.factory(**params))
 
 
 def build_normalizer(name: str) -> Normalizer:
@@ -120,6 +157,17 @@ def build_detector(name: str, params: Mapping[str, Any]) -> Detector:
 
 def build_alert_engine(name: str, params: Mapping[str, Any]) -> AlertEngine:
     return _build("alert engine", ALERT_ENGINES, name, params)
+
+
+def build_sink(name: str, params: Mapping[str, Any], resources: SinkResources) -> ResultSink:
+    """Construct a sink by name, injecting the deployment's resources plus config params."""
+    spec = _lookup("sink", SINKS, name)
+    return _construct("sink", name, lambda: spec.factory(resources, **params))
+
+
+def sink_requires_database(name: str) -> bool:
+    """Whether a configured sink needs a DB engine — so a host run builds one only if so."""
+    return _lookup("sink", SINKS, name).requires_database
 
 
 # --- Capability resolution (no construction): for the guard and /modules discovery.

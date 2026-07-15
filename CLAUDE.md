@@ -14,8 +14,11 @@ CYENS internship project, July 2026 (intern: Andreas Tziakouris).
    A new detector/normalizer/prioritizer = a new adapter that passes the *same* port contract
    test suite as every other adapter of that port, and declares a **capability** (what it
    consumes/produces, co-located with the adapter) so the compatibility guard and orchestration
-   UI can read its shape without constructing it (ADR-0014). If an adapter needs a contract
-   change, that's a design smell — stop and discuss.
+   UI can read its shape without constructing it (ADR-0014). Result **sinks** (`sink/`, ADR-0018)
+   are the fourth port — the pluggable output — but being *terminal* consumers of the whole run
+   they declare no capability and sit outside the guard; they are still registered and swapped by
+   name like the others. If an adapter needs a contract change, that's a design smell — stop and
+   discuss.
 3. **Reference code is read-only.** Student modules live in `../reference/` (see
    `../reference/INDEX.md` — read it before touching any of them; their READMEs are often stale,
    the code is the truth). Never import from `../reference/` at runtime; copy/wrap what we need
@@ -62,17 +65,20 @@ runner still creates it for standalone host runs. The first real detector (team3
 ADR-0012) settled the runtime dependency surface as **numpy-only** (sklearn/torch
 deferred to future per-model ADRs); image hardening is now unblocked but not yet done.
 
-Four demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
+Five demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
 normalizer, re-implemented from team4 → LOG-lane events across three hosts, both
 RFC dialects + quarantined malformed lines; no detections by design — ADR-0011);
 `config/demo_team3.yaml` + `data/demo/demo_team3.csv` (telemetry → the `team3_zscore`
 detector, vendored from team3, on a real SKAB valve fault → one collective
-detection → one alert — ADR-0012); and `config/demo_triage.yaml` +
+detection → one alert — ADR-0012); `config/demo_triage.yaml` +
 `data/demo/demo_triage.csv` (both detectors → the `weighted` engine over four
 assets → a *ranked* queue where severity, asset criticality, and detection volume
-each visibly reorder the alerts — ADR-0013).
+each visibly reorder the alerts — ADR-0013); and `config/demo_file.yaml` +
+`data/demo/demo.csv` (the SAME pipeline as `demo.yaml`, but a **file/JSONL sink**
+instead of Postgres — no database, no dashboard — demonstrating the pluggable
+result store, ADR-0018).
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
@@ -86,8 +92,9 @@ src/iotshield/
   normalize/    Normalizer port + adapters (stub, syslog, ...)
   detect/       Detector port + adapters (stub threshold, telemetry-ad, ...)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
+  sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
-  pipeline/     batch runner + registry + compatibility guard (run_pipeline entry point)
+  pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
   dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run)
 tests/          mirrors src; port contract tests are parametrized over all adapters

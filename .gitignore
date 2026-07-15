@@ -22,6 +22,11 @@ artifacts/
 logs/
 *.db
 
+# File-sink output (JSONL): run outputs, not source. The compose stack mounts
+# ./results into the Pipeline API; CLI runs default to ./iotshield-results.jsonl (ADR-0018).
+results/
+*.jsonl
+
 # OS noise
 .DS_Store
 Thumbs.db

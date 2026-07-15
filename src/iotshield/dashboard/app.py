@@ -210,7 +210,8 @@ def compose_page(client: ControlClient) -> None:
     normalizers = {module.name: module for module in catalogue.normalizers}
     detectors = {module.name: module for module in catalogue.detectors}
     engines = {module.name: module for module in catalogue.alert_engines}
-    if not (normalizers and detectors and engines):
+    sinks = {module.name: module for module in catalogue.sinks}
+    if not (normalizers and detectors and engines and sinks):
         st.error("The Pipeline API reports no adapters — nothing to compose.")
         return
 
@@ -239,8 +240,26 @@ def compose_page(client: ControlClient) -> None:
     with st.expander(f"{engine_name} parameters"):
         engine_params = _param_widgets(f"eng_{engine_name}", engines[engine_name].params)
 
+    st.subheader("4 · Result sinks")
+    default_sinks = ["postgres"] if "postgres" in sinks else sorted(sinks)[:1]
+    selected_sinks = st.multiselect(
+        "Sinks",
+        sorted(sinks),
+        default=default_sinks,
+        key="compose_sinks",
+        help="Where results go. The 'postgres' store is what the Triage view reads.",
+    )
+    sink_specs: list[dict[str, Any]] = []
+    for name in selected_sinks:
+        with st.expander(f"{name} parameters"):
+            params = _param_widgets(f"sink_{name}", sinks[name].params)
+        sink_specs.append({"name": name, "params": params})
+
     if not detector_specs:
         st.info("Pick at least one detector to continue.")
+        return
+    if not sink_specs:
+        st.info("Pick at least one sink so results have somewhere to go.")
         return
 
     spec: dict[str, Any] = {
@@ -248,9 +267,10 @@ def compose_page(client: ControlClient) -> None:
         "normalizer": normalizer_name,
         "detectors": detector_specs,
         "alert_engine": {"name": engine_name, "params": engine_params},
+        "sinks": sink_specs,
     }
 
-    st.subheader("4 · Validate & run")
+    st.subheader("5 · Validate & run")
     try:
         validation = client.validate(spec)
     except _API_ERRORS as exc:
@@ -286,16 +306,19 @@ def compose_page(client: ControlClient) -> None:
             column.metric(key, getattr(result, key))
         for warning in result.warnings:
             st.warning(warning)
+        st.caption(f"Written to: {', '.join(result.destinations) or 'nothing'}")
         # A receipt, not a results view: the ranked, explained alerts live on the read
         # plane. Hand off to Triage rather than half-rendering them here, so the run
-        # surface (write) and the browse surface (read) each do one job.
-        if result.alerts:
+        # surface (write) and the browse surface (read) each do one job. Triage reads the
+        # postgres store only, so the hand-off is shown only when that sink was written.
+        wrote_postgres = "postgres" in selected_sinks
+        if result.alerts and wrote_postgres:
             st.info(
                 f"{result.alerts} alert(s) written — see them ranked and explained "
                 "under **Monitor → Triage**."
             )
-        else:
-            st.caption("No alerts produced by this run.")
+        elif not wrote_postgres:
+            st.caption("No postgres sink selected — results are in the chosen sink(s), not Triage.")
 
 
 def main() -> None:

@@ -1,27 +1,40 @@
-"""The pipeline runner: composes the ports into one atomic batch run.
+"""The pipeline runner: compute a run's result in memory, then write it to sinks.
 
-Runs inside ONE transaction — a crash leaves zero half-written rows, so a run
-either happened or it didn't (repository functions flush; only the runner
-commits). The alert engine sees this run's detections only; cross-run
-correlation is future work (ADR-0006).
+Two phases, deliberately separate so the result *store* is pluggable (ADR-0018):
+
+- ``compute_run`` — pure and store-agnostic: normalize -> detect -> resolve assets (in
+  memory) -> prioritize, producing a ``RunResult``. No database is touched.
+- ``execute_run`` — hand that result to each configured sink. The Postgres sink (the
+  default) owns its own atomic transaction; a file sink writes JSONL; a future webhook
+  sink delivers. The runner itself no longer knows anything about databases.
+
+The alert engine sees this run's detections only; cross-run correlation is future work
+(ADR-0006), as is enriching assets from a persistent store across runs.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.orm import Session, sessionmaker
-
-from iotshield.contracts import DetectionResult, PrioritizedAlert
-from iotshield.pipeline.compat import CompatLevel, ensure_compatible
-from iotshield.pipeline.config import PipelineConfig
-from iotshield.pipeline.registry import build_alert_engine, build_detector, build_normalizer
-from iotshield.storage import (
-    create_schema,
-    describe_location,
-    make_engine,
-    make_session_factory,
-    repository,
+from iotshield.contracts import (
+    Asset,
+    DetectionResult,
+    NormalizedEvent,
+    PrioritizedAlert,
+    discovered_asset,
 )
+from iotshield.pipeline.compat import CompatLevel, ensure_compatible
+from iotshield.pipeline.config import PipelineConfig, SinkConfig
+from iotshield.pipeline.registry import (
+    build_alert_engine,
+    build_detector,
+    build_normalizer,
+    build_sink,
+    sink_requires_database,
+)
+from iotshield.sink import RunResult, SinkResources
+from iotshield.storage import create_schema, describe_location, make_engine, make_session_factory
 
 TOP_ALERTS_IN_REPORT = 5
 
@@ -33,10 +46,10 @@ _MALFORMED_WARN_RATE = 0.5
 
 @dataclass(frozen=True)
 class RunReport:
-    """End-of-run summary: the demo surface until the API/dashboard exist."""
+    """End-of-run summary: counts, where the result went, top alerts, warnings."""
 
-    input_path: str
-    database: str
+    origin: str
+    destinations: list[str]
     events: int
     malformed: int
     detections: int
@@ -44,10 +57,23 @@ class RunReport:
     top_alerts: list[PrioritizedAlert]
     warnings: list[str] = field(default_factory=list)
 
+    @classmethod
+    def from_result(cls, result: RunResult, *, destinations: list[str]) -> "RunReport":
+        return cls(
+            origin=result.origin,
+            destinations=destinations,
+            events=len(result.events),
+            malformed=len(result.malformed),
+            detections=len(result.detections),
+            alerts=len(result.alerts),
+            top_alerts=result.alerts[:TOP_ALERTS_IN_REPORT],
+            warnings=list(result.warnings),
+        )
+
     def render(self) -> str:
         lines = [
-            f"Pipeline run complete: {self.input_path}",
-            f"  database: {self.database}",
+            f"Pipeline run complete: {self.origin}",
+            f"  destinations: {', '.join(self.destinations) or 'none'}",
             f"  events: {self.events}   malformed: {self.malformed}"
             f"   detections: {self.detections}   alerts: {self.alerts}",
         ]
@@ -65,26 +91,20 @@ class RunReport:
         return "\n".join(lines)
 
 
-def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
-    """CLI / standalone entry point: read an input file and run the pipeline over its text.
+def resolve_assets(seeded: Sequence[Asset], events: Sequence[NormalizedEvent]) -> list[Asset]:
+    """The alert engine's asset inventory, resolved in memory (no database).
 
-    Owns a per-run engine and creates the schema, so a fresh database works in one
-    command (in compose the init step already created it, making create_schema a
-    no-op; the read-side API never creates it). utf-8-sig strips a leading BOM
-    (Excel/Notepad default on Windows) that would otherwise glue U+FEFF onto the first
-    field and reject line 1. Reading the file here rather than in the core is the
-    input-acquisition seam: the Pipeline API feeds text straight into execute_run with
-    its own long-lived engine (ADR-0015).
+    Registration wins: start from the operator's seeded assets, then add an
+    auto-discovered stub for every event ``asset_id`` not already present — the same rule
+    the storage layer applies on insert (ADR-0005), sharing ``discovered_asset`` so the
+    two can never diverge. Store-agnostic by construction, which is what lets the result
+    store be pluggable (ADR-0018). Cross-run enrichment from a persistent store is a
+    deferred follow-on.
     """
-    text = input_path.read_text(encoding="utf-8-sig")
-    engine = make_engine(config.database_url)
-    try:
-        create_schema(engine)
-        return execute_run(
-            config, text, origin=str(input_path), session_factory=make_session_factory(engine)
-        )
-    finally:
-        engine.dispose()
+    resolved: dict[str, Asset] = {asset.asset_id: asset for asset in seeded}
+    for asset_id in {event.asset_id for event in events}:
+        resolved.setdefault(asset_id, discovered_asset(asset_id))
+    return list(resolved.values())
 
 
 def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str | None:
@@ -107,21 +127,12 @@ def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str
     )
 
 
-def execute_run(
-    config: PipelineConfig,
-    text: str,
-    *,
-    origin: str,
-    session_factory: sessionmaker[Session],
-) -> RunReport:
-    """Guard, then run normalize -> detect -> alert atomically against a session factory.
+def compute_run(config: PipelineConfig, text: str, *, origin: str) -> RunResult:
+    """Compute a run's full result in memory — no storage — the store-agnostic core.
 
-    The shared core of every run, whatever supplied the engine: the CLI (via
-    run_on_text, which owns a per-run engine) and the Pipeline API (which reuses its
-    long-lived engine) both land here. Runs inside ONE transaction — a crash leaves
-    zero half-written rows. The schema is assumed to exist (the caller owns it).
-    Guard ERRORs block before any row is written; WARNINGs ride along in the report,
-    alongside a data-quality WARNING when most of the input failed to parse (ADR-0017).
+    The compatibility guard runs here (ERRORs raise before any work; WARNINGs ride into
+    the result), as does the input-appropriateness check (ADR-0017). Asset criticalities
+    are resolved in memory, so the alert engine needs no database.
     """
     warnings = [
         f"[{issue.stage}] {issue.message}"
@@ -129,42 +140,90 @@ def execute_run(
         if issue.level is CompatLevel.WARNING
     ]
 
-    # Build adapters first: bad names/params fail fast, before any database write.
+    # Build adapters first: bad names/params fail fast, before any sink is touched.
     normalizer = build_normalizer(config.normalizer)
     detectors = [build_detector(d.name, d.params) for d in config.detectors]
     alert_engine = build_alert_engine(config.alert_engine.name, config.alert_engine.params)
 
-    with session_factory() as session, session.begin():
-        if config.assets:
-            repository.upsert_assets(session, config.assets)
+    normalized = normalizer.normalize(text, source_format=config.source_format, origin=origin)
 
-        result = normalizer.normalize(text, source_format=config.source_format, origin=origin)
-        repository.insert_events(session, result.events)
-        repository.insert_malformed(session, result.malformed)
+    detections: list[DetectionResult] = []
+    for detector in detectors:
+        lane_events = [e for e in normalized.events if e.source_type == detector.lane]
+        detections.extend(detector.detect(lane_events))
 
-        detections: list[DetectionResult] = []
-        for detector in detectors:
-            lane_events = [e for e in result.events if e.source_type == detector.lane]
-            detections.extend(detector.detect(lane_events))
-        repository.insert_detections(session, detections)
+    assets = resolve_assets(config.assets, normalized.events)
+    asset_map = {asset.asset_id: asset for asset in assets}
+    alerts = alert_engine.build_alerts(detections, asset_map)
 
-        assets = {asset.asset_id: asset for asset in repository.list_assets(session)}
-        alerts = alert_engine.build_alerts(detections, assets)
-        repository.insert_alerts(session, alerts)
-
-    # Content-appropriateness, distinct from the guard's structural checks: a run that
-    # rejected most of its input is probably pointed at the wrong normalizer (ADR-0017).
-    quality = _high_malformed_warning(config.normalizer, len(result.events), len(result.malformed))
+    quality = _high_malformed_warning(
+        config.normalizer, len(normalized.events), len(normalized.malformed)
+    )
     if quality is not None:
         warnings.append(f"[input] {quality}")
 
-    return RunReport(
-        input_path=origin,
-        database=describe_location(config.database_url),
-        events=len(result.events),
-        malformed=len(result.malformed),
-        detections=len(detections),
-        alerts=len(alerts),
-        top_alerts=alerts[:TOP_ALERTS_IN_REPORT],
+    return RunResult(
+        origin=origin,
+        source_format=config.source_format,
+        normalizer=config.normalizer,
+        run_at=datetime.now(UTC),
+        assets=assets,
+        events=normalized.events,
+        malformed=normalized.malformed,
+        detections=detections,
+        alerts=alerts,
         warnings=warnings,
     )
+
+
+def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:
+    # For the Postgres sink, show the resolved DB location so a cwd/URL mismatch is
+    # visible in the report (what the old 'database:' line did); others show their name.
+    if sink_config.name == "postgres" and config.database_url:
+        return f"postgres ({describe_location(config.database_url)})"
+    return sink_config.name
+
+
+def execute_run(
+    config: PipelineConfig,
+    text: str,
+    *,
+    origin: str,
+    resources: SinkResources,
+) -> RunReport:
+    """Compute a run, then write it to every configured sink; return the summary.
+
+    Compute is store-agnostic (``compute_run``); the sinks decide where the result goes.
+    Sinks run in config order (put the system-of-record sink first); a sink that *raises*
+    fails the run — there is no cross-store atomicity, so a best-effort delivery sink must
+    swallow its own errors. Guard ERRORs raise inside ``compute_run``, before any sink runs.
+    """
+    result = compute_run(config, text, origin=origin)
+    destinations: list[str] = []
+    for sink_config in config.sinks:
+        sink = build_sink(sink_config.name, sink_config.params, resources)
+        sink.write(result)
+        destinations.append(_destination_label(sink_config, config))
+    return RunReport.from_result(result, destinations=destinations)
+
+
+def run_pipeline(config: PipelineConfig, input_path: Path) -> RunReport:
+    """CLI / standalone entry point: read an input file and run the pipeline over its text.
+
+    Builds a ``SinkResources`` for this run, creating a database engine (and schema) only
+    if a configured sink needs one — so a file-only run needs no database at all. The
+    Pipeline API instead injects its own long-lived engine (ADR-0015). ``utf-8-sig`` strips
+    a leading BOM (Excel/Notepad default on Windows) that would otherwise reject line 1.
+    """
+    text = input_path.read_text(encoding="utf-8-sig")
+    needs_db = any(sink_requires_database(sink.name) for sink in config.sinks)
+    engine = make_engine(config.database_url) if needs_db and config.database_url else None
+    try:
+        resources = SinkResources()
+        if engine is not None:
+            create_schema(engine)
+            resources = SinkResources(session_factory=make_session_factory(engine))
+        return execute_run(config, text, origin=str(input_path), resources=resources)
+    finally:
+        if engine is not None:
+            engine.dispose()

@@ -18,6 +18,7 @@ or crashing run (ADR-0015). Serve: python -m iotshield.api.control
 import inspect
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -35,8 +36,16 @@ from iotshield.pipeline.compat import (
     has_errors,
 )
 from iotshield.pipeline.config import PipelineSpec, config_from_spec
-from iotshield.pipeline.registry import ALERT_ENGINES, DETECTORS, NORMALIZERS, AdapterSpec
+from iotshield.pipeline.registry import (
+    ALERT_ENGINES,
+    DETECTORS,
+    NORMALIZERS,
+    SINKS,
+    AdapterSpec,
+    SinkSpec,
+)
 from iotshield.pipeline.runner import RunReport, execute_run
+from iotshield.sink import SinkResources
 from iotshield.storage import (
     database_url_from_env,
     describe_location,
@@ -65,12 +74,20 @@ class ModuleInfo(BaseModel):
     params: list[ParamInfo]
 
 
+class SinkInfo(BaseModel):
+    """A result sink for the catalogue: no capability (terminal consumer), just params."""
+
+    name: str
+    params: list[ParamInfo]
+
+
 class ModulesResponse(BaseModel):
     """The adapter catalogue that drives the orchestration UI's menus."""
 
     normalizers: list[ModuleInfo]
     detectors: list[ModuleInfo]
     alert_engines: list[ModuleInfo]
+    sinks: list[SinkInfo]
 
 
 class IssueInfo(BaseModel):
@@ -106,6 +123,7 @@ class RunResponse(BaseModel):
     detections: int
     alerts: int
     warnings: list[str]
+    destinations: list[str]  # where the result was written (the configured sinks)
     top_alerts: list[PrioritizedAlert]
 
 
@@ -119,7 +137,8 @@ def _describe_params(factory: Any) -> list[ParamInfo]:
         return []
     params: list[ParamInfo] = []
     for name, parameter in signature.parameters.items():
-        if name == "self" or parameter.kind in (
+        # 'resources' is the injected deployment bag (sink factories), not a config param.
+        if name in ("self", "resources") or parameter.kind in (
             inspect.Parameter.VAR_KEYWORD,
             inspect.Parameter.VAR_POSITIONAL,
         ):
@@ -152,6 +171,10 @@ def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:
     )
 
 
+def _sink_info(name: str, spec: SinkSpec) -> SinkInfo:
+    return SinkInfo(name=name, params=_describe_params(spec.factory))
+
+
 def _issue_info(issue: CompatIssue) -> IssueInfo:
     return IssueInfo(level=issue.level.value, stage=issue.stage, message=issue.message)
 
@@ -163,6 +186,7 @@ def _run_response(report: RunReport) -> RunResponse:
         detections=report.detections,
         alerts=report.alerts,
         warnings=report.warnings,
+        destinations=report.destinations,
         top_alerts=report.top_alerts,
     )
 
@@ -173,6 +197,7 @@ _MODULES_RESPONSE = ModulesResponse(
     normalizers=[_module_info("normalizer", n, s) for n, s in NORMALIZERS.items()],
     detectors=[_module_info("detector", n, s) for n, s in DETECTORS.items()],
     alert_engines=[_module_info("alert_engine", n, s) for n, s in ALERT_ENGINES.items()],
+    sinks=[_sink_info(n, s) for n, s in SINKS.items()],
 )
 
 
@@ -186,6 +211,9 @@ def create_control_app(engine: Engine) -> FastAPI:
     # Only used to fill the run report's (unexposed) location field; the run persists
     # through the injected engine, never a caller-named database.
     app.state.database_url = engine.url.render_as_string(hide_password=False)
+    # If an operator selects a file sink, it writes under this server-configured dir; a
+    # caller-supplied filename is confined to it (sink/file.py). Overridable per deploy.
+    app.state.output_dir = Path(os.environ.get("IOTSHIELD_OUTPUT_DIR", "results"))
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -219,7 +247,10 @@ def create_control_app(engine: Engine) -> FastAPI:
                 config,
                 request.input,
                 origin=request.origin,
-                session_factory=app.state.session_factory,
+                resources=SinkResources(
+                    session_factory=app.state.session_factory,
+                    output_dir=app.state.output_dir,
+                ),
             )
         except IncompatiblePipelineError as exc:
             raise HTTPException(

@@ -12,13 +12,15 @@ both on the host (its SQLite default) and in compose (Postgres, injected per
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from iotshield.contracts import Asset
 from iotshield.storage.db import DATABASE_URL_ENV
+
+_POSTGRES_SINK = "postgres"
 
 
 class _ConfigModel(BaseModel):
@@ -35,15 +37,28 @@ class AlertEngineConfig(_ConfigModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class PipelineSpec(_ConfigModel):
-    """The operator-chosen shape of a run: which adapters, over what input format.
+class SinkConfig(_ConfigModel):
+    """One result sink: where a run's results are stored or delivered (ADR-0018)."""
 
-    Deliberately excludes ``database_url`` — where results are stored is a
-    *deployment* decision, not an operator one (a tenant must never point a run at an
-    arbitrary database). The Pipeline API accepts a ``PipelineSpec`` and the server
-    supplies ``database_url`` from its environment; the CLI's ``load_config`` produces
-    a full ``PipelineConfig`` directly. This split is also where a future output-sink
-    selection will live, alongside the database (ADR-0015 / week-2 §9-A).
+    name: str = Field(min_length=1)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+def _default_sinks() -> list[SinkConfig]:
+    # The default is the Postgres store — so a config that names no sinks (every config
+    # written before the output seam existed) behaves exactly as it did before.
+    return [SinkConfig(name=_POSTGRES_SINK)]
+
+
+class PipelineSpec(_ConfigModel):
+    """The operator-chosen shape of a run: which adapters, over what input format, to where.
+
+    Deliberately excludes ``database_url`` — *where the database lives* is a deployment
+    decision, not an operator one (a tenant must never point a run at an arbitrary
+    database). The Pipeline API accepts a ``PipelineSpec`` and the server supplies
+    ``database_url`` from its environment; the CLI's ``load_config`` produces a full
+    ``PipelineConfig`` directly. ``sinks`` *is* operator-chosen (which stores/deliveries
+    to fan the result out to); the Postgres sink among them is what reads ``database_url``.
     """
 
     source_format: str = Field(min_length=1)
@@ -51,12 +66,27 @@ class PipelineSpec(_ConfigModel):
     detectors: list[DetectorConfig] = Field(min_length=1)
     alert_engine: AlertEngineConfig = Field(default_factory=AlertEngineConfig)
     assets: list[Asset] = Field(default_factory=list, description="Seed registrations")
+    sinks: list[SinkConfig] = Field(default_factory=_default_sinks, min_length=1)
 
 
 class PipelineConfig(PipelineSpec):
-    """A runnable config: an operator's spec plus the deployment's database."""
+    """A runnable config: an operator's spec plus the deployment's result store(s).
 
-    database_url: str = Field(min_length=1)
+    ``database_url`` is optional now that the store is pluggable: a file-only deployment
+    needs no database at all. It is *required* precisely when a ``postgres`` sink is in
+    play — enforced below so the misconfiguration fails at load, not at write time.
+    """
+
+    database_url: str | None = None
+
+    @model_validator(mode="after")
+    def _postgres_sink_needs_database(self) -> Self:
+        if any(sink.name == _POSTGRES_SINK for sink in self.sinks) and not self.database_url:
+            raise ValueError(
+                "a 'postgres' sink requires database_url "
+                "(set it in the config or via IOTSHIELD_DATABASE_URL)"
+            )
+        return self
 
 
 def config_from_spec(spec: PipelineSpec, database_url: str) -> PipelineConfig:

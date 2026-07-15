@@ -108,6 +108,23 @@ class Asset(_ContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+def discovered_asset(asset_id: str) -> Asset:
+    """A stub inventory entry for an asset id first seen in data (ADR-0005).
+
+    The single definition of what auto-discovery produces, so the storage layer
+    (filling absent rows on insert) and the store-agnostic compute phase (resolving
+    asset criticalities in memory, no database) can never disagree about what a
+    discovered asset looks like.
+    """
+    return Asset(
+        asset_id=asset_id,
+        name=asset_id,
+        asset_type="unknown",
+        criticality=Criticality.MEDIUM,  # neutral policy default, stated explicitly
+        metadata={"auto_discovered": True},
+    )
+
+
 class NormalizedEvent(_ContractModel):
     """One normalized observation: the shared envelope every raw record becomes.
 

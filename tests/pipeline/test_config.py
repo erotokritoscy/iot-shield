@@ -27,9 +27,29 @@ def test_unknown_key_rejected() -> None:
 
 
 def test_missing_database_url_rejected() -> None:
+    # The default sink is postgres, which requires a database — so omitting it fails.
     incomplete = {k: v for k, v in VALID.items() if k != "database_url"}
     with pytest.raises(ValidationError, match="database_url"):
         PipelineConfig.model_validate(incomplete)
+
+
+def test_default_sink_is_postgres() -> None:
+    # A config that names no sinks behaves as before the output seam existed (ADR-0018).
+    config = PipelineConfig.model_validate(VALID)
+    assert [sink.name for sink in config.sinks] == ["postgres"]
+
+
+def test_file_only_config_needs_no_database_url() -> None:
+    # A pluggable store means a file-only run is valid with no database at all.
+    config = PipelineConfig.model_validate(
+        {
+            "source_format": "stub-csv",
+            "detectors": [{"name": "stub_threshold"}],
+            "sinks": [{"name": "file", "params": {"path": "out.jsonl"}}],
+        }
+    )
+    assert config.database_url is None
+    assert [sink.name for sink in config.sinks] == ["file"]
 
 
 def test_empty_detector_list_rejected() -> None:

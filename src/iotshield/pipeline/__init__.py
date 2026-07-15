@@ -6,15 +6,18 @@ CLI: python -m iotshield.pipeline --input data/demo/demo.csv --config config/dem
 from iotshield.pipeline.config import (
     PipelineConfig,
     PipelineSpec,
+    SinkConfig,
     config_from_spec,
     load_config,
 )
-from iotshield.pipeline.runner import RunReport, execute_run, run_pipeline
+from iotshield.pipeline.runner import RunReport, compute_run, execute_run, run_pipeline
 
 __all__ = [
     "PipelineConfig",
     "PipelineSpec",
     "RunReport",
+    "SinkConfig",
+    "compute_run",
     "config_from_spec",
     "execute_run",
     "load_config",
