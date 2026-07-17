@@ -30,18 +30,31 @@ from iotshield.contracts import (
 
 
 @dataclass(frozen=True)
+class SourceProvenance:
+    """Where one of a run's inputs came from and how it was parsed (ADR-0019).
+
+    A run can ingest several sources (mixed modalities), so provenance is a list of these
+    rather than a single normalizer/format/origin triple. Per-record provenance still lives
+    on the events (``source_format``) and malformed records (``origin``); this is the
+    run-level index of the sources that fed it.
+    """
+
+    normalizer: str
+    source_format: str
+    origin: str
+
+
+@dataclass(frozen=True)
 class RunResult:
     """The complete, computed result of one pipeline run — the unit every sink consumes.
 
     Produced entirely in memory by the compute phase (no storage), so it is the clean
     hand-off between "what the pipeline found" and "where it goes". Carries the full
-    payload (so a file-only sink loses nothing) plus provenance metadata.
+    payload (so a file-only sink loses nothing) plus per-source provenance metadata.
     """
 
-    origin: str
-    source_format: str
-    normalizer: str
     run_at: datetime
+    sources: list[SourceProvenance]
     assets: list[Asset]
     events: list[NormalizedEvent]
     malformed: list[MalformedRecord]

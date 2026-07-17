@@ -13,14 +13,23 @@ import pandas as pd
 import pytest
 
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
-from iotshield.detect import Detector, StubThresholdDetector, Team3ZScoreDetector
+from iotshield.detect import (
+    Detector,
+    LogBurstDetector,
+    StubThresholdDetector,
+    Team3ZScoreDetector,
+)
 from iotshield.detect.team3.train import train_artifact
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
 
 def event(
-    *, value: float | None, lane: Lane = Lane.TELEMETRY, offset_s: int = 0
+    *,
+    value: float | None,
+    lane: Lane = Lane.TELEMETRY,
+    offset_s: int = 0,
+    message: str | None = None,
 ) -> NormalizedEvent:
     return NormalizedEvent(
         timestamp=T0 + timedelta(seconds=offset_s),
@@ -29,6 +38,7 @@ def event(
         source_format="test",
         metric="Pressure",
         value=value,
+        message=message,
         raw=f"test-record value={value}",
     )
 
@@ -52,6 +62,19 @@ _TEAM3_ARTIFACT = train_artifact(
 # Flat-normal readings with a sustained spike in the middle -> at least one episode.
 _TEAM3_VALUES = [10.0] * 8 + [55.0, 57.0, 56.0] + [10.0] * 4
 
+# Six auth failures 10s apart: one burst episode well inside the 5-minute window. They keep
+# the contract's default INFO severity (as sshd really logs them), which is also why this
+# case would be invisible to a severity-based rule.
+_LOG_BURST_EVENTS = [
+    event(
+        value=None,
+        lane=Lane.LOG,
+        offset_s=index * 10,
+        message=f"Failed password for root from 10.0.0.9 port {52000 + index} ssh2",
+    )
+    for index in range(6)
+]
+
 CASES = [
     pytest.param(
         DetectorCase(
@@ -72,6 +95,13 @@ CASES = [
             triggering_events=[event(value=v, offset_s=i) for i, v in enumerate(_TEAM3_VALUES)],
         ),
         id="team3-zscore",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: LogBurstDetector(preset="auth_failure", window_minutes=5.0, min_count=5),
+            triggering_events=_LOG_BURST_EVENTS,
+        ),
+        id="log-burst",
     ),
 ]
 

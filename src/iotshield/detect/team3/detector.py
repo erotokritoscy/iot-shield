@@ -19,7 +19,6 @@ inference and has no dependency beyond numpy/pandas.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -29,6 +28,7 @@ import pandas as pd
 
 from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
+from iotshield.detect._group import group_by_asset
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import featurewise_robust_z
 from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
@@ -62,6 +62,11 @@ def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
     if start is not None:
         runs.append((start, len(mask) - 1))
     return runs
+
+
+def _has_reading(event: NormalizedEvent) -> bool:
+    """Only a named channel with a numeric value can enter the (time x channel) matrix."""
+    return event.metric is not None and event.value is not None
 
 
 def _channel_of(feature_name: str, channels: Sequence[str]) -> str:
@@ -98,15 +103,11 @@ class Team3ZScoreDetector:
         return self._artifact.method
 
     def detect(self, events: Sequence[NormalizedEvent]) -> list[DetectionResult]:
-        by_asset: dict[str, list[NormalizedEvent]] = defaultdict(list)
-        for event in events:
-            if event.source_type is not self.lane or event.metric is None or event.value is None:
-                continue
-            by_asset[event.asset_id].append(event)
-
+        # Foreign-lane isolation and deterministic asset order are the port's laws, shared
+        # by every detector; only the "is this event judgeable" predicate is ours.
         detections: list[DetectionResult] = []
-        for asset_id in sorted(by_asset):  # deterministic asset order
-            detections.extend(self._detect_asset(asset_id, by_asset[asset_id]))
+        for asset_id, asset_events in group_by_asset(events, lane=self.lane, keep=_has_reading):
+            detections.extend(self._detect_asset(asset_id, asset_events))
         return detections
 
     def _detect_asset(self, asset_id: str, events: list[NormalizedEvent]) -> list[DetectionResult]:

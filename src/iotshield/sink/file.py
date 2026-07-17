@@ -23,10 +23,11 @@ class FileSink:
 
     def write(self, result: RunResult) -> None:
         record = {
-            "origin": result.origin,
-            "source_format": result.source_format,
-            "normalizer": result.normalizer,
             "run_at": result.run_at.isoformat(),
+            "sources": [
+                {"normalizer": s.normalizer, "source_format": s.source_format, "origin": s.origin}
+                for s in result.sources
+            ],
             "warnings": result.warnings,
             "assets": [asset.model_dump(mode="json") for asset in result.assets],
             "events": [event.model_dump(mode="json") for event in result.events],

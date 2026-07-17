@@ -1,9 +1,9 @@
 """FastAPI write-side service — the Pipeline API (control plane).
 
 The operator-facing surface of the productized pipeline: it accepts a ``PipelineSpec``
-(which adapters to run) plus input text, validates the chain with the compatibility
-guard, runs it, and returns a run summary. Results persist as today; the read-side API
-serves them to the dashboard (the deployment-agnostic result sink is deferred, week-2 §9-A).
+(which adapters to run) plus one raw input per source, validates the chain with the
+compatibility guard, runs it, and returns a run summary. Results are dispatched to the
+spec's sinks (Postgres by default, ADR-0018); the read-side API serves the stored ones.
 
 Where results are stored is the server's decision, not the caller's: the app is built
 around an injected engine (like the read API) and supplies ``database_url`` itself, so a
@@ -107,12 +107,22 @@ class ValidateResponse(BaseModel):
     issues: list[IssueInfo]
 
 
+class SourceInput(BaseModel):
+    """One source's raw payload, aligned to ``spec.sources`` by position."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(description="Raw input payload for this source")
+    origin: str = Field(default="api-run", description="Provenance label for this source")
+
+
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     spec: PipelineSpec
-    input: str = Field(description="Raw input payload to normalize")
-    origin: str = Field(default="api-run", description="Provenance label for events/rejects")
+    inputs: list[SourceInput] = Field(
+        min_length=1, description="One raw input per source in spec.sources (same order)"
+    )
 
 
 class RunResponse(BaseModel):
@@ -242,11 +252,22 @@ def create_control_app(engine: Engine) -> FastAPI:
         its typed error to a structured 422. It raises before any row is written.
         """
         config = config_from_spec(request.spec, app.state.database_url)
+        if len(request.inputs) != len(config.sources):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": (
+                        f"expected {len(config.sources)} input(s) to match spec.sources, "
+                        f"got {len(request.inputs)}"
+                    ),
+                    "issues": [],
+                },
+            )
         try:
             report = execute_run(
                 config,
-                request.input,
-                origin=request.origin,
+                [item.content for item in request.inputs],
+                origins=[item.origin for item in request.inputs],
                 resources=SinkResources(
                     session_factory=app.state.session_factory,
                     output_dir=app.state.output_dir,

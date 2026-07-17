@@ -260,6 +260,64 @@ class TestDemoArtifacts:
         # showcase is not falsely flagged as a wrong-normalizer misconfig (ADR-0017).
         assert not any("may not match" in warning for warning in report.warnings)
 
+    def test_multimodal_demo_correlates_two_lanes_on_one_asset(self, tmp_path: Path) -> None:
+        # ADR-0019 + ADR-0020: one run ingests a telemetry CSV + a syslog stream for the same
+        # asset, and now BOTH lanes have a detector — so this is the run where cross-lane
+        # corroboration finally fires. The telemetry spike (2 point detections) and the log
+        # burst (1 collective detection) pool into one 5-minute bucket on pump-02.
+        from iotshield.contracts import AlertSeverity
+        from iotshield.pipeline import load_config
+
+        loaded = load_config(REPO_ROOT / "config" / "demo_multimodal.yaml")
+        config = loaded.model_copy(
+            update={
+                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
+                "sources": [
+                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
+                    for source in loaded.sources
+                ],
+            }
+        )
+        report = run_pipeline(config)
+        assert (report.events, report.malformed, report.detections, report.alerts) == (9, 0, 3, 1)
+        top = report.top_alerts[0]
+        assert top.asset_id == "pump-02"
+        assert len(top.detection_ids) == 3  # 2 telemetry + 1 log burst, pooled
+        # The payoff: two lanes agreeing about one asset. Every earlier demo scored
+        # corroboration 1.0, because only one lane ever had a detector to speak for it.
+        assert top.score_components["corroboration"] == 1.5
+        assert top.severity is AlertSeverity.HIGH
+        # Both produced lanes are judged now, so the uncovered-lane warning is gone.
+        assert not any("no detector that consumes it" in warning for warning in report.warnings)
+
+    def test_log_demo_merges_the_brute_force_into_one_alert(self, tmp_path: Path) -> None:
+        # ADR-0020: the LOG lane's first detector. Twelve sshd failures in ~60s on
+        # gateway-01 merge into ONE collective detection (not twelve), while gateway-02's
+        # two scattered failures stay below the trigger and say nothing. Every line is
+        # severity INFO, so only the content-matched preset can see this at all.
+        from iotshield.contracts import AlertSeverity
+        from iotshield.pipeline import load_config
+
+        loaded = load_config(REPO_ROOT / "config" / "demo_log.yaml")
+        config = loaded.model_copy(
+            update={
+                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
+                "sources": [
+                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
+                    for source in loaded.sources
+                ],
+            }
+        )
+        report = run_pipeline(config)
+        assert (report.events, report.malformed, report.detections, report.alerts) == (16, 0, 1, 1)
+        top = report.top_alerts[0]
+        assert top.asset_id == "gateway-01"
+        assert top.severity is AlertSeverity.HIGH
+        # The burst itself drove the alert: 12 matches against an exceedance boundary of 4.
+        assert "log_burst:auth_failure" in top.rationale
+        # A clean chain (the log lane is both produced and consumed) and a clean input.
+        assert report.warnings == []
+
 
 class TestMalformedRateWarning:
     """The threshold logic behind the input-appropriateness warning (ADR-0017)."""
@@ -298,7 +356,7 @@ class TestStoreAgnosticCompute:
     def test_compute_run_touches_no_database(self, tmp_path: Path) -> None:
         # make_config points database_url at run.db; compute_run must never open it.
         config = make_config(tmp_path)
-        result = compute_run(config, INLINE_CSV, origin="inline")
+        result = compute_run(config, [INLINE_CSV])
         counts = (
             len(result.events),
             len(result.malformed),
@@ -343,5 +401,77 @@ class TestStoreAgnosticCompute:
         lines = out.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1  # one self-contained record for this run
         record = json.loads(lines[0])
-        assert record["normalizer"] == "stub"
+        assert record["sources"][0]["normalizer"] == "stub"
         assert len(record["events"]) == 4 and len(record["alerts"]) == 2
+
+
+class TestMultiSource:
+    """Multi-source ingestion: per-source routing, pooling into lanes, ordering (ADR-0019)."""
+
+    TELE_A = "2026-07-07T12:00:00+00:00,pump-02,Pressure,95.0\n"
+    TELE_B = "2026-07-07T12:03:00+00:00,pump-02,Pressure,99.0\n"
+    SYSLOG = "<35>1 2026-07-07T12:03:05Z pump-02 sensord - - - reading out of range\n"
+
+    def multi_config(
+        self, tmp_path: Path, sources: list[dict[str, str]], **overrides: Any
+    ) -> PipelineConfig:
+        base: dict[str, Any] = {
+            "database_url": f"sqlite:///{(tmp_path / 'run.db').as_posix()}",
+            "sources": sources,
+            "detectors": [{"name": "stub_threshold", "params": {"threshold": 80.0}}],
+        }
+        return PipelineConfig.model_validate(base | overrides)
+
+    def test_two_formats_route_and_pool_into_their_lanes(self, tmp_path: Path) -> None:
+        config = self.multi_config(
+            tmp_path,
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+        )
+        result = compute_run(config, [self.TELE_A + self.TELE_B, self.SYSLOG])
+        assert {event.source_type for event in result.events} == {Lane.TELEMETRY, Lane.LOG}
+        assert len(result.events) == 3  # 2 telemetry + 1 log, pooled into one run
+        assert len(result.detections) == 2  # only the telemetry detector fires
+        assert any("no detector that consumes it" in w for w in result.warnings)
+
+    def test_pooled_lane_events_reach_the_detector_in_time_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two telemetry sources, out of order across and within the sources; the detector
+        # must still see (asset, time)-ordered events (the port guarantee, ADR-0019).
+        captured: list[NormalizedEvent] = []
+
+        class Spy:
+            lane = Lane.TELEMETRY
+            method = "spy"
+
+            def detect(self, events: Any) -> list[Any]:
+                captured.extend(events)
+                return []
+
+        monkeypatch.setattr(runner_module, "build_detector", lambda name, params: Spy())
+        late = "2026-07-07T12:09:00+00:00,pump-02,P,1\n2026-07-07T12:01:00+00:00,pump-02,P,2\n"
+        mid = "2026-07-07T12:05:00+00:00,pump-02,P,3\n"
+        config = self.multi_config(
+            tmp_path,
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "stub", "source_format": "stub-csv"},
+            ],
+        )
+        compute_run(config, [late, mid])
+        times = [event.timestamp for event in captured]
+        assert len(times) == 3 and times == sorted(times)
+
+    def test_inputs_must_align_one_to_one_with_sources(self, tmp_path: Path) -> None:
+        config = self.multi_config(
+            tmp_path,
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+        )
+        with pytest.raises(ValueError, match="expected 2 input"):
+            compute_run(config, [self.TELE_A])

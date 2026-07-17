@@ -150,6 +150,19 @@ class TestCompose:
         at = self._open(monkeypatch, empty_client, control_client)
         assert any("compatible" in str(s.value).lower() for s in at.success)
 
+    def test_default_detector_follows_the_default_source_lane(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        # The default source is the telemetry CSV normalizer, so the preselected detector
+        # must be a telemetry one — not merely whichever adapter name sorts first, which
+        # would open the page on a lane-mismatched chain now that log detectors exist.
+        at = self._open(monkeypatch, empty_client, control_client)
+        (picked,) = at.multiselect(key="compose_detectors").value
+        assert picked == "stub_threshold"
+
     def test_run_button_triggers_a_pipeline_run(
         self,
         monkeypatch: pytest.MonkeyPatch,

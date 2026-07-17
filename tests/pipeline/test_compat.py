@@ -33,16 +33,19 @@ def test_matching_telemetry_chain_has_no_issues() -> None:
 def test_unsupported_source_format_is_an_error() -> None:
     issues = check_compatibility(cfg(source_format="sislog"))
     assert [i.level for i in issues] == [CompatLevel.ERROR]
-    assert issues[0].stage == "ingest"
+    assert issues[0].stage == "sources[0]"
     assert "sislog" in issues[0].message and "stub-csv" in issues[0].message
 
 
-def test_lane_mismatch_is_a_warning_not_an_error() -> None:
-    # syslog produces log; the telemetry detector idles -> warn, don't block
-    # (the syslog demo depends on this being allowed).
+def test_lane_mismatch_warns_about_both_idle_detector_and_uncovered_lane() -> None:
+    # syslog produces log; the telemetry detector idles AND the log lane has no detector.
+    # Both are true and both are surfaced (WARNING), never blocking (the syslog demo relies
+    # on this being allowed).
     issues = check_compatibility(cfg(source_format="syslog", normalizer="syslog"))
-    assert [i.level for i in issues] == [CompatLevel.WARNING]
-    assert "will not fire" in issues[0].message
+    assert [i.level for i in issues] == [CompatLevel.WARNING, CompatLevel.WARNING]
+    messages = " ".join(i.message for i in issues)
+    assert "will not fire" in messages  # the idle telemetry detector
+    assert "no detector that consumes it" in messages  # the uncovered log lane
 
 
 def test_unknown_normalizer_is_an_error() -> None:
@@ -78,4 +81,57 @@ def test_shipped_demo_configs_are_error_free(path: Path) -> None:
 
 def test_syslog_demo_warns_about_its_idle_detector() -> None:
     issues = check_compatibility(load_config(CONFIG_DIR / "demo_syslog.yaml"))
-    assert [i.level for i in issues] == [CompatLevel.WARNING]
+    assert issues and all(i.level is CompatLevel.WARNING for i in issues)
+    assert any("will not fire" in i.message for i in issues)
+
+
+class TestMultiSource:
+    def cfg_ms(self, sources: list[dict[str, str]], **overrides: Any) -> PipelineConfig:
+        base: dict[str, Any] = {
+            "database_url": "sqlite:///x.db",
+            "sources": sources,
+            "detectors": [{"name": "stub_threshold", "params": {"lane": "telemetry"}}],
+            "alert_engine": {"name": "stub"},
+        }
+        return PipelineConfig.model_validate(base | overrides)
+
+    def test_mixed_modality_chain_only_warns_about_the_uncovered_log_lane(self) -> None:
+        # A telemetry source + a syslog source, with only a telemetry detector: the ingest
+        # joints are both fine, the telemetry detector is covered, and the log lane (which no
+        # detector consumes) is the single warning.
+        config = self.cfg_ms(
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ]
+        )
+        issues = check_compatibility(config)
+        assert [i.level for i in issues] == [CompatLevel.WARNING]
+        assert "log" in issues[0].message and "no detector that consumes it" in issues[0].message
+
+    def test_a_second_sources_bad_format_is_reported_against_that_source(self) -> None:
+        config = self.cfg_ms(
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "sisslog"},
+            ]
+        )
+        errors = [i for i in check_compatibility(config) if i.level is CompatLevel.ERROR]
+        assert [e.stage for e in errors] == ["sources[1]"]
+        assert "sisslog" in errors[0].message
+
+    def test_union_of_source_lanes_keeps_a_detector_from_idling(self) -> None:
+        # Two sources, one telemetry + one log; a log-lane detector no longer idles because
+        # a source now produces the log lane (the union across sources feeds the joint).
+        config = self.cfg_ms(
+            [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+            detectors=[
+                {"name": "stub_threshold", "params": {"lane": "telemetry"}},
+                {"name": "stub_threshold", "params": {"lane": "log"}},
+            ],
+        )
+        # Both produced lanes are consumed and both detectors fire: a fully clean chain.
+        assert check_compatibility(config) == []

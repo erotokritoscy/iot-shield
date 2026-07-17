@@ -78,3 +78,11 @@ def test_team3_detector_declared_lane_matches_built_instance() -> None:
     declared = lanes_in(DETECTORS["team3_zscore"].capability({}).consumes)
     assert declared == {Lane.TELEMETRY}
     assert build_detector("team3_zscore", {}).lane == Lane.TELEMETRY
+
+
+def test_log_burst_detector_declared_lane_matches_built_instance() -> None:
+    # Fixed-lane detector: the declaration must hold for every preset, not just the
+    # default, since the preset changes *what* it counts but never *which* lane it reads.
+    assert lanes_in(DETECTORS["log_burst"].capability({}).consumes) == {Lane.LOG}
+    for preset in ("severity_spike", "auth_failure"):
+        assert build_detector("log_burst", {"preset": preset}).lane == Lane.LOG

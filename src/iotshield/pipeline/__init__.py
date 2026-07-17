@@ -7,6 +7,7 @@ from iotshield.pipeline.config import (
     PipelineConfig,
     PipelineSpec,
     SinkConfig,
+    SourceSpec,
     config_from_spec,
     load_config,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "PipelineSpec",
     "RunReport",
     "SinkConfig",
+    "SourceSpec",
     "compute_run",
     "config_from_spec",
     "execute_run",

@@ -195,9 +195,62 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     return values
 
 
+def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, str], str, str]:
+    """One input source: normalizer + format picker, and its content (upload or paste).
+
+    Returns the source descriptor (what the guard/spec need), the raw content, and a
+    provenance origin. A run carries a list of these, so one run can mix modalities (a
+    telemetry CSV alongside syslog) that pool into the detector lanes (ADR-0019).
+    """
+    st.markdown(f"**Source {index + 1}**")
+    normalizer_name = st.selectbox("Normalizer", sorted(normalizers), key=f"src_{index}_norm")
+    formats = normalizers[normalizer_name].formats
+    source_format = (
+        st.selectbox("Input format", formats, key=f"src_{index}_fmt")
+        if len(formats) > 1
+        else (formats[0] if formats else "")
+    )
+    uploaded = st.file_uploader("Upload a file", key=f"src_{index}_file")
+    pasted = st.text_area(
+        "…or paste records",
+        key=f"src_{index}_text",
+        height=120,
+        placeholder="CSV for stub, log lines for syslog.",
+    )
+    if uploaded is not None:
+        content = uploaded.getvalue().decode("utf-8", errors="replace")
+        origin = uploaded.name
+    else:
+        content, origin = pasted, f"source-{index + 1}"
+    return {"normalizer": normalizer_name, "source_format": source_format}, content, origin
+
+
+def _default_detectors(detectors: dict[str, Any], produced: set[str]) -> list[str]:
+    """The detector to preselect: one the page's sources can actually feed.
+
+    Registry-driven rather than hardcoded, which is the whole point: "whichever name sorts
+    first" silently became wrong the moment the registry held a detector for a second lane
+    (ADR-0020), preselecting a *log* detector beside the default telemetry source — a chain
+    the guard immediately warns about. Streamlit honours ``default=`` only on a widget's
+    first render, so this reads the sources at their defaults too; switching the source
+    afterwards leaves the operator's own selection alone (and the guard speaks up if it no
+    longer fits). Returning nothing when nothing fits is deliberate — the caller turns that
+    into "pick a detector", which beats preselecting one the guard would flag.
+
+    Matching rendered tokens is safe only because normalizers produce lane tokens and
+    detectors consume them; the typed version of this joint is ``compat.lanes_in``. If the
+    UI ever needs another axis, decode lanes server-side beside ``ModuleInfo.formats``
+    rather than growing a string scheme here.
+    """
+    return [name for name in sorted(detectors) if set(detectors[name].consumes) & produced][:1]
+
+
 def compose_page(client: ControlClient) -> None:
     st.title("Compose & run a pipeline")
-    st.caption("Pick modules, validate the chain, then trigger a run. Results appear under Triage.")
+    st.caption(
+        "Pick input sources and modules, validate the chain, then trigger a run. "
+        "Results appear under Monitor → Triage."
+    )
     try:
         catalogue = client.modules()
     except _API_ERRORS as exc:
@@ -215,19 +268,29 @@ def compose_page(client: ControlClient) -> None:
         st.error("The Pipeline API reports no adapters — nothing to compose.")
         return
 
-    st.subheader("1 · Input format & normalizer")
-    normalizer_name = st.selectbox("Normalizer", sorted(normalizers), key="compose_normalizer")
-    formats = normalizers[normalizer_name].formats
-    source_format = (
-        st.selectbox("Input format", formats, key="compose_format")
-        if len(formats) > 1
-        else (formats[0] if formats else "")
+    st.subheader("1 · Input sources")
+    st.caption("Add one source per file/format; each is routed to its normalizer and pooled.")
+    count = int(
+        st.number_input(
+            "How many input sources?", min_value=1, max_value=10, value=1, step=1, key="compose_n"
+        )
     )
-    st.caption(f"Expected input format: `{source_format or 'unknown'}`")
+    sources: list[dict[str, str]] = []
+    inputs: list[dict[str, str]] = []
+    for index in range(count):
+        descriptor, content, origin = _source_widgets(index, normalizers)
+        sources.append(descriptor)
+        inputs.append({"content": content, "origin": origin})
 
     st.subheader("2 · Detectors")
+    produced_lanes = {
+        token for source in sources for token in normalizers[source["normalizer"]].produces
+    }
     selected = st.multiselect(
-        "Detectors", sorted(detectors), default=[sorted(detectors)[0]], key="compose_detectors"
+        "Detectors",
+        sorted(detectors),
+        default=_default_detectors(detectors, produced_lanes),
+        key="compose_detectors",
     )
     detector_specs: list[dict[str, Any]] = []
     for name in selected:
@@ -263,8 +326,7 @@ def compose_page(client: ControlClient) -> None:
         return
 
     spec: dict[str, Any] = {
-        "source_format": source_format,
-        "normalizer": normalizer_name,
+        "sources": sources,
         "detectors": detector_specs,
         "alert_engine": {"name": engine_name, "params": engine_params},
         "sinks": sink_specs,
@@ -285,16 +347,10 @@ def compose_page(client: ControlClient) -> None:
     if validation.ok and not validation.issues:
         st.success("Chain is compatible.")
 
-    input_text = st.text_area(
-        "Input data",
-        key="compose_input",
-        height=160,
-        placeholder="Paste records here (CSV for stub-csv, log lines for syslog).",
-    )
-    disabled = (not validation.ok) or (not input_text.strip())
-    if st.button("Run pipeline", disabled=disabled, key="compose_run"):
+    ready = validation.ok and all(item["content"].strip() for item in inputs)
+    if st.button("Run pipeline", disabled=not ready, key="compose_run"):
         try:
-            result = client.run(spec, input_text=input_text, origin="dashboard")
+            result = client.run(spec, inputs=inputs)
         except _API_ERRORS as exc:
             st.error(f"Run failed: {exc}")
             return

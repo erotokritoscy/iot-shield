@@ -50,8 +50,25 @@ def _default_sinks() -> list[SinkConfig]:
     return [SinkConfig(name=_POSTGRES_SINK)]
 
 
+class SourceSpec(_ConfigModel):
+    """One input source: which normalizer parses it, asserting its raw format (ADR-0019).
+
+    A run ingests a *list* of these, so one run can carry mixed modalities (telemetry CSV
+    *and* syslog) that pool into the detector lanes. Routing is explicit — the operator (or
+    source system) tags each source with its ``normalizer``/``source_format``; the pipeline
+    never sniffs a blob's format (the normalizer double-checks and rejects a mismatch, as a
+    config error). ``path`` is a loading hint used only by the file-reading CLI to locate a
+    source's content; the Pipeline API ignores it (content arrives in the request) and the
+    compatibility guard ignores it (it is not part of the chain's shape).
+    """
+
+    normalizer: str = "stub"
+    source_format: str = Field(min_length=1)
+    path: str | None = Field(default=None, description="CLI/config: where to read this source")
+
+
 class PipelineSpec(_ConfigModel):
-    """The operator-chosen shape of a run: which adapters, over what input format, to where.
+    """The operator-chosen shape of a run: which adapters, over what input source(s), to where.
 
     Deliberately excludes ``database_url`` — *where the database lives* is a deployment
     decision, not an operator one (a tenant must never point a run at an arbitrary
@@ -59,14 +76,39 @@ class PipelineSpec(_ConfigModel):
     ``database_url`` from its environment; the CLI's ``load_config`` produces a full
     ``PipelineConfig`` directly. ``sinks`` *is* operator-chosen (which stores/deliveries
     to fan the result out to); the Postgres sink among them is what reads ``database_url``.
+
+    ``sources`` is the multi-source ingest list (ADR-0019). A pre-validator desugars the
+    legacy single-source form (top-level ``source_format``/``normalizer``) into a one-element
+    ``sources`` list, so every config and spec written before multi-source keeps working.
     """
 
-    source_format: str = Field(min_length=1)
-    normalizer: str = "stub"
+    sources: list[SourceSpec] = Field(min_length=1)
     detectors: list[DetectorConfig] = Field(min_length=1)
     alert_engine: AlertEngineConfig = Field(default_factory=AlertEngineConfig)
     assets: list[Asset] = Field(default_factory=list, description="Seed registrations")
     sinks: list[SinkConfig] = Field(default_factory=_default_sinks, min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _desugar_single_source(cls, data: Any) -> Any:
+        """Fold a legacy top-level ``source_format``/``normalizer`` into ``sources=[...]``.
+
+        Runs before field validation (so ``extra="forbid"`` never sees the legacy keys) and
+        before ``PipelineConfig``'s after-validator. Naming both a legacy field and ``sources``
+        is a contradiction, so it is refused rather than silently resolved one way.
+        """
+        if not isinstance(data, dict):
+            return data
+        legacy = {key: data[key] for key in ("source_format", "normalizer") if key in data}
+        if not legacy:
+            return data
+        if "sources" in data:
+            raise ValueError(
+                "specify either the top-level source_format/normalizer or a 'sources' list, "
+                "not both"
+            )
+        rest = {key: value for key, value in data.items() if key not in legacy}
+        return {**rest, "sources": [legacy]}
 
 
 class PipelineConfig(PipelineSpec):

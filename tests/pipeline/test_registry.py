@@ -69,6 +69,26 @@ def test_team3_unknown_artifact_fails_fast_and_names_adapter() -> None:
         build_detector("team3_zscore", {"artifact": "nope"})
 
 
+def test_log_burst_detector_builds_with_its_preset() -> None:
+    detector = build_detector("log_burst", {"preset": "auth_failure"})
+    assert detector.lane == Lane.LOG
+    # The preset rides in the method, so two configured bursts stay distinguishable.
+    assert detector.method == "log_burst:auth_failure"
+
+
+def test_log_burst_unknown_preset_fails_fast_and_names_adapter() -> None:
+    with pytest.raises(
+        ValueError, match=r"invalid params for detector 'log_burst'.*unknown log_burst preset"
+    ):
+        build_detector("log_burst", {"preset": "nope"})
+
+
+def test_log_burst_quoted_numeric_params_are_coerced() -> None:
+    # YAML scalars can arrive quoted; the factory coerces them as _stub_threshold does.
+    detector = build_detector("log_burst", {"window_minutes": "2", "min_count": "5"})
+    assert detector.method == "log_burst:severity_spike"  # the format-agnostic default
+
+
 def test_build_file_sink_satisfies_the_port() -> None:
     sink: ResultSink = build_sink("file", {"path": "out.jsonl"}, SinkResources())
     assert sink is not None

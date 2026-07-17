@@ -20,7 +20,14 @@ from iotshield.alert.stub import CAPABILITY as _STUB_ALERT_CAPABILITY
 from iotshield.alert.weighted import CAPABILITY as _WEIGHTED_ALERT_CAPABILITY
 from iotshield.capabilities import Capability, CapabilityProvider, static
 from iotshield.contracts import Lane
-from iotshield.detect import Detector, StubThresholdDetector, Team3ZScoreDetector
+from iotshield.detect import (
+    Detector,
+    LogBurstDetector,
+    StubThresholdDetector,
+    Team3ZScoreDetector,
+)
+from iotshield.detect.log_burst import CAPABILITY as _LOG_BURST_CAPABILITY
+from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
 from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
 from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
@@ -76,6 +83,16 @@ def _team3_zscore(
     )
 
 
+def _log_burst(
+    preset: str = _DEFAULT_LOG_PRESET, window_minutes: float = 5.0, min_count: int = 5
+) -> LogBurstDetector:
+    # Coercion mirrors _stub_threshold: YAML scalars may arrive quoted; an unknown preset
+    # or a non-numeric window/count raises ValueError, caught and attributed by _construct.
+    return LogBurstDetector(
+        preset=str(preset), window_minutes=float(window_minutes), min_count=int(min_count)
+    )
+
+
 NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
     "stub": AdapterSpec(StubCsvNormalizer, static(_STUB_NORMALIZER_CAPABILITY)),
     "syslog": AdapterSpec(SyslogNormalizer, static(_SYSLOG_NORMALIZER_CAPABILITY)),
@@ -84,6 +101,7 @@ NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
 DETECTORS: dict[str, AdapterSpec[Detector]] = {
     "stub_threshold": AdapterSpec(_stub_threshold, _stub_threshold_capability),
     "team3_zscore": AdapterSpec(_team3_zscore, static(_TEAM3_CAPABILITY)),
+    "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {

@@ -28,7 +28,15 @@ class Detector(Protocol):
 
     @property
     def method(self) -> str:
-        """Detector name stamped on every emitted detection, e.g. "lstm_ae"."""
+        """Name of the judging method, stamped on every emitted detection, e.g. "lstm_ae".
+
+        It names *what judged*, not how strictly: a param that selects which rule or model
+        decides belongs here (and may render as ``<adapter>:<variant>``, e.g.
+        ``log_burst:auth_failure``), while a param that only tunes the same rule's
+        sensitivity (a threshold, a window) does not. ``method`` is the only detection field
+        that reaches the alert rationale and the triage views, so two instances of one
+        adapter that judge differently must not share a name.
+        """
         ...
 
     def detect(self, events: Sequence[NormalizedEvent]) -> list[DetectionResult]:

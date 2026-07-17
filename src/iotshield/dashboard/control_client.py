@@ -38,11 +38,8 @@ class ControlClient:
         response.raise_for_status()
         return ValidateResponse.model_validate(response.json())
 
-    def run(
-        self, spec: dict[str, Any], *, input_text: str, origin: str = "dashboard"
-    ) -> RunResponse:
-        response = self._http.post(
-            "/runs", json={"spec": spec, "input": input_text, "origin": origin}
-        )
+    def run(self, spec: dict[str, Any], *, inputs: list[dict[str, Any]]) -> RunResponse:
+        # ``inputs`` are ``{"content", "origin"}`` objects, one per source in spec.sources.
+        response = self._http.post("/runs", json={"spec": spec, "inputs": inputs})
         response.raise_for_status()
         return RunResponse.model_validate(response.json())

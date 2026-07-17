@@ -84,7 +84,8 @@ class TestValidate:
             "/runs/validate", json={"spec": spec(source_format="syslog", normalizer="syslog")}
         ).json()
         assert body["ok"] is True
-        assert [i["level"] for i in body["issues"]] == ["warning"]
+        # Idle telemetry detector + uncovered log lane: two warnings, still ok.
+        assert [i["level"] for i in body["issues"]] == ["warning", "warning"]
 
     def test_unsupported_format_is_not_ok(self, control: ControlHarness) -> None:
         body = control.client.post("/runs/validate", json={"spec": spec(source_format="x")}).json()
@@ -94,7 +95,9 @@ class TestValidate:
 
 class TestRuns:
     def test_run_persists_and_returns_summary(self, control: ControlHarness) -> None:
-        response = control.client.post("/runs", json={"spec": spec(), "input": STUB_CSV})
+        response = control.client.post(
+            "/runs", json={"spec": spec(), "inputs": [{"content": STUB_CSV}]}
+        )
         assert response.status_code == 200
         body = response.json()
         assert (body["events"], body["malformed"], body["detections"]) == (3, 0, 2)
@@ -104,16 +107,58 @@ class TestRuns:
             assert len(repository.get_events(session)) == 3
             assert len(repository.get_alerts(session)) == body["alerts"]
 
+    def test_mixed_modality_run_pools_two_sources(self, control: ControlHarness) -> None:
+        # One request, two sources of different formats: a telemetry CSV + a syslog line,
+        # routed to their normalizers and pooled into the two lanes (ADR-0019).
+        multi_spec = {
+            "sources": [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+            "detectors": [{"name": "stub_threshold", "params": {"threshold": 80.0}}],
+            "alert_engine": {"name": "stub"},
+        }
+        response = control.client.post(
+            "/runs",
+            json={
+                "spec": multi_spec,
+                "inputs": [{"content": STUB_CSV}, {"content": SYSLOG_LINE}],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        # 3 telemetry + 1 log = 4 events; the telemetry spikes still detect; log lane uncovered.
+        assert body["events"] == 4
+        assert body["detections"] == 2
+        assert any("no detector that consumes it" in w for w in body["warnings"])
+
+    def test_inputs_must_align_with_sources(self, control: ControlHarness) -> None:
+        # Two sources declared but one input supplied: refused before any run side effect.
+        two_source_spec = {
+            "sources": [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+            "detectors": [{"name": "stub_threshold"}],
+            "alert_engine": {"name": "stub"},
+        }
+        response = control.client.post(
+            "/runs", json={"spec": two_source_spec, "inputs": [{"content": STUB_CSV}]}
+        )
+        assert response.status_code == 422
+        assert "match spec.sources" in response.json()["detail"]["message"]
+
     def test_incompatible_format_is_422_with_issues(self, control: ControlHarness) -> None:
         response = control.client.post(
-            "/runs", json={"spec": spec(source_format="x"), "input": STUB_CSV}
+            "/runs", json={"spec": spec(source_format="x"), "inputs": [{"content": STUB_CSV}]}
         )
         assert response.status_code == 422
         assert any(i["level"] == "error" for i in response.json()["detail"]["issues"])
 
     def test_unknown_detector_is_422(self, control: ControlHarness) -> None:
         response = control.client.post(
-            "/runs", json={"spec": spec(detectors=[{"name": "nope"}]), "input": STUB_CSV}
+            "/runs",
+            json={"spec": spec(detectors=[{"name": "nope"}]), "inputs": [{"content": STUB_CSV}]},
         )
         assert response.status_code == 422
 
@@ -121,7 +166,10 @@ class TestRuns:
         # syslog input + telemetry detector: runs, warns, produces a log event, no detections.
         response = control.client.post(
             "/runs",
-            json={"spec": spec(source_format="syslog", normalizer="syslog"), "input": SYSLOG_LINE},
+            json={
+                "spec": spec(source_format="syslog", normalizer="syslog"),
+                "inputs": [{"content": SYSLOG_LINE}],
+            },
         )
         assert response.status_code == 200
         body = response.json()
@@ -131,6 +179,10 @@ class TestRuns:
     def test_operator_cannot_choose_the_database(self, control: ControlHarness) -> None:
         # database_url is deployment-owned: a spec carrying it is rejected (extra=forbid).
         response = control.client.post(
-            "/runs", json={"spec": spec(database_url="sqlite:///evil.db"), "input": STUB_CSV}
+            "/runs",
+            json={
+                "spec": spec(database_url="sqlite:///evil.db"),
+                "inputs": [{"content": STUB_CSV}],
+            },
         )
         assert response.status_code == 422

@@ -37,6 +37,6 @@ def test_validate_flags_unsupported_format(control_client: ControlClient) -> Non
 
 
 def test_run_returns_summary(control_client: ControlClient) -> None:
-    result = control_client.run(_spec(), input_text=STUB_CSV)
+    result = control_client.run(_spec(), inputs=[{"content": STUB_CSV}])
     assert (result.events, result.malformed, result.detections, result.alerts) == (1, 0, 1, 1)
     assert result.top_alerts and result.top_alerts[0].asset_id == "pump-02"

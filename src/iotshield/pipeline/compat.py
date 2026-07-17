@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from iotshield.capabilities import Token, formats_in, lanes_in
+from iotshield.contracts import Lane
 from iotshield.pipeline.config import PipelineConfig
 from iotshield.pipeline.registry import (
     alert_engine_capability,
@@ -51,31 +52,41 @@ def check_compatibility(config: PipelineConfig) -> list[CompatIssue]:
     """Return every coherence issue in ``config`` (empty means a clean chain)."""
     issues: list[CompatIssue] = []
 
-    # The normalizer anchors the chain; if it can't be resolved, nothing downstream
-    # can be judged, so report just that.
-    try:
-        normalizer_cap = normalizer_capability(config.normalizer)
-    except ValueError as exc:
-        return [CompatIssue(CompatLevel.ERROR, "normalizer", str(exc))]
+    if not config.sources:
+        return [CompatIssue(CompatLevel.ERROR, "sources", "no input sources configured")]
 
-    # Ingest joint: the asserted source_format must be one the normalizer accepts,
-    # else the normalizer raises at runtime (a real crash) -> ERROR.
-    accepted = formats_in(normalizer_cap.consumes)
-    if config.source_format not in accepted:
-        issues.append(
-            CompatIssue(
-                CompatLevel.ERROR,
-                "ingest",
-                f"normalizer {config.normalizer!r} does not accept source_format "
-                f"{config.source_format!r} (accepts: {_join(accepted)})",
+    # Ingest joints: every source's asserted source_format must be one its normalizer
+    # accepts, else that normalizer raises at runtime (a real crash) -> ERROR. The lanes the
+    # sources produce pool into one set the detectors draw from. When ingest is itself
+    # broken, the downstream lane warnings would be noise, so they are suppressed below.
+    ingest_ok = True
+    produced_lanes: set[Lane] = set()
+    for index, source in enumerate(config.sources):
+        stage = f"sources[{index}]"
+        try:
+            normalizer_cap = normalizer_capability(source.normalizer)
+        except ValueError as exc:
+            issues.append(CompatIssue(CompatLevel.ERROR, stage, str(exc)))
+            ingest_ok = False
+            continue
+        accepted = formats_in(normalizer_cap.consumes)
+        if source.source_format not in accepted:
+            issues.append(
+                CompatIssue(
+                    CompatLevel.ERROR,
+                    stage,
+                    f"normalizer {source.normalizer!r} does not accept source_format "
+                    f"{source.source_format!r} (accepts: {_join(accepted)})",
+                )
             )
-        )
+            ingest_ok = False
+            continue
+        produced_lanes |= lanes_in(normalizer_cap.produces)
 
-    produced_lanes = lanes_in(normalizer_cap.produces)
-
-    # Lane joint: each detector's lane must be one the normalizer produces, else the
-    # detector idles (legal, sometimes intentional) -> WARNING.
+    # Lane joint: each detector's lane must be one some source produces, else the detector
+    # idles (legal, sometimes intentional) -> WARNING.
     detector_products: set[Token] = set()
+    consumed_lanes: set[Lane] = set()
     for index, detector in enumerate(config.detectors):
         try:
             detector_cap = detector_capability(detector.name, detector.params)
@@ -83,16 +94,32 @@ def check_compatibility(config: PipelineConfig) -> list[CompatIssue]:
             issues.append(CompatIssue(CompatLevel.ERROR, f"detectors[{index}]", str(exc)))
             continue
         detector_products |= detector_cap.produces
-        idle_lanes = lanes_in(detector_cap.consumes) - produced_lanes
-        if idle_lanes:
-            wanted = _join(lane.value for lane in idle_lanes)
-            available = _join(lane.value for lane in produced_lanes)
+        wanted = lanes_in(detector_cap.consumes)
+        consumed_lanes |= wanted
+        idle_lanes = wanted - produced_lanes
+        if ingest_ok and idle_lanes:
             issues.append(
                 CompatIssue(
                     CompatLevel.WARNING,
                     f"detectors[{index}]",
-                    f"detector {detector.name!r} consumes lane(s) {wanted} but the "
-                    f"{config.normalizer!r} normalizer only produces {available}; it will not fire",
+                    f"detector {detector.name!r} consumes lane(s) "
+                    f"{_join(lane.value for lane in idle_lanes)} but no configured source "
+                    f"produces them ({_join(lane.value for lane in produced_lanes)}); "
+                    f"it will not fire",
+                )
+            )
+
+    # Coverage joint: a lane the sources produce that no detector consumes is ingested but
+    # never judged -> WARNING (those events yield no detections). The multi-source mirror of
+    # the idle-detector check, and the per-lane feedback the operator UI surfaces (ADR-0019).
+    if ingest_ok:
+        for lane in sorted(produced_lanes - consumed_lanes, key=lambda lane: lane.value):
+            issues.append(
+                CompatIssue(
+                    CompatLevel.WARNING,
+                    "ingest",
+                    f"source lane {lane.value!r} has no detector that consumes it; "
+                    f"those events will produce no detections",
                 )
             )
 

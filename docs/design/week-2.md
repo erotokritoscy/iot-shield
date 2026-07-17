@@ -1,13 +1,15 @@
 # Design Proposal — Operator Orchestration & Deployment-Agnostic Serving
 
-**Status:** Draft for review · **Date:** 2026-07-13 · **Author:** Andreas Tziakouris (CYENS internship)
-**Audience:** Project stakeholders + engineering · **Supersedes:** nothing; **will be ratified into:** ADRs under `docs/adr/`
+**Status:** Phase 1 shipped · Phase 2 proposed · **Date:** 2026-07-13 · **Revised:** 2026-07-15 · **Author:** Andreas Tziakouris (CYENS internship)
+**Audience:** Project stakeholders + engineering · **Ratified into:** ADR-0014 (compatibility guard), ADR-0015 (Pipeline API), ADR-0016 (orchestration UI), ADR-0018 (ResultSink)
 
 ---
 
 ## 1. Summary (the one-paragraph version)
 
 Following the architecture review, the project is taking on a second purpose: in addition to being a research harness where engineers benchmark detection modules, it should be able to serve anomaly detection as a **product** to companies operating IoT devices. This document proposes the first concrete step toward that dual goal: an **operator-facing orchestration layer** (a UI + API that lets a non-technical operator compose a detection pipeline from a menu of available modules, with a safety check that refuses invalid configurations), and a small but important architectural change — a **deployment-agnostic "result sink"** — that lets the *same* pipeline serve either an on-premise install (results stored in the customer's database) or a hosted service (results returned to the caller), **without committing to that business decision now.** Larger items raised in the review (splitting the pipeline into independently scaled services; an asynchronous streaming backbone) are deliberately deferred, with the technical triggers that would justify them stated explicitly.
+
+**Update (2026-07-15):** the orchestration layer, compatibility guard, Pipeline API, and ResultSink described in §5–§6 are now built and merged (ADR-0014 / 0015 / 0016 / 0018) — this revision records them as delivered. It also adds **§11, a Phase 2 "product-depth" program** (multi-source ingestion, deeper detection, an evaluation harness, richer alert evidence) that strengthens the shared compute core those seams wrap.
 
 ---
 
@@ -47,11 +49,15 @@ The review produced four substantive ideas. All four have merit; they differ in 
 
 The two "build now" rows are the subject of this document. The two deferrals are scoped in §8.
 
+*Update (2026-07-15): both "build now" rows are now shipped (§5–§6); the two deferrals remain deferred (§8), where they are joined by the Phase 2 deferrals. The active work is now the Phase 2 depth program (§11).*
+
 ---
 
-## 5. What we are building now
+## 5. Phase 1 — the productization seams (shipped)
 
-### 5.1 The orchestration layer + operator UI
+*All four items below are built and merged; the ADR for each is noted inline. They are recorded here as delivered — the forward-looking work is now §11.*
+
+### 5.1 The orchestration layer + operator UI *(shipped — ADR-0016)*
 
 A front-end (and the API behind it) where an operator **composes a pipeline by selecting modules** — which normalizer, which detector(s), which alert engine — from the catalog of installed modules, instead of hand-writing a configuration file. This is a direct, friendly surface over the existing module registry; the architecture was built for exactly this.
 
@@ -59,7 +65,7 @@ Design intent:
 - **Non-technical-operator-friendly.** The operator picks from named, described options; the UI produces the configuration that the pipeline already understands.
 - **The output is a pipeline configuration**, which the Pipeline API (§5.3) executes. Nothing about the pipeline's internals is exposed.
 
-### 5.2 The compatibility guard (a real feature, not just validation)
+### 5.2 The compatibility guard (a real feature, not just validation) *(shipped — ADR-0014)*
 
 Today, an operator *could* select an input type and a set of modules that don't fit together — e.g. feed **log** data but enable only a **telemetry** detector — and the pipeline would run happily and produce **zero results, silently.** For a researcher that is acceptable; for a paying operator it looks like a broken product.
 
@@ -67,11 +73,11 @@ We therefore add a **pre-flight compatibility check**. Each module declares a sm
 
 This capability metadata is a modest, bounded piece of work, and it *also* benefits the research goal: a self-describing module catalog is exactly what a researcher browsing "what can I plug in?" needs.
 
-### 5.3 The Pipeline API
+### 5.3 The Pipeline API *(shipped — ADR-0015)*
 
 A service that accepts a pipeline configuration (from the orchestrator UI), runs the compatibility guard, executes the pipeline, and dispatches the results. This is distinct from the existing read-only API: the existing one **reads stored results out**; this one **takes data/config in and triggers processing.** They are complementary — the interaction models are inverted.
 
-### 5.4 The deployment-agnostic Result Sink (the core technical change)
+### 5.4 The deployment-agnostic Result Sink (the core technical change) *(shipped — ADR-0018)*
 
 This is the mechanism that lets us proceed **before** the SaaS-vs-on-prem decision is made.
 
@@ -82,9 +88,13 @@ Today the destination of results is hard-wired: the pipeline always writes to th
 
 The payoff: **the business decision the stakeholders cannot yet make becomes a decision the engineering does not need to wait on.** We build the seam; whichever model is chosen later plugs in as a one-line configuration change, not a re-architecture. The abstraction also permits *both at once* (persist *and* return) should a hosted-dashboard product ever want it.
 
+**How it shipped (ADR-0018).** The seam landed as a **pluggable multi-sink fan-out**: a run writes to a *list* of sinks (`sinks: list[SinkConfig]`, defaulting to `[postgres]` so every existing config is unchanged). `DatabaseSink` shipped as **`PostgresSink`** — the default, and what the read API and dashboard still consume, with the persistence transaction moved *into* the sink where it belongs. The SaaS "return, persist nothing" idea generalized into the pluggable store itself: the first non-database sink is a lossless **`FileSink`** (one JSON object per run), which proves a deployment can run with **no database and no dashboard** at all; a webhook/SIEM sink is the next drop-in and appears in the catalog and compose UI automatically. The open question of *how the sink is selected* (§9-A) was resolved here too — see below.
+
 ---
 
-## 6. The enabling refactor (an honest account of the work)
+## 6. The enabling refactor (done — ADR-0018)
+
+*Done: `compute_run` (pure, store-agnostic) followed by `execute_run` (fan-out to sinks) now implement exactly the split below, and `resolve_assets` moved asset discovery in-memory. The account of the work is kept here as the design rationale.*
 
 Making the sink swappable is not a change "at the very end" of the pipeline — because today the pipeline **braids computation and storage together**. It normalizes and immediately writes, detects and immediately writes, and — critically — reads asset records *back* from the database mid-run to build alerts. The database is currently woven *through* the computation, not merely attached to its end.
 
@@ -122,7 +132,7 @@ The value of this approach is that it does not fork the product prematurely. The
 | Read-API + dashboard | yes | yes (customer-hosted) | client consumes returned payload |
 | Data residency | n/a | customer's own environment | minimized / tenant-isolated |
 
-Everything in the "same" row is what we protect and reuse. Everything that varies is isolated behind a port.
+Everything in the "same" row is what we protect and reuse. Everything that varies is isolated behind a port. Phase 2 (§11) invests precisely in that "same" row — the shared compute core — so its returns accrue to all three futures at once.
 
 ---
 
@@ -134,12 +144,19 @@ Stating scope boundaries protects the timeline and prevents accidental over-buil
 - **No message broker / streaming backbone (e.g. RabbitMQ).** Deferred until the product is genuinely real-time and volume justifies it. We will keep the ingestion boundary designed so a queue can be introduced without a rewrite.
 - **No multi-tenancy, authentication, or billing yet.** These are required for a *hosted* product and depend on the business-model decision (§9). They are downstream of, and enabled by, the sink seam and the API built here.
 
+The Phase 2 program (§11) carries its own deferrals, on the same "sequencing, not rejection" basis — each with an explicit trigger:
+
+- **React dashboard rewrite.** Trigger: an approaching stakeholder demo. The dashboard consumes only the read and Pipeline APIs, so this is a skin swap that is safe at any time; it is sequenced last precisely so it isn't rebuilt against a still-moving feature set.
+- **Cross-asset incident correlation** (grouping alerts across *different* devices into a single campaign). Trigger: the detectors are trustworthy. Within-asset, cross-lane correlation already exists in the alert engine; correlating *across* assets on top of weak detectors would manufacture false campaigns, so it waits on detection depth (§11.2).
+- **Analyst feedback loop → learned triage** (an analyst marks alerts true/false-positive; that signal suppresses noise and, later, trains a learned prioritizer). Trigger: real usage producing labels. Deferred as premature with no users; the alert `status` field is kept clean so this stays an additive change, not a rewrite.
+- **Synthetic scenario generator.** Trigger: benchmarking on a *customer's own* data, where anomalies injected by construction supply the labels. The evaluation harness itself is *not* gated on this — public labeled datasets suffice (§11.3).
+
 ---
 
 ## 9. Open decisions
 
-**A — Technical fork (needs sign-off to proceed): how is the result sink selected?**
-Recommended: **at the deployment level**, using the same mechanism the database location already uses — a default in configuration, overridable by an environment variable at deploy time. Rationale: the sink is determined by *which product was deployed* (on-prem vs hosted), which is an environment property, not a per-request choice. Making it a **request parameter** would let an arbitrary caller dictate where their data lands — a tenancy/security footgun in a hosted setting. A per-tenant override can be added later if genuine per-tenant policies emerge.
+**A — Technical fork: how is the result sink selected? — RESOLVED (ADR-0018).**
+Decision: the **set of sinks is operator/config-chosen** (part of the pipeline spec the orchestration UI produces), while the **database location stays server-side** — `database_url`, defaulted in configuration and overridable by an environment variable at deploy time, is never a caller-supplied value. Rationale (unchanged from the original recommendation): a run's *store location* is determined by *which product was deployed* (on-prem vs hosted), an environment property, not a per-request choice; making the database a request parameter would let an arbitrary caller dictate where their data lands — a tenancy/security footgun in a hosted setting. The multi-sink list generalizes the original single-adapter recommendation: a deployment may fan one run out to several destinations (e.g. persist *and* export) while still never naming the database. A per-tenant override can be added later if genuine per-tenant policies emerge.
 
 **B — Business decisions (need stakeholder input; block later phases, not this one):**
 1. **Hosted (SaaS) vs on-premise** as the primary commercial model — determines the tenancy, data-residency, and security work that follows.
@@ -150,9 +167,37 @@ Recommended: **at the deployment level**, using the same mechanism the database 
 
 ## 10. Rough phasing
 
-- **Now (current internship scope):** the compute/sink refactor (§6); the `DatabaseSink` + `ResponseSink` adapters (§5.4); the Pipeline API (§5.3); module capability descriptors + the compatibility guard (§5.2); the orchestrator UI (§5.1). This is a self-contained, demoable slice that moves the product forward *without* requiring any of the deferred business decisions.
-- **Next (post-decision):** whichever of tenancy / auth / data-residency the chosen business model requires; hardening the deployment images.
-- **Later (load- or feature-gated):** extract detection into its own scalable service; introduce an asynchronous streaming ingestion backbone — each behind its stated trigger.
+- **Phase 1 (done):** the compute/sink refactor (§6); the `PostgresSink` + `FileSink` adapters (§5.4); the Pipeline API (§5.3); module capability descriptors + the compatibility guard (§5.2); the orchestrator UI (§5.1). Delivered as ADR-0014 / 0015 / 0016 / 0018 — a self-contained, demoable slice that moved the product forward *without* requiring any of the deferred business decisions.
+- **Phase 2 (now — this revision's new subject): product depth** — see §11: multi-source / mixed-modality ingestion, deeper detection, an evaluation harness, and richer alert evidence. It strengthens the shared compute core that the Phase 1 seams wrap, so it pays off across all three futures (§7).
+- **Post-decision:** whichever of tenancy / auth / data-residency the chosen business model requires; hardening the deployment images.
+- **Later (load- or feature-gated):** extract detection into its own scalable service; introduce an asynchronous streaming ingestion backbone; and the Phase 2 deferrals in §8 (cross-asset incidents, feedback loop, React) — each behind its stated trigger.
+
+---
+
+## 11. Phase 2 — the product-depth program
+
+Phase 1 built the *seams* that make the pipeline a product: compose modules, guard the chain, choose where results go. Phase 2 deepens the **core those seams wrap** — the detection itself and the data it runs on. The organizing judgment: for a detection product with no users yet, the binding risk is not a thin feature set *around* the pipeline but that the **detection itself is not yet deep or trustworthy enough to be worth selling.** Two facts in the current system set the order of work:
+
+1. **The cross-lane fusion the alert engine was built for has never actually run.** The alert engine already correlates detections by `(asset, time-window)` and *raises an alert's priority when multiple data lanes agree* (its "corroboration" factor). But every run today uses a single normalizer, so a run carries a single data lane — and that factor is therefore always exactly 1. The fusion machinery is built and idle for want of multi-lane input.
+2. **The detection lane currently offers one deliberately simple detector** (a z-score). Depth here — more detectors, better detectors, and a way to *measure* them — is the main gap between a demo and a product.
+
+One constraint follows from these and fixes the sequence: **correlation quality is bounded by detection quality.** Fusing or correlating weak signals yields confident noise, so detector depth must precede any higher-order correlation. And, consistent with §7, every item below strengthens the *shared* core — it accrues to the research harness, the on-prem product, and the hosted product alike.
+
+The work, in order:
+
+**11.1 · Multi-source / mixed-modality ingestion** (with file upload) — *shipped (ADR-0019)*
+A single run now accepts mixed inputs — e.g. a telemetry CSV alongside syslog — routing each input to its normalizer by explicit format tag (never by sniffing the content, which would reintroduce silent misclassification) and pooling the results into the detector lanes. The Pipeline API takes one input per source, the CLI reads a path per source, and the operator page composes a run from an upload-or-paste box per source; legacy single-source configs keep working unchanged. This is the enabler the rest of Phase 2 builds on, and it is what finally feeds the alert engine two lanes at once (fact 1). One honest note: the engine's corroboration factor still reads 1, because it counts agreeing *detection* lanes and no detector yet produces log-lane detections — a cross-lane detector (11.2) is what makes it exceed 1. This item delivers the ingestion that detector will need.
+
+**11.2 · Detection depth**
+Move from one naive detector to a credible, benchmarked menu per lane — Isolation Forest first, then an autoencoder (LSTM/CNN) once the deep-learning case earns its heavier runtime. Each detector is its own ADR; ADR-0012 anticipated exactly this, having frozen the runtime at numpy-only with scikit-learn / torch deferred to per-model decisions. This is where the product's substance lives.
+
+**11.3 · Evaluation / benchmarking harness**
+Replay labeled data and report precision, recall, F1, and latency per module, head-to-head. This answers the question 11.2 raises — *which detector do we ship?* — and it is the provability a security buyer and a researcher both need. It runs on public labeled datasets already on hand (SKAB is in the repository; NAB and CICIDS2017 are standard), so it is **not** blocked on the labeled-data problem. Only the "benchmark on a customer's own data" variant needs fresh labels — supplied by the deferred synthetic generator (§8).
+
+**11.4 · Dashboard evidence**
+Link an alert directly to its evidence — the telemetry window that fired it (with the anomalous span highlighted), the raw records behind it, and log-lane evidence — rather than requiring the analyst to pivot to a separate asset view. This is trust made visible, and it bundles with the next dashboard work; it is a companion to, and independent of, the React rewrite deferred in §8.
+
+The Phase 2 deferrals — cross-asset incident correlation, the analyst feedback loop, the synthetic generator, and the React rewrite — are recorded with their triggers in §8.
 
 ---
 

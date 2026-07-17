@@ -65,7 +65,14 @@ runner still creates it for standalone host runs. The first real detector (team3
 ADR-0012) settled the runtime dependency surface as **numpy-only** (sklearn/torch
 deferred to future per-model ADRs); image hardening is now unblocked but not yet done.
 
-Five demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
+A run ingests **one or more sources** (ADR-0019): `PipelineSpec.sources` is a list of
+`{normalizer, source_format, path?}`, each routed to its normalizer by its declared format
+(explicit tagging, never sniffing) and pooled into the detector lanes — so one run can mix
+modalities. The legacy top-level `source_format`/`normalizer` desugars to a one-element
+`sources` list, so old configs still work. Detectors are handed their lane's events sorted
+by `(asset_id, timestamp)` — a port guarantee windowed models rely on.
+
+Seven demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
 normalizer, re-implemented from team4 → LOG-lane events across three hosts, both
@@ -75,10 +82,18 @@ detector, vendored from team3, on a real SKAB valve fault → one collective
 detection → one alert — ADR-0012); `config/demo_triage.yaml` +
 `data/demo/demo_triage.csv` (both detectors → the `weighted` engine over four
 assets → a *ranked* queue where severity, asset criticality, and detection volume
-each visibly reorder the alerts — ADR-0013); and `config/demo_file.yaml` +
+each visibly reorder the alerts — ADR-0013); `config/demo_file.yaml` +
 `data/demo/demo.csv` (the SAME pipeline as `demo.yaml`, but a **file/JSONL sink**
 instead of Postgres — no database, no dashboard — demonstrating the pluggable
-result store, ADR-0018).
+result store, ADR-0018); `config/demo_log.yaml` + `data/demo/demo_log.log` (an sshd brute
+force → the `log_burst` detector's `auth_failure` preset → twelve failures in ~60s merged
+into ONE collective detection → one HIGH alert; every line is severity INFO, so the
+`severity_spike` preset would see nothing — ADR-0020); and `config/demo_multimodal.yaml`
+(two sources in ONE run — `data/demo/demo_multimodal.csv` telemetry +
+`data/demo/demo_multimodal.log` syslog on the same asset — routed, pooled into two lanes,
+and **both judged**: the telemetry spike plus a log burst correlate into one alert whose
+`corroboration` factor is 1.5, the first time cross-lane agreement has ever fired — the
+same spike scores ~27/LOW on telemetry alone vs ~56/HIGH corroborated — ADR-0019 + ADR-0020).
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
@@ -89,8 +104,8 @@ regenerate it only when the model/data change: `uv run python -m iotshield.detec
 src/iotshield/
   contracts/       frozen data contracts (pydantic v2) — the product's core
   capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
-  normalize/    Normalizer port + adapters (stub, syslog, ...)
-  detect/       Detector port + adapters (stub threshold, telemetry-ad, ...)
+  normalize/    Normalizer port + adapters (stub, syslog, ...); a run routes each of its sources here by format (ADR-0019)
+  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, ...)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
