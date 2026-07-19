@@ -6,6 +6,7 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -18,11 +19,20 @@ from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import severity_bar, telemetry_timeline
 from iotshield.dashboard.client import ApiClient
 from iotshield.dashboard.control_client import ControlClient
+from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
 DEFAULT_API_URL = "http://127.0.0.1:8000"
 PIPELINE_API_URL_ENV = "IOTSHIELD_PIPELINE_API_URL"
 DEFAULT_PIPELINE_API_URL = "http://127.0.0.1:8100"
+
+# The evaluation plane is off unless a deployment opts in (ADR-0021 D1). It is a research
+# instrument, not a product feature: it needs labelled corpora, which production never has,
+# and it is the first thing you would drop from a product image. Same env-injection pattern
+# as IOTSHIELD_DATABASE_URL, so an on-prem customer simply never sees the mode.
+EVAL_UI_ENV = "IOTSHIELD_EVAL_UI"
+EVAL_REPORT_ENV = "IOTSHIELD_EVAL_REPORT"
+DEFAULT_EVAL_REPORT = "reports/evaluation.json"
 
 # Everything that can go wrong talking to the API: transport/status errors
 # (httpx), a response that no longer matches a contract (ValidationError — the
@@ -377,19 +387,104 @@ def compose_page(client: ControlClient) -> None:
             st.caption("No postgres sink selected — results are in the chosen sink(s), not Triage.")
 
 
+def eval_ui_enabled() -> bool:
+    return os.environ.get(EVAL_UI_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def load_eval_report(path: Path) -> EvaluationReport | None:
+    """Read a saved benchmark report, or None if there is not a valid one there yet."""
+    if not path.is_file():
+        return None
+    try:
+        return EvaluationReport.model_validate_json(path.read_text(encoding="utf-8"))
+    except (ValidationError, json.JSONDecodeError, OSError):
+        return None
+
+
+def evaluate_page(report_path: Path) -> None:
+    """Render a saved benchmark report. Deliberately never launches one.
+
+    Benchmarks take minutes over a full corpus, and Streamlit re-executes the whole script
+    on every interaction — running one here would be a spinner of death. The split is the
+    familiar one: ``pytest`` runs, the coverage report displays (ADR-0021).
+    """
+    st.title("Evaluate — detector benchmarks")
+    st.caption(
+        "How the configured pipelines score against labelled corpora. Research instrument: "
+        "it needs ground truth, which production data never has."
+    )
+
+    report = load_eval_report(report_path)
+    if report is None:
+        st.info(f"No evaluation report at `{report_path}`. Generate one with:")
+        st.code(
+            "uv run python -m iotshield.eval --corpus demo_micro \\\n"
+            "    --spec config/bench/team3.yaml --spec config/bench/stub.yaml \\\n"
+            f"    --out {report_path}",
+            language="bash",
+        )
+        return
+
+    st.caption(
+        f"`{report.corpus}` — {report.corpus_description} · {report.cases} case(s), "
+        f"{report.incidents} incident(s) · fit protocol **{report.fit_protocol}** · "
+        f"generated {report.generated_at:%Y-%m-%d %H:%M} UTC"
+    )
+
+    summary = pd.DataFrame(
+        [
+            {
+                "spec": spec.spec,
+                "detectors": ", ".join(spec.detectors),
+                **{key: value for key, value in spec.summary().items()},
+                "fitted": f"{spec.cases_fitted}/{len(spec.cases)}",
+            }
+            for spec in report.specs
+        ]
+    )
+    st.subheader("Head to head")
+    st.dataframe(summary, width="stretch", hide_index=True)
+    st.caption(
+        "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
+        "what papers report (per-row coverage). `compression_ratio` is detections-per-incident "
+        "over alerts-per-incident — what the correlation stage absorbed."
+    )
+
+    selected = st.selectbox("Inspect spec", report.specs, format_func=lambda spec: spec.spec)
+    if selected is None:
+        return
+    st.subheader(f"{selected.spec} — per case")
+    st.dataframe(
+        pd.DataFrame([case.model_dump(exclude={"precision_at_k"}) for case in selected.cases]),
+        width="stretch",
+        hide_index=True,
+    )
+    for note in sorted({note for case in selected.cases for note in case.notes}):
+        st.warning(note)
+
+
 def main() -> None:
     st.set_page_config(page_title="iotshield", layout="wide")
     st.sidebar.title("iotshield")
-    # Two modes, mirroring the two planes: Operate (write — compose & run, backed by
-    # the Pipeline API) vs Monitor (read — browse results, backed by the read API).
-    # Grouping them keeps the analyst's daily view free of the operator's controls;
-    # a future split into two deployables is then just promoting the Operate mode.
-    mode = st.sidebar.radio("Mode", ["Monitor", "Operate"])
+    # Modes mirror the planes: Operate (write — compose & run, backed by the Pipeline API)
+    # vs Monitor (read — browse results, backed by the read API). Grouping them keeps the
+    # analyst's daily view free of the operator's controls; a future split into two
+    # deployables is then just promoting the Operate mode.
+    #
+    # Evaluate is a third plane, off unless a deployment opts in (ADR-0021): Monitor and
+    # Operate *use* the pipeline, while Evaluate *judges* it — a different question, over
+    # labelled corpora rather than production data, for a researcher rather than an analyst.
+    modes = ["Monitor", "Operate"] + (["Evaluate"] if eval_ui_enabled() else [])
+    mode = st.sidebar.radio("Mode", modes)
 
-    # Operate talks only to the Pipeline API and handles its own reachability, so it
-    # returns before the read-side health gate the Monitor views depend on.
+    # Operate talks only to the Pipeline API and handles its own reachability; Evaluate
+    # reads a file and talks to nothing. Both return before the read-side health gate the
+    # Monitor views depend on.
     if mode == "Operate":
         compose_page(get_control_client())
+        return
+    if mode == "Evaluate":
+        evaluate_page(Path(os.environ.get(EVAL_REPORT_ENV, DEFAULT_EVAL_REPORT)))
         return
 
     page = st.sidebar.radio("View", ["Triage", "Assets & telemetry", "Data health"])

@@ -1,0 +1,29 @@
+# Benchmark spec: the stub threshold detector — the baseline every result is read against.
+#
+# Deliberately naive: flag any reading above a fixed value, with no baseline and no notion
+# of normal. It exists so the table has a floor. A learned detector that cannot beat "is the
+# number big" on labelled data has not earned its complexity, and without this row nobody
+# would know. It is also the harness's control for the fit protocols: having no baseline to
+# learn, it is not Fittable, so its score is identical under every protocol — which is what
+# makes it the fixed reference point when the fitted rows move.
+
+source_format: stub-csv
+normalizer: stub
+
+detectors:
+  - name: stub_threshold
+    params:
+      threshold: 80.0
+      lane: telemetry
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+assets:
+  - asset_id: skab-testbed
+    name: SKAB rotor testbed
+    asset_type: pump
+    location: skab-rig
+    criticality: high

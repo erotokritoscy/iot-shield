@@ -15,6 +15,7 @@ import pytest
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect import (
     Detector,
+    Fittable,
     LogBurstDetector,
     StubThresholdDetector,
     Team3ZScoreDetector,
@@ -47,6 +48,11 @@ def event(
 class DetectorCase:
     make: Callable[[], Detector]
     triggering_events: Sequence[NormalizedEvent]  # must yield >= 1 detection
+    # Normal-looking events a Fittable adapter can actually learn a baseline from. Required
+    # only for adapters implementing the optional capability: `triggering_events` are chosen
+    # to fire, which usually makes them unfit for training (team3 rejects an all-constant
+    # frame as degenerate, correctly).
+    fit_events: Sequence[NormalizedEvent] | None = None
 
 
 # A hermetic team3 artifact: trained on a synthetic single-channel normal series
@@ -93,6 +99,10 @@ CASES = [
         DetectorCase(
             make=lambda: Team3ZScoreDetector(_TEAM3_ARTIFACT),
             triggering_events=[event(value=v, offset_s=i) for i, v in enumerate(_TEAM3_VALUES)],
+            fit_events=[
+                event(value=float(v), offset_s=i)
+                for i, v in enumerate(np.random.default_rng(1).normal(10.0, 0.5, 200))
+            ],
         ),
         id="team3-zscore",
     ),
@@ -152,6 +162,31 @@ def test_foreign_lane_events_are_ignored(case: DetectorCase) -> None:
 
 def test_empty_input_yields_nothing(case: DetectorCase) -> None:
     assert case.make().detect([]) == []
+
+
+def test_fitting_yields_a_detector_that_still_obeys_every_law(case: DetectorCase) -> None:
+    """A fitted detector is still a detector — fitting must not let one escape the port.
+
+    ``Fittable`` is optional (ADR-0021 D3), so adapters that do not implement it skip this.
+    Those that do must return something that stamps its lane/method, keeps windows in range,
+    clears its threshold, and does not mutate the original — otherwise fitting would be a
+    hole in the suite that every other law is checked through.
+    """
+    detector = case.make()
+    if not isinstance(detector, Fittable):
+        pytest.skip("adapter does not implement the optional Fittable capability")
+    assert case.fit_events is not None, "a Fittable adapter's case must supply fit_events"
+
+    fitted = detector.fit(case.fit_events)
+    assert fitted is not detector  # a new object, so no hidden fitted state
+
+    lane_times = [e.timestamp for e in case.triggering_events if e.source_type == fitted.lane]
+    for detection in fitted.detect(case.triggering_events):
+        assert detection.lane == fitted.lane
+        assert detection.method == fitted.method
+        assert detection.score > detection.threshold
+        assert min(lane_times) <= detection.window_start
+        assert detection.window_end <= max(lane_times)
 
 
 def test_deterministic_apart_from_generated_ids(case: DetectorCase) -> None:

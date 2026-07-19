@@ -176,3 +176,63 @@ class TestCompose:
         assert any("Run complete" in str(s.value) for s in at.success)
         # events, malformed, detections, alerts for the single over-threshold reading
         assert [m.value for m in at.metric] == ["1", "0", "1", "1"]
+
+
+class TestEvaluateMode:
+    """The third plane is opt-in, and reads a report rather than running one (ADR-0021)."""
+
+    def test_mode_is_absent_by_default(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient
+    ) -> None:
+        # A product deployment must never surface the research instrument.
+        monkeypatch.delenv(dashboard_app.EVAL_UI_ENV, raising=False)
+        at = run_app(monkeypatch, empty_client)
+        assert "Evaluate" not in at.sidebar.radio[0].options
+
+    def test_mode_appears_when_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient
+    ) -> None:
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        at = run_app(monkeypatch, empty_client)
+        assert "Evaluate" in at.sidebar.radio[0].options
+
+    def test_missing_report_explains_how_to_make_one(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(tmp_path / "absent.json"))
+        at = run_app(monkeypatch, empty_client)
+        at.sidebar.radio[0].set_value("Evaluate").run()
+        assert not at.exception
+        assert any("No evaluation report" in str(i.value) for i in at.info)
+
+    def test_a_saved_report_renders(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
+    ) -> None:
+        from iotshield.eval import evaluate, load_corpus
+        from iotshield.pipeline import load_spec
+
+        report = evaluate(
+            load_corpus("demo_micro"), [("team3", load_spec(Path("config/bench/team3.yaml")))]
+        )
+        report_path = tmp_path / "evaluation.json"
+        report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(report_path))
+        at = run_app(monkeypatch, empty_client)
+        at.sidebar.radio[0].set_value("Evaluate").run()
+        assert not at.exception
+        assert any("demo_micro" in str(c.value) for c in at.caption)
+
+    def test_a_corrupt_report_is_an_empty_state_not_a_traceback(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
+    ) -> None:
+        report_path = tmp_path / "evaluation.json"
+        report_path.write_text("{not json", encoding="utf-8")
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(report_path))
+        at = run_app(monkeypatch, empty_client)
+        at.sidebar.radio[0].set_value("Evaluate").run()
+        assert not at.exception
+        assert any("No evaluation report" in str(i.value) for i in at.info)

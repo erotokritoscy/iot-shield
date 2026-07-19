@@ -51,6 +51,19 @@ scripts/check.sh        # all of the above (CI runs the same)
 Run all four before considering any task done.
 
 ```
+# Benchmark against labelled data (ADR-0021) — the other half of the port suite:
+# pytest says whether an adapter FITS, this says whether it is GOOD.
+uv run python -m iotshield.eval --list-corpora
+uv run python -m iotshield.eval --corpus demo_micro \
+    --spec config/bench/team3.yaml --spec config/bench/stub.yaml
+uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
+    --spec config/bench/team3.yaml --out reports/valve1.json
+```
+
+`demo_micro` is committed and needs nothing external; the SKAB corpora read `../reference/`
+and skip cleanly (exit 0) when it is absent, as in a standalone clone.
+
+```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
 docker compose run --rm runner  # batch job (profile "jobs"): populate the DB
 docker compose down -v          # stop and drop the Postgres volume
@@ -111,12 +124,29 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run)
+  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks, env-gated)
+  eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
-config/         pipeline configs (which adapters run)
+config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
 data/demo/      small demo inputs (keep tiny; big datasets stay in ../reference/)
+data/eval/      ground-truth labels for the committed micro-corpus
 ```
+
+**The evaluation plane (ADR-0021).** `eval/` judges the pipeline rather than using it, so it
+needs labelled corpora — which production data by definition never has. The dependency arrow
+points one way (eval → pipeline, never back), and a benchmark **cannot** write to a store:
+`compute_run` and the guard take `PipelineSpec`, which has no `database_url`, so it is the
+type checker rather than discipline that stops twenty benchmark runs flooding an operator's
+triage queue. The dashboard's `Evaluate` mode is off unless `IOTSHIELD_EVAL_UI` is set, and
+it renders a saved report — it never launches one.
+
+Detectors may implement the **optional** `Fittable` capability (`fit(events) -> Detector`,
+returning a new detector). The pipeline never calls it; only a benchmark does, so it can
+learn "normal" from an asset's own clean history instead of measuring domain shift. Not
+implementing it is not a defect — the harness reports "not fittable" and evaluates as
+configured. A detector that scores rows should form judgments with `detect/_runs.py:
+merge_runs`; see the port docstring for why the alert engine's `volume` factor depends on it.
 
 ## Conventions
 

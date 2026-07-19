@@ -15,7 +15,14 @@ import pytest
 from sqlalchemy.orm import Session
 
 from iotshield.contracts import Asset, Criticality, Lane, NormalizedEvent
-from iotshield.pipeline import PipelineConfig, compute_run, run_pipeline
+from iotshield.pipeline import (
+    PipelineConfig,
+    PipelineSpec,
+    compute_result,
+    compute_run,
+    normalize_sources,
+    run_pipeline,
+)
 from iotshield.pipeline import runner as runner_module
 from iotshield.storage import make_engine, make_session_factory, repository
 
@@ -348,6 +355,58 @@ def _event(asset_id: str) -> NormalizedEvent:
         source_format="stub-csv",
         raw="x",
     )
+
+
+class TestComputePhases:
+    """compute_run is the composition of its two phases, and each is usable alone.
+
+    The seam the evaluation harness needs: it fits detectors on the ingested events before
+    judging them, so it must be able to stop between the phases and inject detectors —
+    while still running this exact code rather than a parallel implementation (ADR-0021).
+    """
+
+    def test_compute_run_equals_its_phases_composed(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        composed = compute_run(config, [INLINE_CSV])
+        by_hand = compute_result(config, normalize_sources(config, [INLINE_CSV]))
+        assert len(by_hand.events) == len(composed.events)
+        assert len(by_hand.detections) == len(composed.detections)
+        assert len(by_hand.alerts) == len(composed.alerts)
+        assert by_hand.warnings == composed.warnings
+
+    def test_injected_detectors_replace_the_configured_ones(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        ingested = normalize_sources(config, [INLINE_CSV])
+        assert compute_result(config, ingested, detectors=[]).detections == []
+        # ...and the ingest half is untouched by the substitution.
+        assert compute_result(config, ingested, detectors=[]).events == ingested.events
+
+    def test_a_bare_spec_computes(self, tmp_path: Path) -> None:
+        # compute_run takes PipelineSpec, so a caller with no deployment wiring — no
+        # database_url, no sink to satisfy — can compute. This is what makes "a benchmark
+        # cannot reach a store" a typed fact rather than a convention.
+        spec = PipelineSpec.model_validate(
+            {
+                "source_format": "stub-csv",
+                "normalizer": "stub",
+                "detectors": [{"name": "stub_threshold", "params": {"threshold": 80.0}}],
+            }
+        )
+        assert not hasattr(spec, "database_url")
+        assert compute_run(spec, [INLINE_CSV]).detections
+        assert not (tmp_path / "run.db").exists()
+
+    def test_guard_errors_still_raise_before_any_work(self, tmp_path: Path) -> None:
+        # The guard runs inside the ingest phase, so both compute_run and a harness that
+        # calls the phases directly inherit it.
+        spec = PipelineSpec.model_validate(
+            {
+                "sources": [{"normalizer": "stub", "source_format": "syslog-rfc5424"}],
+                "detectors": [{"name": "stub_threshold"}],
+            }
+        )
+        with pytest.raises(ValueError):
+            normalize_sources(spec, ["irrelevant"])
 
 
 class TestStoreAgnosticCompute:

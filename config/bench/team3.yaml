@@ -1,0 +1,33 @@
+# Benchmark spec: the team3 robust z-score detector on telemetry (ADR-0021).
+#
+# A bench spec IS a PipelineSpec — the same YAML you write for a run — so comparing
+# detectors is comparing two files you already know how to write. Two differences from a
+# demo config, both because a benchmark computes rather than stores:
+#
+#   - no `database_url` and no `sinks`: the harness loads this with `load_spec`, which
+#     produces a PipelineSpec. That type has no database field at all, so a benchmark
+#     cannot write its synthetic alerts into an operator's triage queue.
+#   - no source `path`: the corpus supplies each case's content, one input per source.
+#
+# The `weighted` engine is deliberate: it is the one whose ranking the alert-level metrics
+# (precision@k, mean rank) actually exercise.
+
+source_format: stub-csv
+normalizer: stub
+
+detectors:
+  - name: team3_zscore
+    params:
+      artifact: skab_zscore
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+assets:
+  - asset_id: skab-testbed
+    name: SKAB rotor testbed
+    asset_type: pump
+    location: skab-rig
+    criticality: high

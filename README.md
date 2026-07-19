@@ -134,5 +134,36 @@ telemetry (per-asset timeline with detection overlays), Data health (counts + th
 malformed-input audit), and **Compose & run** (pick modules, validate the chain,
 and trigger a run against the Pipeline API — its results then appear under Triage).
 
+## Benchmark detectors against labelled data
+
+The port suite tells you whether an adapter **fits**; the evaluation harness tells you
+whether it is **good** (ADR-0021):
+
+```
+uv run pytest                                          # does my adapter FIT?
+uv run python -m iotshield.eval --corpus demo_micro \
+    --spec config/bench/team3.yaml --spec config/bench/stub.yaml
+```
+
+```
+corpus: demo_micro - SKAB valve1/13, the 300-row slice used by config/demo_team3.yaml
+  1 case(s), 1 labelled incident(s)   fit protocol: none
+
+spec        detectors           evF1     evP     evR    ptF1  det/inc  alt/inc   cover
+team3       team3_zscore        1.00    1.00    1.00    0.93     1.00     1.00    1.00
+stub        stub_threshold      0.87    0.77    1.00    0.87   300.00     2.00    1.00
+```
+
+`event` metrics count *incidents* (one finding per fault — what an analyst experiences);
+`point` metrics count rows (what papers report). The gap between them in the `stub` row is
+fragmentation: it flags rows and never merges them, so one fault becomes 300 detections.
+
+`--list-corpora` shows what is registered. `demo_micro` is committed and always works;
+the SKAB corpora need `../reference/` and skip cleanly when it is absent. Add
+`--fit-protocol prefix` to let detectors that implement the optional `Fittable` capability
+relearn their baseline from each case's own clean history, and `--out report.json` for a
+diffable artifact — which the dashboard's `Evaluate` mode renders when
+`IOTSHIELD_EVAL_UI=1` (off by default; it is a research instrument, not a product feature).
+
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).
