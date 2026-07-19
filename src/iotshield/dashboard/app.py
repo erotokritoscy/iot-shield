@@ -7,7 +7,7 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pandas as pd
@@ -19,7 +19,9 @@ from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import severity_bar, telemetry_timeline
 from iotshield.dashboard.client import ApiClient
 from iotshield.dashboard.control_client import ControlClient
-from iotshield.eval.report import EvaluationReport
+
+if TYPE_CHECKING:  # type-only: the runtime import is deferred, see load_eval_report
+    from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
 DEFAULT_API_URL = "http://127.0.0.1:8000"
@@ -391,8 +393,16 @@ def eval_ui_enabled() -> bool:
     return os.environ.get(EVAL_UI_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def load_eval_report(path: Path) -> EvaluationReport | None:
-    """Read a saved benchmark report, or None if there is not a valid one there yet."""
+def load_eval_report(path: Path) -> "EvaluationReport | None":
+    """Read a saved benchmark report, or None if there is not a valid one there yet.
+
+    ``iotshield.eval`` is imported here rather than at module scope on purpose: the
+    evaluation plane is meant to be *droppable* from a product image (ADR-0021 D1), and a
+    top-level import would make the dashboard fail at startup without it — turning the
+    runtime env gate into a hard dependency it was supposed to avoid.
+    """
+    from iotshield.eval.report import EvaluationReport
+
     if not path.is_file():
         return None
     try:
@@ -436,7 +446,7 @@ def evaluate_page(report_path: Path) -> None:
             {
                 "spec": spec.spec,
                 "detectors": ", ".join(spec.detectors),
-                **{key: value for key, value in spec.summary().items()},
+                **spec.summary(),
                 "fitted": f"{spec.cases_fitted}/{len(spec.cases)}",
             }
             for spec in report.specs
@@ -447,7 +457,8 @@ def evaluate_page(report_path: Path) -> None:
     st.caption(
         "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
         "what papers report (per-row coverage). `compression_ratio` is detections-per-incident "
-        "over alerts-per-incident — what the correlation stage absorbed."
+        "over alerts-per-incident — what the correlation stage absorbed. An empty cell means "
+        "*undefined*, not zero — a clean recording has no faults to recall."
     )
 
     selected = st.selectbox("Inspect spec", report.specs, format_func=lambda spec: spec.spec)

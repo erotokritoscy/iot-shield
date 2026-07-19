@@ -131,11 +131,12 @@ SINKS: dict[str, SinkSpec] = {
 }
 
 
-def _lookup(kind: str, registry: Mapping[str, V], name: str) -> V:
+def lookup(kind: str, registry: Mapping[str, V], name: str) -> V:
     """Resolve a registered spec by name, or raise naming the known alternatives.
 
-    Generic over the spec type (``AdapterSpec`` or ``SinkSpec``): it only indexes and
-    lists keys, so both the transform ports and the terminal sinks share it.
+    Generic over the spec type (``AdapterSpec``, ``SinkSpec``, and the evaluation
+    harness's ``CorpusSpec``): it only indexes and lists keys, so every by-name registry
+    in the project shares one lookup and one error convention.
     """
     try:
         return registry[name]
@@ -161,7 +162,7 @@ def _construct(kind: str, name: str, build: Callable[[], T]) -> T:
 def _build(
     kind: str, registry: Mapping[str, AdapterSpec[T]], name: str, params: Mapping[str, Any]
 ) -> T:
-    spec = _lookup(kind, registry, name)
+    spec = lookup(kind, registry, name)
     return _construct(kind, name, lambda: spec.factory(**params))
 
 
@@ -179,13 +180,13 @@ def build_alert_engine(name: str, params: Mapping[str, Any]) -> AlertEngine:
 
 def build_sink(name: str, params: Mapping[str, Any], resources: SinkResources) -> ResultSink:
     """Construct a sink by name, injecting the deployment's resources plus config params."""
-    spec = _lookup("sink", SINKS, name)
+    spec = lookup("sink", SINKS, name)
     return _construct("sink", name, lambda: spec.factory(resources, **params))
 
 
 def sink_requires_database(name: str) -> bool:
     """Whether a configured sink needs a DB engine — so a host run builds one only if so."""
-    return _lookup("sink", SINKS, name).requires_database
+    return lookup("sink", SINKS, name).requires_database
 
 
 # --- Capability resolution (no construction): for the guard and /modules discovery.
@@ -194,12 +195,12 @@ def sink_requires_database(name: str) -> bool:
 
 
 def normalizer_capability(name: str) -> Capability:
-    return _lookup("normalizer", NORMALIZERS, name).capability({})
+    return lookup("normalizer", NORMALIZERS, name).capability({})
 
 
 def detector_capability(name: str, params: Mapping[str, Any]) -> Capability:
-    return _lookup("detector", DETECTORS, name).capability(params)
+    return lookup("detector", DETECTORS, name).capability(params)
 
 
 def alert_engine_capability(name: str, params: Mapping[str, Any]) -> Capability:
-    return _lookup("alert engine", ALERT_ENGINES, name).capability(params)
+    return lookup("alert engine", ALERT_ENGINES, name).capability(params)

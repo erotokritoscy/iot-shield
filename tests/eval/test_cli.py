@@ -7,10 +7,22 @@ never touches a store, and it measures the *real* pipeline rather than a paralle
 import json
 from pathlib import Path
 
-from iotshield.eval import evaluate, load_corpus, render
+import pytest
+
+from iotshield.eval import (
+    Case,
+    CaseInput,
+    Corpus,
+    EvaluationReport,
+    evaluate,
+    load_corpus,
+    render,
+)
 from iotshield.eval.__main__ import main
 from iotshield.eval.fit import FitProtocol
+from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.pipeline import PipelineSpec, load_spec
+from tests.eval.conftest import at, truth_of
 
 TEAM3_SPEC = Path("config/bench/team3.yaml")
 STUB_SPEC = Path("config/bench/stub.yaml")
@@ -95,50 +107,106 @@ class TestReport:
         report = evaluate(corpus, [("stub", load_spec(STUB_SPEC))], protocol=FitProtocol.NONE)
         (spec_report,) = report.specs
         (case,) = spec_report.cases
-        assert case.detections_per_incident > 100
-        assert case.alerts_per_incident < 10
+        assert case.detections_per_incident is not None and case.detections_per_incident > 100
+        assert case.alerts_per_incident is not None and case.alerts_per_incident < 10
         assert spec_report.compression_ratio is not None
         assert spec_report.compression_ratio > 10
 
 
-class TestCleanCorpusRendering:
-    """A corpus with no faults reports false alarms, not per-incident ratios."""
+def synthetic_corpus(*, flags: list[bool], values: list[float]) -> Corpus:
+    """A one-case corpus from inline readings and labels — no external dataset."""
+    rows = [
+        f"{at(index).isoformat()},skab-testbed,Pressure,{value}"
+        for index, value in enumerate(values)
+    ]
+    return Corpus(
+        name="synthetic",
+        description="synthetic recording",
+        cases=[
+            Case(
+                name="synthetic",
+                inputs=[CaseInput(STUB_CSV, "\n".join(rows) + "\n")],
+                truth=truth_of(flags),
+            )
+        ],
+    )
 
-    def _clean_report(self):
-        from datetime import UTC, datetime, timedelta
 
-        from iotshield.eval import Case, Corpus, GroundTruth
+class TestUndefinedIsNotZero:
+    """A rate with no denominator is undefined, and stays undefined all the way out.
 
-        t0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
-        rows = [
-            f"{(t0 + timedelta(seconds=i)).isoformat()},skab-testbed,Pressure,{value}"
-            for i, value in enumerate([10.0] * 5 + [95.0] * 3)
-        ]
-        corpus = Corpus(
-            name="clean_test",
-            description="synthetic clean recording",
-            cases=[
-                Case(
-                    name="clean",
-                    inputs=["\n".join(rows) + "\n"],
-                    truth=GroundTruth.from_timeline(
-                        [(t0 + timedelta(seconds=i), False) for i in range(8)]
-                    ),
-                )
-            ],
-        )
+    The trap: on a clean recording every per-incident ratio divides by zero. Reporting
+    0.0 makes a detector that correctly stayed silent indistinguishable from one that
+    missed everything — in the JSON a CI gate reads, not merely in the console table.
+    """
+
+    def _clean_report(self) -> EvaluationReport:
+        corpus = synthetic_corpus(flags=[False] * 8, values=[10.0] * 5 + [95.0] * 3)
         return evaluate(corpus, [("stub", load_spec(STUB_SPEC))], protocol=FitProtocol.NONE)
 
-    def test_zero_incidents_renders_false_alarms_not_zero_scores(self) -> None:
-        # The trap this avoids: with no incidents every per-incident ratio divides by zero
-        # and renders 0.00, which reads as a perfect score rather than "not applicable".
-        rendered = render(self._clean_report())
-        assert "FALSE ALARM" in rendered
-        assert "det/inc" not in rendered
-
-    def test_the_false_alarms_are_counted(self) -> None:
+    def test_rates_are_none_and_counts_are_real(self) -> None:
         (spec_report,) = self._clean_report().specs
-        assert spec_report.is_clean_corpus
         summary = spec_report.summary()
+        assert summary["event_recall"] is None  # no faults, so nothing to recall
+        assert summary["incident_coverage"] is None
+        assert summary["detections_per_incident"] is None
         assert summary["detections"] == 3  # the three over-threshold rows
         assert (summary["alerts"] or 0) >= 1
+
+    def test_the_none_survives_the_json_round_trip(self) -> None:
+        # The JSON is the artifact a CI gate keys into; if None collapsed to 0.0 here, the
+        # gate could not tell a perfect run from the worst possible one.
+        report = self._clean_report()
+        restored = EvaluationReport.model_validate_json(report.model_dump_json())
+        assert restored.specs[0].cases[0].event_recall is None
+        assert restored.specs[0].cases[0].detections == 3
+
+    def test_rendering_shows_a_dash_and_the_false_alarm_framing(self) -> None:
+        rendered = render(self._clean_report())
+        assert "FALSE ALARM" in rendered
+        # One table serves both cases: the rate columns are present and print '-'.
+        assert "det/inc" in rendered
+
+    def test_a_defined_rate_is_not_dragged_down_by_an_undefined_one(self) -> None:
+        # A corpus mixing clean and faulty recordings: averaging the clean case in as 0.0
+        # would halve the reported recall for no reason.
+        faulty = synthetic_corpus(flags=[False] * 4 + [True] * 4, values=[10.0] * 4 + [95.0] * 4)
+        clean = synthetic_corpus(flags=[False] * 8, values=[10.0] * 8)
+        mixed = Corpus(
+            name="mixed",
+            description="one faulty case, one clean",
+            cases=[*faulty.cases, *clean.cases],
+        )
+        (spec_report,) = evaluate(mixed, [("stub", load_spec(STUB_SPEC))]).specs
+        assert spec_report.summary()["event_recall"] == 1.0
+
+
+class TestCorpusSpecAlignment:
+    """A corpus declares its format, and a mismatched spec is refused, not scored."""
+
+    def test_a_format_mismatch_is_refused(self) -> None:
+        corpus = synthetic_corpus(flags=[False, True], values=[10.0, 95.0])
+        syslog_spec = PipelineSpec.model_validate(
+            {
+                "sources": [{"normalizer": "syslog", "source_format": "syslog"}],
+                "detectors": [{"name": "stub_threshold"}],
+            }
+        )
+        # Without the check this scores event_f1 None with every line quarantined as
+        # malformed — indistinguishable from a detector that simply failed.
+        with pytest.raises(ValueError, match="declares 'syslog'"):
+            evaluate(corpus, [("syslog", syslog_spec)])
+
+    def test_an_input_count_mismatch_is_refused(self) -> None:
+        corpus = synthetic_corpus(flags=[False, True], values=[10.0, 95.0])
+        two_source = PipelineSpec.model_validate(
+            {
+                "sources": [
+                    {"normalizer": "stub", "source_format": STUB_CSV},
+                    {"normalizer": "stub", "source_format": STUB_CSV},
+                ],
+                "detectors": [{"name": "stub_threshold"}],
+            }
+        )
+        with pytest.raises(ValueError, match="supplies 1 input"):
+            evaluate(corpus, [("two", two_source)])

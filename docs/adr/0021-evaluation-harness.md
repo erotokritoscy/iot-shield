@@ -80,6 +80,16 @@ walks rows and is what published benchmarks report; event scoring collapses labe
 incidents and credits each incident once, so 40 fragments of one fault score full recall and
 collapsing precision. Event scoring matches what an analyst experiences. Both are reported.
 
+**An undefined rate is `None`, never `0.0`.** A rate with no denominator — recall on a clean
+recording, precision with no predictions — is *not applicable*, and collapsing it to zero
+would make a detector that correctly stayed silent numerically identical to one that missed
+everything. That matters beyond the console: the JSON report is what a CI gate keys into,
+and a gate that cannot separate the best outcome from the worst is worse than none. `None`
+is already the harness's word for this (precision@k on a short queue, latency with no
+catch) and the renderer already prints it as `-`, so the rule is consistent rather than
+special. Averages skip undefined cases, so one clean recording in a mixed corpus cannot drag
+every rate down.
+
 Also measured: detection latency, detections-per-incident (fragmentation), alerts-per-incident,
 incident coverage, precision@k over the ranked queue, mean rank of true alerts, and
 false-alarm counts on clean recordings.
@@ -129,7 +139,12 @@ reports as a **skip, exit 0**, so CI stays green), and one committed micro-corpu
 (`data/eval/demo_team3.labels.json`) needs nothing external.
 
 Corpora produce raw **text**, not events, so a benchmark exercises normalization too — it
-measures the pipeline, not just a detector.
+measures the pipeline, not just a detector. Each input is *tagged* with its
+`source_format` (`CaseInput`) and checked against the spec's `sources`, for the same reason
+ADR-0019 routes by explicit tags: an untagged mismatch is not an error but a *misleading
+number*, since the wrong normalizer quarantines every line, the detector sees nothing, and
+the report reads exactly like a detector that failed. The harness exists to stop publishing
+numbers like that, so the mismatch is refused.
 
 ### D6 — CLI-first; no API endpoint
 
@@ -200,10 +215,12 @@ compliance (detections-per-incident) so the cost is visible; nothing rejects an 
   compression ratio over 200. Its point F1 (0.52) is respectable while its event precision
   (0.35) is not: exactly the gap the two-level split exists to expose.
 
-- **`compute_run` split into `normalize_sources` + `compute_result`**, with an optional
-  detector override on the latter. Behaviour is unchanged (all seven demos byte-identical);
-  the benefit is that a benchmark can stop between the phases to fit, while still running
-  the product's exact code rather than a parallel implementation.
+- **`compute_run` split into three named phases** — `build_detectors`, `normalize_sources`,
+  `compute_result`. Behaviour is unchanged (all seven demos byte-identical). The point is
+  that the harness is not an exception to any signature: the product composes
+  *build → normalize → judge* and a benchmark composes *build → normalize → **fit** → judge*,
+  two equal compositions of the same phases, both running the product's exact code rather
+  than a parallel implementation.
 
 - **The port suite gained a law**: a fitted detector must still obey every other law. Fitting
   must not become a hole in the suite. Adapters that are not `Fittable` skip it.

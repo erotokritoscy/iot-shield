@@ -19,7 +19,7 @@ from pathlib import Path
 from iotshield.eval.corpus import CORPORA, CorpusUnavailable, load_corpus
 from iotshield.eval.fit import FitProtocol
 from iotshield.eval.report import render
-from iotshield.eval.runner import evaluate, spec_label
+from iotshield.eval.runner import evaluate
 from iotshield.pipeline import load_spec
 
 _DEFAULT_SPEC = Path("config/bench/team3.yaml")
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = args.specs or [_DEFAULT_SPEC]
     try:
-        specs = [(spec_label(path), load_spec(path)) for path in paths]
+        specs = [(path.stem, load_spec(path)) for path in paths]
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -11,7 +11,14 @@ it is why a benchmark can never write to an operator's store.
     uv run python -m iotshield.eval --corpus demo_micro --spec config/bench/team3.yaml
 """
 
-from iotshield.eval.corpus import CORPORA, Case, Corpus, CorpusUnavailable, load_corpus
+from iotshield.eval.corpus import (
+    CORPORA,
+    Case,
+    CaseInput,
+    Corpus,
+    CorpusUnavailable,
+    load_corpus,
+)
 from iotshield.eval.fit import FitProtocol, prepare_detector
 from iotshield.eval.report import CaseReport, EvaluationReport, SpecReport, render
 from iotshield.eval.runner import evaluate, evaluate_case, evaluate_spec
@@ -22,6 +29,7 @@ __all__ = [
     "CORPORA",
     "AlertMetrics",
     "Case",
+    "CaseInput",
     "CaseReport",
     "Corpus",
     "CorpusUnavailable",

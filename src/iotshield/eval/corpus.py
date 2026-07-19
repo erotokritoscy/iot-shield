@@ -18,13 +18,15 @@ as a skip rather than a crash.
 
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 
 from iotshield.eval.truth import GroundTruth
+from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
+from iotshield.pipeline.registry import lookup
 
 # SKAB ships as semicolon-separated CSV with the labels inline; these are its label columns.
 _SKAB_SEPARATOR = ";"
@@ -43,18 +45,33 @@ class CorpusUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CaseInput:
+    """One raw input a case hands to the pipeline, tagged with the format it is in.
+
+    Tagged, not bare text, for the same reason ``SourceSpec`` is (ADR-0019): a blob has no
+    intrinsic format, so it must be *declared*. Without the tag, benchmarking a stub-csv
+    corpus against a syslog spec is not an error — every line is rejected as malformed, the
+    detector sees nothing, and the report says ``event_f1 -``, indistinguishable from a
+    detector that is simply bad. Publishing that number is exactly the failure this harness
+    exists to prevent, so the mismatch is refused instead.
+    """
+
+    source_format: str
+    text: str
+
+
+@dataclass(frozen=True)
 class Case:
     """One labelled example: what to ingest, and where the faults really were.
 
-    ``inputs`` is a list to align 1:1 with ``PipelineSpec.sources`` exactly as the runner
-    expects, so a future multimodal corpus needs no change here — only a corpus that
-    supplies two inputs per case.
+    ``inputs`` is a list so a case aligns 1:1 with ``PipelineSpec.sources``; a future
+    multimodal corpus needs no change here, only a corpus that supplies two inputs.
     """
 
     name: str
-    inputs: list[str]
+    inputs: list[CaseInput]
     truth: GroundTruth
-    holdout: list[str] = field(default_factory=list)
+    holdout: list[CaseInput] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -77,20 +94,29 @@ class CorpusSpec:
     needs_external_data: bool = False
 
 
-def _to_csv_text(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: str) -> str:
+def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: str) -> CaseInput:
     """Render a wide channel frame as the long CSV the ``stub`` normalizer ingests.
 
     The inverse of that normalizer's fan-out: one line per (timestamp, channel) reading,
     which is the contract's one-value-per-event rule (ADR-0003 D1). Going through real CSV
     text rather than constructing events directly is deliberate — the benchmark then
     exercises normalization too, so a corpus measures the *pipeline*, not just a detector.
+
+    The format name comes from ``normalize.stub`` rather than a literal here, so the writer
+    is anchored to the reader that defines the dialect.
+
+    Values are materialized once via ``to_numpy``; the obvious per-cell ``frame[c].iloc[i]``
+    costs a pandas column selection *and* a scalar lookup per cell, measured at 22x slower
+    over a SKAB recording (100ms vs 4.5ms) and dominating corpus load.
     """
+    channels = list(frame.columns)
+    values = frame.to_numpy()
     lines = [
-        f"{moment.isoformat()},{asset_id},{channel},{frame[channel].iloc[index]}"
-        for index, moment in enumerate(timestamps)
-        for channel in frame.columns
+        f"{moment.isoformat()},{asset_id},{channels[column]},{row[column]}"
+        for moment, row in zip(timestamps, values, strict=True)
+        for column in range(len(channels))
     ]
-    return "\n".join(lines) + "\n"
+    return CaseInput(STUB_CSV, "\n".join(lines) + "\n")
 
 
 def _skab_case(path: Path) -> Case:
@@ -106,12 +132,12 @@ def _skab_case(path: Path) -> Case:
     channels = frame.drop(columns=[_SKAB_TIME, *(c for c in _SKAB_DROP if c in frame.columns)])
     return Case(
         name=f"{path.parent.name}/{path.name}",
-        inputs=[_to_csv_text(channels, timestamps, _SKAB_ASSET)],
+        inputs=[to_stub_csv(channels, timestamps, _SKAB_ASSET)],
         truth=GroundTruth.from_timeline(list(zip(timestamps, labels, strict=True))),
     )
 
 
-def _skab_loader(subdirectory: str, description: str) -> Callable[[Path | None], Corpus]:
+def _skab_loader(subdirectory: str) -> Callable[[Path | None], Corpus]:
     def load(root: Path | None) -> Corpus:
         base = (root or DEFAULT_SKAB_PATH) / subdirectory
         if not base.is_dir():
@@ -122,10 +148,9 @@ def _skab_loader(subdirectory: str, description: str) -> Callable[[Path | None],
         files = sorted(base.glob("*.csv"))
         if not files:
             raise CorpusUnavailable(f"no CSV files under {base}")
+        # description is stamped by load_corpus from the registry — see there.
         return Corpus(
-            name=f"skab_{subdirectory}",
-            description=description,
-            cases=[_skab_case(path) for path in files],
+            name=f"skab_{subdirectory}", description="", cases=[_skab_case(p) for p in files]
         )
 
     return load
@@ -148,11 +173,11 @@ def _demo_micro(_: Path | None) -> Corpus:
     ]
     return Corpus(
         name="demo_micro",
-        description=payload.get("description", "committed demo slice"),
+        description="",  # stamped by load_corpus from the registry
         cases=[
             Case(
                 name=payload.get("case", "demo_team3"),
-                inputs=[csv_path.read_text(encoding="utf-8-sig")],
+                inputs=[CaseInput(STUB_CSV, csv_path.read_text(encoding="utf-8-sig"))],
                 truth=GroundTruth.from_timeline(timeline),
             )
         ],
@@ -160,30 +185,33 @@ def _demo_micro(_: Path | None) -> Corpus:
 
 
 CORPORA: dict[str, CorpusSpec] = {
-    "demo_micro": CorpusSpec(_demo_micro, "committed demo slice (1 case) - always available"),
+    "demo_micro": CorpusSpec(
+        _demo_micro, "SKAB valve1/13 slice, as config/demo_team3.yaml uses (1 case)"
+    ),
     "skab_valve1": CorpusSpec(
-        _skab_loader("valve1", "SKAB valve1 closure faults (16 recordings, one fault each)"),
-        "SKAB valve1 closure faults (16 recordings)",
+        _skab_loader("valve1"),
+        "SKAB valve1 closure faults (16 recordings, one fault each)",
         needs_external_data=True,
     ),
     "skab_valve2": CorpusSpec(
-        _skab_loader("valve2", "SKAB valve2 faults (4 recordings, one fault each)"),
-        "SKAB valve2 faults (4 recordings)",
+        _skab_loader("valve2"),
+        "SKAB valve2 faults (4 recordings, one fault each)",
         needs_external_data=True,
     ),
     "skab_clean": CorpusSpec(
-        _skab_loader("anomaly-free", "SKAB anomaly-free recording (no faults at all)"),
-        "SKAB anomaly-free recording (false-alarm rate)",
+        _skab_loader("anomaly-free"),
+        "SKAB anomaly-free recording (no faults: every alert is a false alarm)",
         needs_external_data=True,
     ),
 }
 
 
 def load_corpus(name: str, root: Path | None = None) -> Corpus:
-    """Load a registered corpus by name, or raise naming the known alternatives."""
-    try:
-        spec = CORPORA[name]
-    except KeyError:
-        known = ", ".join(sorted(CORPORA))
-        raise ValueError(f"unknown corpus {name!r}; known: {known}") from None
-    return spec.loader(root)
+    """Load a registered corpus by name, or raise naming the known alternatives.
+
+    The registry's ``description`` is stamped onto the loaded corpus here so it has exactly
+    one home: a loader that also carried its own description would let ``--list-corpora``
+    and the report drift apart, which they had already begun to do.
+    """
+    spec = lookup("corpus", CORPORA, name)
+    return replace(spec.loader(root), description=spec.description)

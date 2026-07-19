@@ -13,42 +13,66 @@ an operator's triage queue (ADR-0021 D1).
 """
 
 from collections.abc import Sequence
-from pathlib import Path
 
 from iotshield.eval.corpus import Case, Corpus
 from iotshield.eval.fit import FitProtocol, prepare_detector
 from iotshield.eval.report import CaseReport, EvaluationReport, SpecReport
 from iotshield.eval.score import score_alerts, score_detections
-from iotshield.pipeline import PipelineSpec, compute_result, normalize_sources
-from iotshield.pipeline.registry import build_detector
+from iotshield.pipeline import (
+    PipelineSpec,
+    build_detectors,
+    compute_result,
+    normalize_sources,
+)
 
 
-def evaluate_case(spec: PipelineSpec, case: Case, *, protocol: FitProtocol) -> CaseReport:
-    """Run one spec over one labelled case and score both levels."""
+def _check_alignment(spec: PipelineSpec, case: Case) -> None:
+    """Refuse a corpus whose inputs do not match what the spec says it ingests.
+
+    Count *and* declared format, because a silent mismatch is the most misleading outcome
+    the harness can produce: feed stub-csv to a syslog spec and every line is quarantined
+    as malformed, the detector sees nothing, and the report reads like a detector that
+    simply failed. Refusing is the whole point of tagging inputs (ADR-0019's explicit
+    routing, applied to corpora).
+    """
     if len(case.inputs) != len(spec.sources):
         raise ValueError(
             f"case {case.name!r} supplies {len(case.inputs)} input(s) but the spec declares "
             f"{len(spec.sources)} source(s)"
         )
-    ingested = normalize_sources(spec, case.inputs, origins=[case.name] * len(case.inputs))
+    for index, (given, source) in enumerate(zip(case.inputs, spec.sources, strict=True)):
+        if given.source_format != source.source_format:
+            raise ValueError(
+                f"case {case.name!r} input[{index}] is {given.source_format!r} but the spec's "
+                f"sources[{index}] declares {source.source_format!r}"
+            )
+
+
+def evaluate_case(spec: PipelineSpec, case: Case, *, protocol: FitProtocol) -> CaseReport:
+    """Run one spec over one labelled case and score both levels."""
+    _check_alignment(spec, case)
+    texts = [given.text for given in case.inputs]
+    ingested = normalize_sources(spec, texts, origins=[case.name] * len(texts))
 
     holdout_events = (
-        normalize_sources(spec, case.holdout, origins=[f"{case.name}:holdout"]).events
+        normalize_sources(
+            spec, [given.text for given in case.holdout], origins=[f"{case.name}:holdout"]
+        ).events
         if case.holdout
         else None
     )
 
     outcomes = [
         prepare_detector(
-            build_detector(entry.name, entry.params),
+            detector,
             protocol=protocol,
             events=ingested.events,
             truth=case.truth,
             holdout_events=holdout_events,
         )
-        for entry in spec.detectors
+        for detector in build_detectors(spec)
     ]
-    result = compute_result(spec, ingested, detectors=[o.detector for o in outcomes])
+    result = compute_result(spec, ingested, [o.detector for o in outcomes])
 
     return CaseReport.build(
         case=case.name,
@@ -90,8 +114,3 @@ def evaluate(
             evaluate_spec(spec, corpus, label=label, protocol=protocol) for label, spec in specs
         ],
     )
-
-
-def spec_label(path: Path) -> str:
-    """The short name a spec appears under in the report (its filename, no extension)."""
-    return path.stem

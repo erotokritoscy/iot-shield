@@ -4,41 +4,30 @@ The answer key everything else is measured against, so its edges are pinned hard
 incident boundary would silently corrupt every event-level metric downstream.
 """
 
-from datetime import UTC, datetime, timedelta
-
 from iotshield.eval import GroundTruth, Incident
-
-T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
-
-
-def at(second: int) -> datetime:
-    return T0 + timedelta(seconds=second)
-
-
-def timeline(flags: list[bool]) -> GroundTruth:
-    return GroundTruth.from_timeline([(at(i), flag) for i, flag in enumerate(flags)])
+from tests.eval.conftest import at, truth_of
 
 
 class TestCollapse:
     def test_consecutive_anomalous_rows_are_one_incident(self) -> None:
-        truth = timeline([False, True, True, True, False])
+        truth = truth_of([False, True, True, True, False])
         assert truth.incidents == (Incident(start=at(1), end=at(3)),)
 
     def test_a_quiet_gap_separates_incidents(self) -> None:
-        truth = timeline([True, True, False, False, True])
+        truth = truth_of([True, True, False, False, True])
         assert truth.incidents == (Incident(at(0), at(1)), Incident(at(4), at(4)))
 
     def test_a_single_row_is_a_zero_length_incident(self) -> None:
         # Mirrors the contract: a point anomaly is a zero-length window (ADR-0003).
-        (incident,) = timeline([False, True, False]).incidents
+        (incident,) = truth_of([False, True, False]).incidents
         assert incident.start == incident.end == at(1)
 
     def test_a_fault_running_to_the_end_is_closed(self) -> None:
-        (incident,) = timeline([False, True, True]).incidents
+        (incident,) = truth_of([False, True, True]).incidents
         assert incident.end == at(2)
 
     def test_clean_recording_has_no_incidents(self) -> None:
-        truth = timeline([False, False, False])
+        truth = truth_of([False, False, False])
         assert truth.incidents == ()
         assert truth.is_clean
         assert truth.anomalous_rows == 0

@@ -212,7 +212,18 @@ def normalize_sources(
     )
 
 
-def run_detectors(
+def build_detectors(spec: PipelineSpec) -> list[Detector]:
+    """Construct the spec's configured detectors — the phase before judging.
+
+    Named because it is a phase, not a helper: ``compute_run`` composes build -> normalize
+    -> judge, and the evaluation harness composes build -> normalize -> **fit** -> judge
+    (ADR-0021). Sharing this keeps the two compositions from re-deriving how a spec's
+    detector entries become detectors.
+    """
+    return [build_detector(entry.name, entry.params) for entry in spec.detectors]
+
+
+def _run_detectors(
     detectors: Sequence[Detector], events: Sequence[NormalizedEvent]
 ) -> list[DetectionResult]:
     """Judge phase: hand each detector its own lane's events, in the order the port promises.
@@ -232,23 +243,18 @@ def run_detectors(
 
 
 def compute_result(
-    spec: PipelineSpec,
-    ingested: NormalizedInputs,
-    *,
-    detectors: Sequence[Detector] | None = None,
+    spec: PipelineSpec, ingested: NormalizedInputs, detectors: Sequence[Detector]
 ) -> RunResult:
     """Judge and prioritize already-ingested events — no storage, no re-normalization.
 
-    ``detectors`` defaults to the spec's configured ones. Passing them explicitly is the
-    seam the evaluation harness uses to judge with *fitted* detectors while still running
-    this exact code (ADR-0021); the product path never passes it. Asset criticalities are
-    resolved in memory, so the alert engine needs no database.
+    Detectors are passed in rather than built here, so this phase has one signature with no
+    default and no privileged caller: the product supplies ``build_detectors(spec)``, and
+    the evaluation harness supplies the same detectors after fitting them (ADR-0021). Asset
+    criticalities are resolved in memory, so the alert engine needs no database.
     """
-    if detectors is None:
-        detectors = [build_detector(entry.name, entry.params) for entry in spec.detectors]
     alert_engine = build_alert_engine(spec.alert_engine.name, spec.alert_engine.params)
 
-    detections = run_detectors(detectors, ingested.events)
+    detections = _run_detectors(detectors, ingested.events)
     assets = resolve_assets(spec.assets, ingested.events)
     asset_map = {asset.asset_id: asset for asset in assets}
     alerts = alert_engine.build_alerts(detections, asset_map)
@@ -279,7 +285,9 @@ def compute_run(
     type makes "compute cannot reach a store" a fact the type checker enforces rather than
     a convention (ADR-0018, ADR-0021). ``PipelineConfig`` still satisfies it by subclassing.
     """
-    return compute_result(spec, normalize_sources(spec, inputs, origins=origins))
+    return compute_result(
+        spec, normalize_sources(spec, inputs, origins=origins), build_detectors(spec)
+    )
 
 
 def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:

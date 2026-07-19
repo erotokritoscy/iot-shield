@@ -2,6 +2,8 @@
 seeded and empty databases without exceptions, and shows friendly empty states
 (the state every fresh `docker compose up` starts in)."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -236,3 +238,21 @@ class TestEvaluateMode:
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception
         assert any("No evaluation report" in str(i.value) for i in at.info)
+
+
+def test_dashboard_does_not_import_the_eval_plane_at_module_scope() -> None:
+    """The Evaluate mode is env-gated at runtime; its dependency must be gated too.
+
+    ADR-0021 D1 says the evaluation plane is the first thing you would drop from a product
+    image. A top-level `from iotshield.eval...` would make the dashboard fail at startup
+    without it, turning the runtime gate into a hard dependency. Checked in a subprocess
+    because the rest of this suite has already imported `iotshield.eval`.
+    """
+    probe = (
+        "import sys; import iotshield.dashboard.app; "
+        "print(any(m == 'iotshield.eval' or m.startswith('iotshield.eval.') for m in sys.modules))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"

@@ -26,6 +26,18 @@ from datetime import datetime
 from iotshield.detect import merge_runs
 
 
+def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
+    """Whether two closed intervals touch — the one place the boundary rule is decided.
+
+    **Closed on both ends**, because a point anomaly is a zero-length window (ADR-0003): a
+    half-open test would silently never match one. Stated once because both scoring levels
+    need it (event matching compares two windows; point coverage asks whether an instant
+    falls inside one, which is the zero-length case), and a half-open edit in one of two
+    copies would corrupt one metric while leaving the other right.
+    """
+    return a_start <= b_end and a_end >= b_start
+
+
 @dataclass(frozen=True)
 class Incident:
     """One real fault, as an inclusive time interval on an asset's timeline."""
@@ -34,12 +46,8 @@ class Incident:
     end: datetime
 
     def overlaps(self, window_start: datetime, window_end: datetime) -> bool:
-        """Whether a detection/alert window touches this incident.
-
-        Closed on both ends, because a point anomaly is a zero-length window (ADR-0003) and
-        a half-open test would silently never match one.
-        """
-        return window_start <= self.end and window_end >= self.start
+        """Whether a detection/alert window touches this incident."""
+        return overlaps(window_start, window_end, self.start, self.end)
 
 
 @dataclass(frozen=True)

@@ -6,22 +6,15 @@ died because one of several detectors was not fittable would be far less useful 
 that reports which ones were.
 """
 
-from datetime import UTC, datetime, timedelta
-
 import numpy as np
 import pandas as pd
 
 from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.detect import Fittable, LogBurstDetector, StubThresholdDetector, Team3ZScoreDetector
 from iotshield.detect.team3.train import train_artifact
-from iotshield.eval import GroundTruth, prepare_detector
+from iotshield.eval import prepare_detector
 from iotshield.eval.fit import FitProtocol, normal_prefix
-
-T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
-
-
-def at(second: int) -> datetime:
-    return T0 + timedelta(seconds=second)
+from tests.eval.conftest import at, truth_of
 
 
 def event(second: int, value: float = 10.0, asset: str = "pump-02") -> NormalizedEvent:
@@ -34,10 +27,6 @@ def event(second: int, value: float = 10.0, asset: str = "pump-02") -> Normalize
         value=value,
         raw="x",
     )
-
-
-def truth_of(flags: list[bool]) -> GroundTruth:
-    return GroundTruth.from_timeline([(at(i), flag) for i, flag in enumerate(flags)])
 
 
 def fittable_detector() -> Team3ZScoreDetector:

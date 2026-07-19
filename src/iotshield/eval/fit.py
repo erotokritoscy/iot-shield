@@ -49,7 +49,7 @@ class FitOutcome:
     """
 
     detector: Detector
-    fitted: bool
+    fitted: bool = False  # every fallback path leaves it False; only a real fit sets it
     note: str | None = None
 
 
@@ -82,22 +82,25 @@ def prepare_detector(
     says which ones were.
     """
     if protocol is FitProtocol.NONE:
-        return FitOutcome(detector, fitted=False)
+        return FitOutcome(detector)
     if not isinstance(detector, Fittable):
-        return FitOutcome(detector, fitted=False, note="not fittable; evaluated as configured")
+        return FitOutcome(detector, note="not fittable; evaluated as configured")
 
     if protocol is FitProtocol.HOLDOUT:
         training = list(holdout_events or ())
         if not training:
-            return FitOutcome(detector, fitted=False, note="no holdout data; used as configured")
+            return FitOutcome(detector, note="no holdout data; used as configured")
     else:
         training = normal_prefix(events, truth)
         if not training:
-            return FitOutcome(detector, fitted=False, note="no clean prefix; used as configured")
+            return FitOutcome(detector, note="no clean prefix; used as configured")
 
     try:
         return FitOutcome(detector.fit(training), fitted=True)
-    except ValueError as exc:
-        # A detector refusing its training data is a statement about the data, not a bug:
-        # team3 rejects several assets at once or a missing trained channel.
-        return FitOutcome(detector, fitted=False, note=f"fit refused ({exc}); used as configured")
+    except (ValueError, TypeError) as exc:
+        # ValueError: a detector refusing its training data is a statement about the data,
+        # not a bug (team3 rejects several assets at once, or a missing trained channel).
+        # TypeError: ``runtime_checkable`` matches on method *name* only, so an adapter with
+        # a sklearn-shaped ``fit(self, X, y)`` satisfies the isinstance check above and then
+        # fails on call. Neither may kill a benchmark twelve cases in — degrade and report.
+        return FitOutcome(detector, note=f"fit refused ({exc}); used as configured")

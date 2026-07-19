@@ -6,20 +6,9 @@ identically at the point level and catastrophically differently at the event lev
 is the difference between what a paper reports and what an analyst experiences.
 """
 
-from datetime import UTC, datetime, timedelta
-
-from iotshield.contracts import DetectionResult, Lane, PrioritizedAlert
-from iotshield.eval import GroundTruth, score_alerts, score_detections
-
-T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
-
-
-def at(second: int) -> datetime:
-    return T0 + timedelta(seconds=second)
-
-
-def truth_of(flags: list[bool]) -> GroundTruth:
-    return GroundTruth.from_timeline([(at(i), flag) for i, flag in enumerate(flags)])
+from iotshield.contracts import AlertSeverity, DetectionResult, Lane, PrioritizedAlert
+from iotshield.eval import score_alerts, score_detections
+from tests.eval.conftest import at, truth_of
 
 
 def detection(start: int, end: int) -> DetectionResult:
@@ -35,8 +24,6 @@ def detection(start: int, end: int) -> DetectionResult:
 
 
 def alert(start: int, end: int, priority: float) -> PrioritizedAlert:
-    from iotshield.contracts import AlertSeverity
-
     return PrioritizedAlert(
         asset_id="pump-02",
         severity=AlertSeverity.HIGH,
@@ -55,7 +42,7 @@ FAULT = truth_of([20 <= i < 60 for i in range(100)])
 class TestDetectorLevel:
     def test_one_exact_detection_scores_perfectly(self) -> None:
         metrics = score_detections(FAULT, [detection(20, 59)])
-        assert metrics.incidents == 1 and metrics.incidents_hit == 1
+        assert metrics.incidents == 1 and metrics.detections == 1
         assert metrics.point_precision == 1.0 and metrics.point_recall == 1.0
         assert metrics.event_precision == 1.0 and metrics.event_recall == 1.0
         assert metrics.detections_per_incident == 1.0
@@ -121,7 +108,7 @@ class TestFragmentation:
 class TestAlertLevel:
     def test_one_true_alert(self) -> None:
         metrics = score_alerts(FAULT, [alert(20, 59, 80.0)])
-        assert metrics.alerts == 1 and metrics.alerts_true == 1
+        assert metrics.alerts == 1
         assert metrics.alerts_per_incident == 1.0
         assert metrics.incident_coverage == 1.0
         assert metrics.mean_rank_of_true == 1.0

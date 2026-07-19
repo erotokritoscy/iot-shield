@@ -18,6 +18,7 @@ from iotshield.contracts import Asset, Criticality, Lane, NormalizedEvent
 from iotshield.pipeline import (
     PipelineConfig,
     PipelineSpec,
+    build_detectors,
     compute_result,
     compute_run,
     normalize_sources,
@@ -368,7 +369,9 @@ class TestComputePhases:
     def test_compute_run_equals_its_phases_composed(self, tmp_path: Path) -> None:
         config = make_config(tmp_path)
         composed = compute_run(config, [INLINE_CSV])
-        by_hand = compute_result(config, normalize_sources(config, [INLINE_CSV]))
+        by_hand = compute_result(
+            config, normalize_sources(config, [INLINE_CSV]), build_detectors(config)
+        )
         assert len(by_hand.events) == len(composed.events)
         assert len(by_hand.detections) == len(composed.detections)
         assert len(by_hand.alerts) == len(composed.alerts)
@@ -377,9 +380,9 @@ class TestComputePhases:
     def test_injected_detectors_replace_the_configured_ones(self, tmp_path: Path) -> None:
         config = make_config(tmp_path)
         ingested = normalize_sources(config, [INLINE_CSV])
-        assert compute_result(config, ingested, detectors=[]).detections == []
+        assert compute_result(config, ingested, []).detections == []
         # ...and the ingest half is untouched by the substitution.
-        assert compute_result(config, ingested, detectors=[]).events == ingested.events
+        assert compute_result(config, ingested, []).events == ingested.events
 
     def test_a_bare_spec_computes(self, tmp_path: Path) -> None:
         # compute_run takes PipelineSpec, so a caller with no deployment wiring — no

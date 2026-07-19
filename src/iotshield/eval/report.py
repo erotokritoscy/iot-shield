@@ -11,6 +11,7 @@ the *harness's* vocabulary, and keeping it out of the contracts package is itsel
 statement that the harness sits outside the product (ADR-0021 D1).
 """
 
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
@@ -23,7 +24,12 @@ def _utc_now() -> datetime:
 
 
 class CaseReport(BaseModel):
-    """One spec's result on one labelled case."""
+    """One spec's result on one labelled case.
+
+    Flat rather than two nested metric objects, deliberately: this is the JSON a CI gate
+    keys into (``cases[].event_f1``), so the shape is part of the artifact's contract.
+    ``None`` on any ratio means *undefined*, never zero — see ``score._ratio``.
+    """
 
     case: str
     incidents: int
@@ -31,13 +37,15 @@ class CaseReport(BaseModel):
     alerts: int
     fitted: bool
     notes: list[str] = Field(default_factory=list)
-    point_f1: float
-    event_precision: float
-    event_recall: float
-    event_f1: float
-    detections_per_incident: float
-    alerts_per_incident: float
-    incident_coverage: float
+    point_precision: float | None
+    point_recall: float | None
+    point_f1: float | None
+    event_precision: float | None
+    event_recall: float | None
+    event_f1: float | None
+    detections_per_incident: float | None
+    alerts_per_incident: float | None
+    incident_coverage: float | None
     mean_latency_seconds: float | None
     mean_rank_of_true: float | None
     precision_at_k: dict[int, float | None] = Field(default_factory=dict)
@@ -52,23 +60,18 @@ class CaseReport(BaseModel):
         fitted: bool,
         notes: list[str],
     ) -> "CaseReport":
+        """Flatten both metric objects into the report row.
+
+        Every metric field is named identically on its source dataclass, so the copy is
+        mechanical and filtering by ``model_fields`` keeps it that way — adding a metric
+        that this report should carry means declaring it above and nothing else.
+        """
+        metrics = asdict(detector_metrics) | asdict(alert_metrics)
         return cls(
             case=case,
-            incidents=detector_metrics.incidents,
-            detections=detector_metrics.detections,
-            alerts=alert_metrics.alerts,
             fitted=fitted,
             notes=notes,
-            point_f1=detector_metrics.point_f1,
-            event_precision=detector_metrics.event_precision,
-            event_recall=detector_metrics.event_recall,
-            event_f1=detector_metrics.event_f1,
-            detections_per_incident=detector_metrics.detections_per_incident,
-            alerts_per_incident=alert_metrics.alerts_per_incident,
-            incident_coverage=alert_metrics.incident_coverage,
-            mean_latency_seconds=detector_metrics.mean_latency_seconds,
-            mean_rank_of_true=alert_metrics.mean_rank_of_true,
-            precision_at_k=alert_metrics.precision_at_k,
+            **{name: value for name, value in metrics.items() if name in cls.model_fields},
         )
 
 
@@ -80,9 +83,15 @@ class SpecReport(BaseModel):
     alert_engine: str
     cases: list[CaseReport]
 
-    def _mean(self, attribute: str) -> float:
-        values = [getattr(case, attribute) for case in self.cases]
-        return sum(values) / len(values) if values else 0.0
+    def _mean(self, attribute: str) -> float | None:
+        """Mean over the cases where the metric is *defined*, or None if none are.
+
+        Skipping ``None`` rather than treating it as zero is what keeps a corpus that mixes
+        clean and faulty recordings honest: the clean ones have no recall to average in, and
+        counting them as 0.0 would silently drag every rate down.
+        """
+        values = [value for case in self.cases if (value := getattr(case, attribute)) is not None]
+        return sum(values) / len(values) if values else None
 
     @property
     def cases_fitted(self) -> int:
@@ -97,22 +106,9 @@ class SpecReport(BaseModel):
         it passed it through, and a clean detector with a ratio below 1 means the alert
         layer is *splitting* incidents rather than merging them (ADR-0021 D2).
         """
-        alerts_per_incident = self._mean("alerts_per_incident")
-        return (
-            self._mean("detections_per_incident") / alerts_per_incident
-            if alerts_per_incident
-            else None
-        )
-
-    @property
-    def is_clean_corpus(self) -> bool:
-        """No labelled incidents anywhere — so every detection and alert is a false alarm.
-
-        The per-incident ratios are all division-by-zero here and would render as 0.00,
-        which reads like a perfect score rather than "not applicable". The caller switches
-        to absolute counts instead.
-        """
-        return all(case.incidents == 0 for case in self.cases)
+        detections = self._mean("detections_per_incident")
+        alerts = self._mean("alerts_per_incident")
+        return detections / alerts if detections is not None and alerts else None
 
     def summary(self) -> dict[str, float | None]:
         return {
@@ -143,44 +139,60 @@ def _cell(value: float | None, width: int = 8, places: int = 2) -> str:
     return f"{'-':>{width}}" if value is None else f"{value:>{width}.{places}f}"
 
 
+@dataclass(frozen=True)
+class _Column:
+    """One numeric column of the head-to-head table: its heading, source key, and format."""
+
+    heading: str
+    key: str
+    width: int = 8
+    places: int = 2
+
+
+# The rate columns; on a clean corpus every one of them is legitimately undefined and
+# renders as '-', so the same table serves both cases with only the caption differing.
+_SUMMARY_COLUMNS = (
+    _Column("evF1", "event_f1"),
+    _Column("evP", "event_precision"),
+    _Column("evR", "event_recall"),
+    _Column("ptF1", "point_f1"),
+    _Column("det/inc", "detections_per_incident", 9),
+    _Column("alt/inc", "alerts_per_incident", 9),
+    _Column("cover", "incident_coverage"),
+    _Column("det", "detections", 8, 0),
+    _Column("alerts", "alerts", 8, 0),
+)
+
+
+def _summary_table(specs: list[SpecReport]) -> list[str]:
+    heading = f"{'spec':<22}{'detectors':<28}" + "".join(
+        f"{column.heading:>{column.width}}" for column in _SUMMARY_COLUMNS
+    )
+    rows = []
+    for spec in specs:
+        summary = spec.summary()
+        cells = "".join(
+            _cell(summary[column.key], column.width, column.places) for column in _SUMMARY_COLUMNS
+        )
+        fitted = f"{spec.cases_fitted}/{len(spec.cases)}"
+        rows.append(f"{spec.spec[:21]:<22}{','.join(spec.detectors)[:27]:<28}{cells}{fitted:>8}")
+    return [f"{heading}{'fitted':>8}", *rows]
+
+
 def render(report: EvaluationReport) -> str:
     """Render the head-to-head comparison, then per-case detail for each spec."""
     # ASCII-only separators: Windows consoles mangle UTF-8 punctuation (as RunReport found).
-    clean = report.incidents == 0
     lines = [
         f"corpus: {report.corpus} - {report.corpus_description}",
         f"  {report.cases} case(s), {report.incidents} labelled incident(s)"
         f"   fit protocol: {report.fit_protocol}",
         "",
     ]
-    if clean:
-        # No incidents means the per-incident ratios are undefined, and rendering them as
-        # 0.00 would read as a perfect score. Absolute false-alarm counts are the answer here.
+    if report.incidents == 0:
+        # Every rate is undefined here and prints as '-'; what the reader needs instead is
+        # the framing, since the absolute det/alerts columns are pure false alarms.
         lines.append("  no labelled incidents: every detection and alert below is a FALSE ALARM")
-        lines.append(f"{'spec':<22}{'detectors':<28}{'false det':>11}{'false alerts':>14}")
-        for spec in report.specs:
-            summary = spec.summary()
-            lines.append(
-                f"{spec.spec[:21]:<22}{','.join(spec.detectors)[:27]:<28}"
-                f"{_cell(summary['detections'], 11, 1)}{_cell(summary['alerts'], 14, 1)}"
-            )
-        return "\n".join(lines)
-
-    lines.append(
-        f"{'spec':<22}{'detectors':<28}{'evF1':>8}{'evP':>8}{'evR':>8}"
-        f"{'ptF1':>8}{'det/inc':>9}{'alt/inc':>9}{'cover':>8}{'fitted':>8}"
-    )
-    for spec in report.specs:
-        summary = spec.summary()
-        lines.append(
-            f"{spec.spec[:21]:<22}{','.join(spec.detectors)[:27]:<28}"
-            f"{_cell(summary['event_f1'])}{_cell(summary['event_precision'])}"
-            f"{_cell(summary['event_recall'])}{_cell(summary['point_f1'])}"
-            f"{_cell(summary['detections_per_incident'], 9)}"
-            f"{_cell(summary['alerts_per_incident'], 9)}"
-            f"{_cell(summary['incident_coverage'])}"
-            f"{f'{spec.cases_fitted}/{len(spec.cases)}':>8}"
-        )
+    lines.extend(_summary_table(report.specs))
 
     for spec in report.specs:
         lines.extend(["", f"--- {spec.spec} - per case ---"])

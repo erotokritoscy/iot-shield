@@ -24,7 +24,8 @@ Two things are deliberately NOT scored here, because no answer key exists for th
   pinned at 1.0 and contributes nothing.
 """
 
-from collections.abc import Sequence
+import bisect
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -34,29 +35,51 @@ from iotshield.eval.truth import GroundTruth, Incident
 PRECISION_AT_K = (1, 5, 10)
 
 
-def _f1(precision: float, recall: float) -> float:
-    return 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+def _ratio(numerator: float, denominator: float) -> float | None:
+    """The rate, or ``None`` when the denominator makes it *undefined* rather than zero.
+
+    Load-bearing, not defensive. On a clean recording a detector that correctly emits
+    nothing has no recall to report — and returning 0.0 would make it indistinguishable
+    from one that missed everything, in the JSON report a CI gate reads and in the
+    dashboard, not merely in a console table. ``None`` is already the harness's word for
+    "not applicable" (precision@k when the queue is short, latency when nothing was
+    caught), and the renderer already prints it as ``-``.
+    """
+    return numerator / denominator if denominator else None
 
 
-def _ratio(numerator: float, denominator: float) -> float:
-    return numerator / denominator if denominator else 0.0
+def _f1(precision: float | None, recall: float | None) -> float | None:
+    """Harmonic mean, propagating undefined-ness from recall.
+
+    Undefined only when there was nothing to find: with no incidents there is no F1 to
+    speak of. A detector that found nothing *while there was something* has recall 0 and
+    undefined precision (it made no predictions) — that is a score of 0, not a
+    non-answer, so precision falls back to 0 there.
+    """
+    if recall is None:
+        return None
+    precision = precision or 0.0
+    total = precision + recall
+    return 2 * precision * recall / total if total else 0.0
 
 
 @dataclass(frozen=True)
 class DetectorMetrics:
-    """How well the detectors found the faults — level 1."""
+    """How well the detectors found the faults — level 1.
+
+    Ratios are ``float | None``; ``None`` means undefined (no incidents to recall, or no
+    detections to be precise about), never zero.
+    """
 
     incidents: int
     detections: int
-    incidents_hit: int
-    detections_hitting: int
-    point_precision: float
-    point_recall: float
-    point_f1: float
-    event_precision: float
-    event_recall: float
-    event_f1: float
-    detections_per_incident: float
+    point_precision: float | None
+    point_recall: float | None
+    point_f1: float | None
+    event_precision: float | None
+    event_recall: float | None
+    event_f1: float | None
+    detections_per_incident: float | None
     mean_latency_seconds: float | None
 
 
@@ -65,17 +88,46 @@ class AlertMetrics:
     """What the analyst's queue looked like — level 2."""
 
     alerts: int
-    alerts_true: int
-    incidents_covered: int
-    alerts_per_incident: float
-    incident_coverage: float
+    alerts_per_incident: float | None
+    incident_coverage: float | None
     precision_at_k: dict[int, float | None]
     mean_rank_of_true: float | None
 
 
-def _covers(detections: Sequence[DetectionResult], moment: datetime) -> bool:
-    """Whether any detection window contains this instant (closed on both ends)."""
-    return any(d.window_start <= moment <= d.window_end for d in detections)
+def _merged_windows(
+    detections: Sequence[DetectionResult],
+) -> tuple[list[datetime], list[datetime]]:
+    """Detection windows merged into disjoint spans, as parallel sorted (starts, ends).
+
+    Point scoring asks "is this instant covered?" once per labelled row, and a detector
+    that does not merge its own judgments can emit a detection per row — so the naive
+    scan is quadratic in recording length (measured: 10.5M comparisons over one corpus).
+    Merging once lets each row answer by binary search instead.
+    """
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    for start, end in sorted((d.window_start, d.window_end) for d in detections):
+        if ends and start <= ends[-1]:
+            ends[-1] = max(ends[-1], end)
+        else:
+            starts.append(start)
+            ends.append(end)
+    return starts, ends
+
+
+def _coverage(
+    truth: GroundTruth, detections: Sequence[DetectionResult]
+) -> Iterator[tuple[bool, bool]]:
+    """Yield ``(is_anomalous, is_covered)`` per labelled row.
+
+    The span containing an instant, if any, is the last one starting at or before it —
+    ``bisect_right`` finds it in log time. Both comparisons are inclusive, which is
+    ``truth.overlaps``'s closed-interval rule specialized to a zero-length window.
+    """
+    starts, ends = _merged_windows(detections)
+    for moment, flagged in truth.timeline:
+        index = bisect.bisect_right(starts, moment) - 1
+        yield flagged, index >= 0 and moment <= ends[index]
 
 
 def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) -> DetectorMetrics:
@@ -91,8 +143,7 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
 
     # Point level: per labelled row, is it inside any detection window?
     true_positive = false_positive = false_negative = 0
-    for moment, flagged in truth.timeline:
-        covered = _covers(detections, moment)
+    for flagged, covered in _coverage(truth, detections):
         if flagged and covered:
             true_positive += 1
         elif flagged:
@@ -104,24 +155,22 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
 
     # Event level: an incident is hit if ANY detection overlaps it; a detection is true if
     # it overlaps ANY incident.
-    hits = [
-        incident
+    hits = sum(
+        1
         for incident in incidents
         if any(incident.overlaps(d.window_start, d.window_end) for d in detections)
-    ]
-    truthful = [
-        d
+    )
+    truthful = sum(
+        1
         for d in detections
         if any(incident.overlaps(d.window_start, d.window_end) for incident in incidents)
-    ]
-    event_precision = _ratio(len(truthful), len(detections))
-    event_recall = _ratio(len(hits), len(incidents))
+    )
+    event_precision = _ratio(truthful, len(detections))
+    event_recall = _ratio(hits, len(incidents))
 
     return DetectorMetrics(
         incidents=len(incidents),
         detections=len(detections),
-        incidents_hit=len(hits),
-        detections_hitting=len(truthful),
         point_precision=point_precision,
         point_recall=point_recall,
         point_f1=_f1(point_precision, point_recall),
@@ -162,11 +211,11 @@ def score_alerts(truth: GroundTruth, alerts: Sequence[PrioritizedAlert]) -> Aler
         any(incident.overlaps(alert.window_start, alert.window_end) for incident in incidents)
         for alert in alerts
     ]
-    covered = [
-        incident
+    covered = sum(
+        1
         for incident in incidents
         if any(incident.overlaps(a.window_start, a.window_end) for a in alerts)
-    ]
+    )
 
     # precision@k is undefined when the queue is shorter than k — reporting it as 0 would
     # read as "the top 10 were all wrong" when there were only 3 alerts. None means "n/a".
@@ -177,10 +226,8 @@ def score_alerts(truth: GroundTruth, alerts: Sequence[PrioritizedAlert]) -> Aler
 
     return AlertMetrics(
         alerts=len(alerts),
-        alerts_true=sum(is_true),
-        incidents_covered=len(covered),
         alerts_per_incident=_ratio(len(alerts), len(incidents)),
-        incident_coverage=_ratio(len(covered), len(incidents)),
+        incident_coverage=_ratio(covered, len(incidents)),
         precision_at_k=precision_at_k,
         mean_rank_of_true=sum(true_ranks) / len(true_ranks) if true_ranks else None,
     )

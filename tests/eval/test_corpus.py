@@ -35,7 +35,7 @@ class TestMicroCorpus:
     def test_loads_with_labels_and_content(self) -> None:
         corpus = load_corpus("demo_micro")
         (case,) = corpus.cases
-        assert case.inputs and case.inputs[0].strip()
+        assert case.inputs and case.inputs[0].text.strip()
         assert len(case.truth.timeline) == 300
         assert case.truth.anomalous_rows == 230
 
@@ -65,4 +65,4 @@ class TestExternalCorpora:
         assert corpus.cases
         assert all(case.truth.timeline for case in corpus.cases)
         # Every case ingests as real CSV text, so a benchmark exercises normalization too.
-        assert all(case.inputs[0].count(",") for case in corpus.cases)
+        assert all(case.inputs[0].text.count(",") for case in corpus.cases)
