@@ -96,11 +96,29 @@ window (≥ `min_count` matches within `window_minutes`), the classic brute-forc
 
 Two pointers walk the time-ordered matches; qualifying windows that *overlap* describe one
 incident and merge, while a window whose left edge has passed the previous episode's end
-means a real quiet gap and opens a new one. **One incident produces one detection**: a
-90-attempt brute force is one alert, not 90. This is deliberate — the measured failure of
-team3's IsolationForest was exactly this fragmentation (91 predicted events for a single
-SKAB fault, event-F1 0.047). Burst *intensity* is not lost; it rides in `score` as the peak
-count in any window, which the alert engine reads as the margin.
+means a real quiet gap and opens a new one. **One incident produces one detection.**
+
+*Corrected 2026-07-19.* This decision originally justified itself as "a 90-attempt brute
+force is one alert, not 90". That claim is false, and measuring it produced a better reason.
+Unmerged, a 90-attempt burst emits 86 detections — but they all land in one 5-minute
+correlation bucket, so the alert engine already collapses them to **one alert either way**.
+Bucketing absorbs fragmentation *within* a bucket; it is only fragments spread across bucket
+boundaries that multiply alerts (91 fragments over 20 minutes → 4 alerts).
+
+The real justification is what the merge does to the alert's *score*. The burst's intensity
+already rides in `score` as the peak count in any window, which the engine reads as its
+severity factor. The engine's `volume` factor separately counts *detections* in the bucket —
+a corroboration signal that is only meaningful if each detection is a distinct judgment. An
+unmerged detector therefore reports the same intensity twice, through two channels that mean
+different things: measured, the identical burst scores 63.0/HIGH merged and 75.1/CRITICAL
+unmerged. Merging is what makes the detection **one judgment**, which is the precondition
+`volume` depends on.
+
+That precondition is a general property of the Detector port, not a quirk of this adapter
+(team3's detector merges consecutive anomalous rows for the same reason), so it is written
+down in `detect/port.py` and the shared span-merging helper lives in `detect/_runs.py`.
+ADR-0021's evaluation harness measures compliance (detections-per-incident) rather than
+enforcing it.
 
 ### D5 — Fixed threshold now; learned per-asset baselines deferred
 

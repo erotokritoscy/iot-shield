@@ -55,12 +55,14 @@ A run ingests a **list of sources**; routing is **explicit**, and pooling happen
 ## Consequences
 - **A run can synthesize across modalities.** `config/demo_multimodal.yaml` ingests a
   telemetry CSV *and* a syslog stream for the same asset in one run — the first run that
-  carries two lanes at once. The telemetry spike detects; the log lane is ingested but
-  uncovered, which the guard reports.
-- **The dormant fusion is now wired, not yet fired.** `corroboration` still reads 1 because no
-  detector produces log-lane *detections* yet; a cross-lane (e.g. log-severity) detector is
-  what makes it exceed 1. That detector is detection-depth work (week-2 §11.2); this ADR
-  delivers the ingestion it needs.
+  carries two lanes at once.
+- **The dormant fusion is wired here, and fired by ADR-0020.** This ADR delivers what
+  `corroboration` was always missing: a single-source run could only ever carry one lane, so
+  the factor was pinned at exactly 1 by *ingestion*, no matter what detectors were configured.
+  Making it exceed 1 additionally needs a second lane to produce *detections*, which is
+  detection-depth work — ADR-0020's log detector, which lands alongside this and takes
+  `demo_multimodal.yaml` to `corroboration` 1.5. Until a lane has a detector, the guard's
+  coverage WARNING reports it as ingested-but-unjudged (as the syslog demo still shows).
 - **Adding a lane stays free.** A future FLOW normalizer registers, declares its format→lane,
   and sources tagged that format route to it and pool automatically — no routing code changes.
 - **Deferred:** per-file format auto-resolution (needs unique format→normalizer ownership);
