@@ -6,9 +6,17 @@ LogBurstDetector (log-lane rate/burst rule, designed here — ADR-0020).
 Planned: team5 flows.
 """
 
+from iotshield.detect._runs import merge_runs
 from iotshield.detect.log_burst import LogBurstDetector
-from iotshield.detect.port import Detector
+from iotshield.detect.port import Detector, Fittable
 from iotshield.detect.stub import StubThresholdDetector
 from iotshield.detect.team3 import Team3ZScoreDetector
 
-__all__ = ["Detector", "LogBurstDetector", "StubThresholdDetector", "Team3ZScoreDetector"]
+__all__ = [
+    "Detector",
+    "Fittable",
+    "LogBurstDetector",
+    "StubThresholdDetector",
+    "Team3ZScoreDetector",
+    "merge_runs",
+]

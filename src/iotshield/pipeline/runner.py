@@ -29,8 +29,9 @@ from iotshield.contracts import (
     PrioritizedAlert,
     discovered_asset,
 )
+from iotshield.detect import Detector
 from iotshield.pipeline.compat import CompatLevel, ensure_compatible
-from iotshield.pipeline.config import PipelineConfig, SinkConfig
+from iotshield.pipeline.config import PipelineConfig, PipelineSpec, SinkConfig
 from iotshield.pipeline.registry import (
     build_alert_engine,
     build_detector,
@@ -133,53 +134,66 @@ def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str
     )
 
 
-def _resolve_origins(config: PipelineConfig, origins: Sequence[str] | None) -> list[str]:
+def _resolve_origins(spec: PipelineSpec, origins: Sequence[str] | None) -> list[str]:
     """The provenance label for each source: caller-supplied, else the path, else an index."""
     if origins is not None:
-        if len(origins) != len(config.sources):
+        if len(origins) != len(spec.sources):
             raise ValueError("origins must align 1:1 with the configured sources")
         return list(origins)
-    return [source.path or f"source[{index}]" for index, source in enumerate(config.sources)]
+    return [source.path or f"source[{index}]" for index, source in enumerate(spec.sources)]
 
 
-def compute_run(
-    config: PipelineConfig,
+@dataclass(frozen=True)
+class NormalizedInputs:
+    """What the ingest phase produced: the pooled events plus everything to carry forward.
+
+    A phase boundary rather than a contract — it exists so ``normalize_sources`` and
+    ``compute_result`` can be composed with a step in between (the evaluation harness fits
+    detectors on the events before judging them, ADR-0021) without either phase, or the
+    ``compute_run`` composition, changing.
+    """
+
+    events: list[NormalizedEvent]
+    malformed: list[MalformedRecord]
+    provenance: list[SourceProvenance]
+    warnings: list[str]
+
+
+def normalize_sources(
+    spec: PipelineSpec,
     inputs: Sequence[str],
     *,
     origins: Sequence[str] | None = None,
-) -> RunResult:
-    """Compute a run's full result in memory — no storage — the store-agnostic core.
+) -> NormalizedInputs:
+    """Ingest phase: verify the chain, route each source to its normalizer, pool the events.
 
-    ``inputs`` are the raw texts, one per configured source and aligned to
-    ``config.sources`` by position (``origins`` likewise). The compatibility guard runs
-    first (ERRORs raise before any work; WARNINGs ride into the result), including the
-    input-appropriateness check per source (ADR-0017). Asset criticalities are resolved
-    in memory, so the alert engine needs no database.
+    ``inputs`` are the raw texts, one per configured source and aligned to ``spec.sources``
+    by position (``origins`` likewise). The compatibility guard runs first — ERRORs raise
+    before any work, WARNINGs ride forward — joined by the per-source input-appropriateness
+    check (ADR-0017).
     """
-    if len(inputs) != len(config.sources):
+    if len(inputs) != len(spec.sources):
         raise ValueError(
-            f"expected {len(config.sources)} input(s) for the configured sources, got {len(inputs)}"
+            f"expected {len(spec.sources)} input(s) for the configured sources, got {len(inputs)}"
         )
-    resolved_origins = _resolve_origins(config, origins)
+    resolved_origins = _resolve_origins(spec, origins)
 
     warnings = [
         f"[{issue.stage}] {issue.message}"
-        for issue in ensure_compatible(config)
+        for issue in ensure_compatible(spec)
         if issue.level is CompatLevel.WARNING
     ]
 
-    # Build adapters first: bad names/params fail fast, before any source is read or sink
-    # touched. Normalizers dedupe by name — a run with three syslog sources builds one.
+    # Build normalizers before reading anything: a bad name/param fails fast, before any
+    # work. They dedupe by name — a run with three syslog sources builds one.
     normalizers = {
-        source.normalizer: build_normalizer(source.normalizer) for source in config.sources
+        source.normalizer: build_normalizer(source.normalizer) for source in spec.sources
     }
-    detectors = [build_detector(spec.name, spec.params) for spec in config.detectors]
-    alert_engine = build_alert_engine(config.alert_engine.name, config.alert_engine.params)
 
     events: list[NormalizedEvent] = []
     malformed: list[MalformedRecord] = []
     provenance: list[SourceProvenance] = []
-    for index, source in enumerate(config.sources):
+    for index, source in enumerate(spec.sources):
         origin = resolved_origins[index]
         result = normalizers[source.normalizer].normalize(
             inputs[index], source_format=source.source_format, origin=origin
@@ -193,31 +207,79 @@ def compute_run(
         malformed.extend(result.malformed)
         provenance.append(SourceProvenance(source.normalizer, source.source_format, origin))
 
+    return NormalizedInputs(
+        events=events, malformed=malformed, provenance=provenance, warnings=warnings
+    )
+
+
+def run_detectors(
+    detectors: Sequence[Detector], events: Sequence[NormalizedEvent]
+) -> list[DetectionResult]:
+    """Judge phase: hand each detector its own lane's events, in the order the port promises.
+
+    A detector sees its lane's events sorted by ``(asset_id, timestamp)``, so a
+    windowed/lagged model can rely on it even when several sources pool into the same lane
+    (ADR-0019). Stable sort: same-timestamp events keep their ingest order.
+    """
     detections: list[DetectionResult] = []
     for detector in detectors:
-        # The runner guarantees a detector sees its lane's events in (asset, time) order,
-        # so a windowed/lagged model can rely on it even when several sources pool into the
-        # same lane (ADR-0019). Stable sort: same-timestamp events keep their ingest order.
         lane_events = sorted(
             (event for event in events if event.source_type == detector.lane),
             key=lambda event: (event.asset_id, event.timestamp),
         )
         detections.extend(detector.detect(lane_events))
+    return detections
 
-    assets = resolve_assets(config.assets, events)
+
+def compute_result(
+    spec: PipelineSpec,
+    ingested: NormalizedInputs,
+    *,
+    detectors: Sequence[Detector] | None = None,
+) -> RunResult:
+    """Judge and prioritize already-ingested events — no storage, no re-normalization.
+
+    ``detectors`` defaults to the spec's configured ones. Passing them explicitly is the
+    seam the evaluation harness uses to judge with *fitted* detectors while still running
+    this exact code (ADR-0021); the product path never passes it. Asset criticalities are
+    resolved in memory, so the alert engine needs no database.
+    """
+    if detectors is None:
+        detectors = [build_detector(entry.name, entry.params) for entry in spec.detectors]
+    alert_engine = build_alert_engine(spec.alert_engine.name, spec.alert_engine.params)
+
+    detections = run_detectors(detectors, ingested.events)
+    assets = resolve_assets(spec.assets, ingested.events)
     asset_map = {asset.asset_id: asset for asset in assets}
     alerts = alert_engine.build_alerts(detections, asset_map)
 
     return RunResult(
         run_at=datetime.now(UTC),
-        sources=provenance,
+        sources=ingested.provenance,
         assets=assets,
-        events=events,
-        malformed=malformed,
+        events=ingested.events,
+        malformed=ingested.malformed,
         detections=detections,
         alerts=alerts,
-        warnings=warnings,
+        warnings=ingested.warnings,
     )
+
+
+def compute_run(
+    spec: PipelineSpec,
+    inputs: Sequence[str],
+    *,
+    origins: Sequence[str] | None = None,
+) -> RunResult:
+    """Compute a run's full result in memory — no storage — the store-agnostic core.
+
+    The composition of the two phases above, and the product's entry into them. Typed
+    ``PipelineSpec``, not ``PipelineConfig``: this phase reads only the operator's chosen
+    shape and never the deployment's ``database_url`` or ``sinks``, so taking the narrower
+    type makes "compute cannot reach a store" a fact the type checker enforces rather than
+    a convention (ADR-0018, ADR-0021). ``PipelineConfig`` still satisfies it by subclassing.
+    """
+    return compute_result(spec, normalize_sources(spec, inputs, origins=origins))
 
 
 def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:

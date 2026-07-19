@@ -12,7 +12,7 @@ import pytest
 
 from iotshield.contracts import EventKind, Lane, NormalizedEvent
 from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
-from iotshield.detect.team3.detector import Team3ZScoreDetector, _classify, _runs
+from iotshield.detect.team3.detector import Team3ZScoreDetector, _classify
 from iotshield.detect.team3.train import train_artifact
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -93,10 +93,6 @@ class TestEpisodes:
         assert _classify(2) == EventKind.CONTEXTUAL
         assert _classify(3) == EventKind.COLLECTIVE
         assert _classify(50) == EventKind.COLLECTIVE
-
-    def test_runs_finds_maximal_true_ranges(self) -> None:
-        mask = np.array([False, True, True, False, True, False])
-        assert _runs(mask) == [(1, 2), (4, 4)]
 
 
 class TestPivotAndGuards:

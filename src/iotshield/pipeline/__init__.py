@@ -10,18 +10,33 @@ from iotshield.pipeline.config import (
     SourceSpec,
     config_from_spec,
     load_config,
+    load_spec,
 )
-from iotshield.pipeline.runner import RunReport, compute_run, execute_run, run_pipeline
+from iotshield.pipeline.runner import (
+    NormalizedInputs,
+    RunReport,
+    compute_result,
+    compute_run,
+    execute_run,
+    normalize_sources,
+    run_detectors,
+    run_pipeline,
+)
 
 __all__ = [
+    "NormalizedInputs",
     "PipelineConfig",
     "PipelineSpec",
     "RunReport",
     "SinkConfig",
     "SourceSpec",
+    "compute_result",
     "compute_run",
     "config_from_spec",
     "execute_run",
     "load_config",
+    "load_spec",
+    "normalize_sources",
+    "run_detectors",
     "run_pipeline",
 ]

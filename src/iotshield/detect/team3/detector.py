@@ -29,9 +29,11 @@ import pandas as pd
 from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
 from iotshield.detect._group import group_by_asset
+from iotshield.detect._runs import merge_runs
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import featurewise_robust_z
 from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
+from iotshield.detect.team3.train import train_artifact
 
 # Fixed telemetry-lane detector; declared for the compatibility guard.
 CAPABILITY = Capability.of(consumes={LaneToken(Lane.TELEMETRY)}, produces={DETECTIONS})
@@ -49,24 +51,25 @@ def _classify(run_length: int) -> EventKind:
     return EventKind.CONTEXTUAL
 
 
-def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Inclusive [start, end] index ranges of each maximal True run."""
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for i, flagged in enumerate(mask):
-        if flagged and start is None:
-            start = i
-        elif not flagged and start is not None:
-            runs.append((start, i - 1))
-            start = None
-    if start is not None:
-        runs.append((start, len(mask) - 1))
-    return runs
-
-
 def _has_reading(event: NormalizedEvent) -> bool:
     """Only a named channel with a numeric value can enter the (time x channel) matrix."""
     return event.metric is not None and event.value is not None
+
+
+def wide_frame(events: Sequence[NormalizedEvent]) -> pd.DataFrame:
+    """Pivot univariate events back into the ``(time x channel)`` matrix the model wants.
+
+    The inverse of the normalizer's fan-out (ADR-0003 D1). Shared by inference (per asset)
+    and by ``fit`` (over the whole training slice), so the two can never disagree about how
+    events become a matrix. The index is the tz-aware timestamp; callers narrow the columns.
+    """
+    records = [
+        (event.timestamp, event.metric, float(event.value))
+        for event in events
+        if event.metric is not None and event.value is not None
+    ]
+    frame = pd.DataFrame(records, columns=["ts", "metric", "value"])
+    return frame.pivot_table(index="ts", columns="metric", values="value", aggfunc="mean")
 
 
 def _channel_of(feature_name: str, channels: Sequence[str]) -> str:
@@ -110,17 +113,50 @@ class Team3ZScoreDetector:
             detections.extend(self._detect_asset(asset_id, asset_events))
         return detections
 
+    def fit(self, events: Sequence[NormalizedEvent]) -> Team3ZScoreDetector:
+        """Relearn the baseline from ``events`` (assumed normal); return a fitted detector.
+
+        The optional ``Fittable`` capability (ADR-0021 D3). Never called by the pipeline —
+        it exists so an evaluation can train on an asset's own clean history rather than
+        measuring domain shift, which ADR-0012 D3 found is what sinks a foreign baseline.
+
+        Only the *baseline* is relearned: channels, window, lags, FFT and percentile come
+        from the current artifact, because they are the adapter's construction, not
+        something fitting should silently retune.
+
+        Rolling and lag features assume one asset's contiguous history, so several assets
+        would interleave into a meaningless matrix; that is refused rather than fitted.
+        """
+        lane_events = [
+            event for event in events if event.source_type is self.lane and _has_reading(event)
+        ]
+        assets = {event.asset_id for event in lane_events}
+        if len(assets) > 1:
+            raise ValueError(
+                f"fit expects one asset's history; got {len(assets)} ({', '.join(sorted(assets))})"
+            )
+        art = self._artifact
+        wide = wide_frame(sorted(lane_events, key=lambda event: event.timestamp))
+        missing = [channel for channel in art.channels if channel not in wide.columns]
+        if missing:
+            raise ValueError(f"fit input is missing trained channels: {missing}")
+        frame = wide.reindex(columns=list(art.channels)).sort_index().ffill().dropna()
+
+        fitted = train_artifact(
+            frame.reset_index(drop=True),
+            channels=art.channels,
+            window_size=art.window_size,
+            lag_steps=art.lag_steps,
+            fft_enabled=art.fft.enabled,
+            fft_include_dc=art.fft.include_dc,
+            percentile=art.percentile,
+            provenance=f"refit on {len(frame)} normal rows of {', '.join(sorted(assets))}",
+        )
+        return Team3ZScoreDetector(fitted, min_segment_length=self._min_segment_length)
+
     def _detect_asset(self, asset_id: str, events: list[NormalizedEvent]) -> list[DetectionResult]:
         art = self._artifact
-        # detect() already dropped metric/value-less events; the guard here only
-        # narrows the type to float and keeps the three columns aligned.
-        records = [
-            (e.timestamp, e.metric, float(e.value))
-            for e in events
-            if e.metric is not None and e.value is not None
-        ]
-        frame = pd.DataFrame(records, columns=["ts", "metric", "value"])
-        wide = frame.pivot_table(index="ts", columns="metric", values="value", aggfunc="mean")
+        wide = wide_frame(events)
 
         # Feature columns are sacred: skip an asset that lacks any trained channel
         # rather than score it against a misaligned matrix (ADR-0012 D4).
@@ -163,7 +199,7 @@ class Team3ZScoreDetector:
             return []
 
         detections: list[DetectionResult] = []
-        for start, end in _runs(anomaly):
+        for start, end in merge_runs(anomaly):
             length = end - start + 1
             if length < self._min_segment_length:
                 continue

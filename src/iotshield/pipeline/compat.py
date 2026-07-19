@@ -26,7 +26,7 @@ from enum import StrEnum
 
 from iotshield.capabilities import Token, formats_in, lanes_in
 from iotshield.contracts import Lane
-from iotshield.pipeline.config import PipelineConfig
+from iotshield.pipeline.config import PipelineSpec
 from iotshield.pipeline.registry import (
     alert_engine_capability,
     detector_capability,
@@ -48,7 +48,7 @@ class CompatIssue:
     message: str
 
 
-def check_compatibility(config: PipelineConfig) -> list[CompatIssue]:
+def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
     """Return every coherence issue in ``config`` (empty means a clean chain)."""
     issues: list[CompatIssue] = []
 
@@ -166,7 +166,7 @@ def has_errors(issues: list[CompatIssue]) -> bool:
     return any(issue.level is CompatLevel.ERROR for issue in issues)
 
 
-def ensure_compatible(config: PipelineConfig) -> list[CompatIssue]:
+def ensure_compatible(config: PipelineSpec) -> list[CompatIssue]:
     """Run the guard; raise on any ERROR, else return the remaining (warning) issues.
 
     The single place the run-or-refuse decision is made — shared by the runner (and

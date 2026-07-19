@@ -141,7 +141,7 @@ def config_from_spec(spec: PipelineSpec, database_url: str) -> PipelineConfig:
     return PipelineConfig.model_validate({**spec.model_dump(), "database_url": database_url})
 
 
-def load_config(path: Path) -> PipelineConfig:
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -150,6 +150,11 @@ def load_config(path: Path) -> PipelineConfig:
         raise ValueError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"config file {path} must contain a YAML mapping")
+    return raw
+
+
+def load_config(path: Path) -> PipelineConfig:
+    raw = _load_yaml_mapping(path)
     # Env wins over the file for the DB location (compose injects Postgres; the
     # file keeps its SQLite default for host runs). It may also supply the value
     # for a config that omits it entirely.
@@ -157,3 +162,15 @@ def load_config(path: Path) -> PipelineConfig:
     if env_url:
         raw = {**raw, "database_url": env_url}
     return PipelineConfig.model_validate(raw)
+
+
+def load_spec(path: Path) -> PipelineSpec:
+    """Load a spec with no deployment wiring — for callers that only ever compute.
+
+    The evaluation harness's loader (ADR-0021). Deliberately does *not* read
+    ``IOTSHIELD_DATABASE_URL`` or require ``database_url``: a benchmark computes results and
+    scores them in memory, so demanding a database it will never open — which
+    ``load_config`` would, because ``sinks`` defaults to ``[postgres]`` — would be asking for
+    a credential to satisfy a sink that never runs.
+    """
+    return PipelineSpec.model_validate(_load_yaml_mapping(path))
