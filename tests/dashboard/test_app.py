@@ -124,6 +124,11 @@ def test_contract_drift_mid_page_shows_error_not_traceback(
     assert at.error
 
 
+def _catalogue_params(control_client: ControlClient) -> list:
+    """team3_zscore's params exactly as /modules reports them to the page."""
+    return next(m.params for m in control_client.modules().detectors if m.name == "team3_zscore")
+
+
 class TestCompose:
     """The orchestration page: compose a chain, see it validated, trigger a run."""
 
@@ -189,6 +194,39 @@ class TestCompose:
         # keys no longer collide, which is the whole fix.
         assert at.selectbox(key="det_0_name").value == at.selectbox(key="det_1_name").value
         assert at.selectbox(key="det_0_preset").value != at.selectbox(key="det_1_preset").value
+
+    def test_an_untouched_detector_row_sends_no_parameters(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        """A form must be able to say "not given", and a widget cannot.
+
+        `describe_params` back-fills a learning adapter's real defaults, so every widget
+        renders populated. Submitting all of them made an untouched `team3_zscore` row an
+        explicit request for its whole hyperparameter block *plus* its artifact — the
+        half-configured request ADR-0022 D4 refuses. Picking that detector and pressing run
+        could not succeed.
+        """
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.selectbox(key="det_0_name").set_value("team3_zscore").run()
+        assert not at.exception
+
+        params = dashboard_app._param_widgets("det_0", _catalogue_params(control_client))
+        assert params == {}, f"untouched row submitted: {params}"
+
+    def test_a_changed_parameter_is_still_sent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        # The other half: omitting untouched values must not make the form unable to speak.
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.selectbox(key="det_0_name").set_value("log_burst").run()
+        at.selectbox(key="det_0_preset").set_value("auth_failure").run()
+        assert at.selectbox(key="det_0_preset").value == "auth_failure"
 
     def test_preset_is_offered_as_a_choice_not_a_free_text_box(
         self,

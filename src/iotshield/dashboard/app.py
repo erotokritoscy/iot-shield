@@ -213,10 +213,37 @@ def data_health_page(client: ApiClient) -> None:
     )
 
 
+def _untouched(value: Any, param: ParamInfo) -> bool:
+    """Whether the operator left this widget at what the catalogue reported.
+
+    A form must be able to say "not given", and a widget cannot: Streamlit hands back a
+    value whether or not anyone touched it. Sending all of them makes every run an explicit
+    request for every parameter, which is wrong wherever "not given" carries meaning — and
+    it does, in three different ways: a preset owns the real default (ADR-0024 D3), a
+    learning adapter reads it from its artifact, or an absent value means "learn it from the
+    data" (ADR-0022). The clearest case: an untouched `team3_zscore` row submitted its whole
+    prefilled hyperparameter block alongside the artifact id, which is exactly the
+    half-configured request ADR-0022 D4 refuses — so picking that detector and pressing run
+    could not succeed.
+
+    Comparing against the reported default is what lets the page express absence, and it is
+    faithful: a value equal to the default produces an identical adapter either way.
+    """
+    if param.default is None:
+        return value is None or value == ""
+    return value == param.default or str(value) == str(param.default)
+
+
 def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     # One input per adapter param, typed off the /modules schema. Values are still
-    # validated by the guard and the contracts, so free-text entry is safe here.
+    # validated by the guard and the contracts, so free-text entry is safe here. Only
+    # parameters the operator actually moved are sent — see _untouched.
     values: dict[str, Any] = {}
+
+    def submit(param: ParamInfo, value: Any) -> None:
+        if not _untouched(value, param):
+            values[param.name] = value
+
     for param in params:
         key = f"{prefix}_{param.name}"
         if param.choices:
@@ -225,7 +252,7 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
             # typo surfaces only as a guard error after the fact (ADR-0023 D9).
             default = str(param.default) if param.default is not None else None
             index = param.choices.index(default) if default in param.choices else 0
-            values[param.name] = st.selectbox(param.name, param.choices, index=index, key=key)
+            submit(param, st.selectbox(param.name, param.choices, index=index, key=key))
         elif param.type in ("float", "int"):
             # A numeric whose own default is None is *optional*: it must render empty and
             # be omitted when untouched, exactly as the free-text branch below does. Coercing
@@ -239,17 +266,12 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
             default = None if param.default is None else (int if whole else float)(param.default)
             number = st.number_input(param.name, value=default, step=1 if whole else None, key=key)
             if number is not None:
-                values[param.name] = int(number) if whole else float(number)
+                submit(param, int(number) if whole else float(number))
         elif param.type == "bool":
-            values[param.name] = st.checkbox(param.name, value=bool(param.default), key=key)
+            submit(param, st.checkbox(param.name, value=bool(param.default), key=key))
         else:
             default = "" if param.default is None else str(param.default)
-            text = st.text_input(param.name, value=default, key=key)
-            # A blank box on a param whose own default is None means "leave it unset" —
-            # sending "" instead would be an explicit empty value, which for an optional
-            # param (an artifact id, a channel pin) is a different and wrong request.
-            if text or param.default is not None:
-                values[param.name] = text
+            submit(param, st.text_input(param.name, value=default, key=key))
     return values
 
 
