@@ -83,13 +83,17 @@ services:
       # it opts in; the default when unset stays off, which is what a product image gets.
       # Without it the /eval routes are never registered — absent, not merely guarded.
       IOTSHIELD_EVAL_API: "1"
-      # Corpora ship inside the image under data/eval (the committed synthetic one); this
-      # names the root explicitly so a deployment can mount a bigger one instead.
+      # Corpora live here. The image carries only the committed `synthetic` bundle —
+      # datasets we may use but not redistribute are kept out of it (ADR-0021 D5a) — so
+      # the host's data/eval is bind-mounted read-only on top, making anything a developer
+      # fetched locally (`iotshield.eval fetch skab`) visible to the API without ever
+      # baking it into a shippable artifact.
       IOTSHIELD_CORPUS_PATH: "/app/data/eval"
     ports:
       - "8100:8100"
     volumes:
       - ./results:/app/results
+      - ./data/eval:/app/data/eval:ro
     depends_on:
       init:
         condition: service_completed_successfully

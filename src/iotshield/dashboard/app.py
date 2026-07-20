@@ -683,13 +683,25 @@ def evaluate_page(report_path: Path) -> None:
     # first touch of a selectbox inside it (the timeline's spec/case pickers) reruns with
     # the button False and wipes the page. Latching is what lets the cache below pay off:
     # exploring a finished report replays from cache instead of clearing it.
+    selection = (corpus_name, tuple(chosen), engine, protocol)
     if st.button("Run benchmark", type="primary", disabled=not chosen):
-        st.session_state[_EVAL_RUN_KEY] = (corpus_name, tuple(chosen), engine, protocol)
+        st.session_state[_EVAL_RUN_KEY] = selection
 
     latched = st.session_state.get(_EVAL_RUN_KEY)
     if latched is None:
         st.caption("Pick detectors and run — results are cached, so exploring them is instant.")
         return
+
+    # Changing a control after a run leaves the latched report on screen, which reads as
+    # "the control did nothing" — the fit protocol especially, since switching it silently
+    # showed the previous protocol's numbers. Say so rather than re-running unasked: a
+    # benchmark is not something to trigger on a stray click.
+    if latched != selection:
+        st.warning(
+            f"Showing the previous run (corpus **{latched[0]}**, "
+            f"{', '.join(latched[1])}, fit protocol **{latched[3]}**). "
+            "Press **Run benchmark** to apply the settings above."
+        )
 
     with st.spinner(f"Benchmarking {len(latched[1])} detector(s)…"):
         try:
