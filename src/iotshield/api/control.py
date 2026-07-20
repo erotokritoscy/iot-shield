@@ -325,6 +325,19 @@ def create_control_app(engine: Engine) -> FastAPI:
                     "issues": [_issue_info(i).model_dump() for i in exc.issues],
                 },
             ) from exc
+        except ValueError as exc:
+            # A bad param *value* (min_count=1, a negative threshold, an artifact combined
+            # with hyperparameters) is refused at construction, inside execute_run and
+            # before any sink runs. The guard cannot catch it — it reads declared
+            # capabilities without building adapters — so validate() legitimately passes and
+            # this is the first point the run is known to be impossible. That is a caller
+            # error, not a server fault: without this it left as a bare 500 and the adapter's
+            # own carefully worded message ("min_count must be >= 2") reached nobody. Mirrors
+            # how the evaluation router already maps construction failures.
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "issues": []},
+            ) from exc
         return _run_response(report)
 
     # The evaluation plane is opt-in and *absent* otherwise: no route to reach or probe in a

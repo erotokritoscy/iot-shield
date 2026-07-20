@@ -158,6 +158,31 @@ class TestRuns:
         assert response.status_code == 422
         assert "match spec.sources" in response.json()["detail"]["message"]
 
+    def test_a_bad_param_value_is_422_carrying_the_adapters_own_message(
+        self, control: ControlHarness
+    ) -> None:
+        """The guard reads declared capabilities without building adapters, so a bad param
+        *value* legitimately passes validation and is only refused at construction. That is
+        a caller error, not a server fault — it used to escape as a bare 500, and the
+        adapter's carefully worded reason reached nobody.
+        """
+        bad = spec(detectors=[{"name": "log_burst", "params": {"min_count": 1}}])
+        assert control.client.post("/runs/validate", json={"spec": bad}).json()["ok"] is True
+
+        response = control.client.post(
+            "/runs", json={"spec": bad, "inputs": [{"content": STUB_CSV}]}
+        )
+        assert response.status_code == 422
+        assert "min_count must be >= 2" in response.json()["detail"]["message"]
+
+    def test_a_bad_param_value_is_refused_before_anything_is_written(
+        self, control: ControlHarness
+    ) -> None:
+        bad = spec(detectors=[{"name": "log_burst", "params": {"min_count": 1}}])
+        control.client.post("/runs", json={"spec": bad, "inputs": [{"content": STUB_CSV}]})
+        with control.session_factory() as session:
+            assert repository.get_events(session) == []
+
     def test_incompatible_format_is_422_with_issues(self, control: ControlHarness) -> None:
         response = control.client.post(
             "/runs", json={"spec": spec(source_format="x"), "inputs": [{"content": STUB_CSV}]}
