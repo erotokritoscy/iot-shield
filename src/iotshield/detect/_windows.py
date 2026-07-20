@@ -172,11 +172,25 @@ def find_episodes(
 
     tally = aggregate()
     left = 0
+    previous_ts: datetime | None = None
     for right in range(len(items)):
         tally.add(items[right])
         # Hoisted: the right edge is invariant across the trailing-edge advance, and this
         # is the innermost loop of every volumetric detector.
         right_ts = timestamp(items[right])
+        # Unordered input does not degrade this walk, it inverts it: a backwards timestamp
+        # makes the trailing edge stop advancing, so the window grows without bound and
+        # every position qualifies — a detector that fires on everything. That is far worse
+        # than a crash, so refuse instead. One comparison per item against a value already
+        # in hand; `group_by_asset` guarantees the order, and this catches the caller that
+        # bypasses it.
+        if previous_ts is not None and right_ts < previous_ts:
+            raise ValueError(
+                f"find_episodes requires time-ordered items; item {right} goes backwards "
+                f"({right_ts.isoformat()} after {previous_ts.isoformat()}). "
+                f"Group events with detect._group.group_by_asset, which orders them."
+            )
+        previous_ts = right_ts
         while right_ts - timestamp(items[left]) > window:
             tally.remove(items[left])
             left += 1

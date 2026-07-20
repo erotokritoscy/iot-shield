@@ -186,11 +186,8 @@ class FlowBurstDetector:
             # (a foreign normalizer may emit FLOW events we cannot interpret).
             if record is not None and self._preset.keep(record):
                 flows.append(_Flow(event=event, record=record))
-        # The runner hands a detector its lane in (asset, time) order (ADR-0019), but the
-        # port promises a standalone caller nothing, so sort defensively — on already-ordered
-        # input Timsort makes this a single O(n) pass.
-        flows.sort(key=lambda flow: flow.event.timestamp)
-
+        # `flows` inherits its order from group_by_asset, which owns the time-ordering law
+        # for every adapter; filtering with `keep` preserves it.
         detections: list[DetectionResult] = []
         for episode in find_episodes(
             flows,

@@ -147,3 +147,23 @@ class TestDeterminism:
         assert [(e.start, e.end, e.peak) for e in first] == [
             (e.start, e.end, e.peak) for e in second
         ]
+
+
+class TestOrderIsRequired:
+    """Unordered input does not degrade the walk, it inverts it — so it must not be silent.
+
+    A backwards timestamp stops the trailing edge advancing, the window grows without bound,
+    and every position qualifies: a detector that fires on everything while passing the port
+    suite. `group_by_asset` guarantees the order; this is the guard for a caller that
+    bypasses it.
+    """
+
+    def test_backwards_timestamps_raise_rather_than_over_fire(self) -> None:
+        import pytest
+
+        backwards = [Ping(100), Ping(0), Ping(1), Ping(2)]
+        with pytest.raises(ValueError, match="time-ordered"):
+            episodes(backwards, threshold=2)
+
+    def test_equal_timestamps_are_not_treated_as_backwards(self) -> None:
+        assert episodes([Ping(0), Ping(0), Ping(0)], threshold=2)

@@ -203,3 +203,23 @@ class TestDefensiveness:
         # nothing, and a window walk on unordered input would be nonsense.
         events = [event(offset_s=i, peer=f"203.0.113.{i}") for i in range(25)]
         assert FlowBurstDetector(preset="fan_out").detect(list(reversed(events)))
+
+
+class TestOrderingLawIsInherited:
+    """The time-ordering law lives in group_by_asset now, not in each adapter (C2)."""
+
+    def test_unordered_input_is_still_judged_correctly(self) -> None:
+        # Previously each adapter sorted defensively; the one that forgot would silently
+        # fire on everything. The routing helper owns it, so this must hold with no
+        # per-adapter sort at all.
+        events = [event(offset_s=i, peer=f"203.0.113.{i}") for i in range(25)]
+        (detection,) = FlowBurstDetector(preset="fan_out").detect(list(reversed(events)))
+        assert detection.score == 25.0
+
+    def test_interleaved_assets_do_not_disorder_each_other(self) -> None:
+        a = [event(offset_s=i, peer=f"203.0.113.{i}", asset="10.0.0.7") for i in range(25)]
+        b = [event(offset_s=i, peer=f"198.51.100.{i}", asset="10.0.0.8") for i in range(25)]
+        interleaved = [e for pair in zip(a, b, strict=True) for e in pair]
+        detections = FlowBurstDetector(preset="fan_out").detect(interleaved)
+        assert sorted(d.asset_id for d in detections) == ["10.0.0.7", "10.0.0.8"]
+        assert all(d.score == 25.0 for d in detections)

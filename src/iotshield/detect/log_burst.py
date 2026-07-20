@@ -149,11 +149,8 @@ class LogBurstDetector:
         return detections
 
     def _detect_asset(self, asset_id: str, matched: list[NormalizedEvent]) -> list[DetectionResult]:
-        # The runner hands a detector its lane in (asset, time) order (ADR-0019), but the port
-        # promises a standalone caller nothing, so sort defensively — on the runner's
-        # already-ordered input Timsort makes this a single O(n) pass.
-        matched = sorted(matched, key=lambda event: event.timestamp)
-
+        # Time order is guaranteed by group_by_asset, which owns that routing law for every
+        # adapter — this used to be a per-adapter defensive sort.
         detections: list[DetectionResult] = []
         for burst in self._find_bursts(matched):
             span = matched[burst.start : burst.end + 1]
