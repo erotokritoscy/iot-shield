@@ -3,12 +3,16 @@ import pytest
 from iotshield.alert import AlertEngine
 from iotshield.contracts import Lane
 from iotshield.detect import Detector
+from iotshield.detect.team3.detector import Team3ZScoreDetector
+from iotshield.detect.team3.params import Team3Params
 from iotshield.normalize import Normalizer
 from iotshield.pipeline.registry import (
+    DETECTORS,
     build_alert_engine,
     build_detector,
     build_normalizer,
     build_sink,
+    detector_param_names,
     sink_requires_database,
 )
 from iotshield.sink import ResultSink, SinkResources
@@ -110,3 +114,64 @@ def test_postgres_sink_without_a_database_fails_and_names_it() -> None:
 def test_sink_requires_database_flags_only_db_sinks() -> None:
     assert sink_requires_database("postgres") is True
     assert sink_requires_database("file") is False
+
+
+def build_team3(params: dict) -> Team3ZScoreDetector:
+    """Build through the registry, narrowed — these assertions are about the adapter."""
+    detector = build_detector("team3_zscore", params)
+    assert isinstance(detector, Team3ZScoreDetector)
+    return detector
+
+
+class TestHyperparameterSurface:
+    """ADR-0022: the factory signature IS the adapter's tunable set, and it is reachable."""
+
+    def test_every_team3_hyperparameter_is_settable_from_config(self) -> None:
+        # The defect the ADR fixed: window/lags/fft/percentile/channels lived inside the
+        # artifact file, so no config could reach them and no benchmark could sweep them.
+        declared = set(Team3Params.model_fields)
+        assert declared <= detector_param_names("team3_zscore")
+
+    def test_an_artifact_supplies_both_weights_and_its_hyperparameters(self) -> None:
+        detector = build_team3({"artifact": "skab_zscore"})
+        assert detector.is_fitted is True
+        assert detector._params.window_size == 60
+
+    def test_no_artifact_yields_an_untrained_detector(self) -> None:
+        detector = build_team3({"window_size": 20, "lag_steps": [1, 3]})
+        assert detector.is_fitted is False
+        assert detector._params.window_size == 20
+
+    def test_overriding_an_artifacts_hyperparameter_is_refused_with_a_copyable_block(
+        self,
+    ) -> None:
+        # Refused because an artifact is atomic: its baseline is aligned to the features
+        # its own window produced. The message prints the settings so switching to a
+        # from-scratch fit is an edit, not a hunt through JSON.
+        with pytest.raises(ValueError) as caught:
+            build_detector("team3_zscore", {"artifact": "skab_zscore", "window_size": 20})
+        message = str(caught.value)
+        assert "cannot override ['window_size']" in message
+        assert "window_size: 60" in message and "lag_steps: [1, 5, 10]" in message
+
+    def test_a_matching_value_is_still_an_override(self) -> None:
+        # Value equality is deliberately NOT the test: "not given" is the only way to
+        # inherit, so the rule stays one sentence and never depends on what the file holds.
+        with pytest.raises(ValueError, match="cannot override"):
+            build_detector("team3_zscore", {"artifact": "skab_zscore", "window_size": 60})
+
+    def test_lag_steps_accept_yaml_lists_and_ui_text(self) -> None:
+        for value in ([1, 3], "1,3", "[1, 3]", "(1, 3)"):
+            assert build_team3({"window_size": 20, "lag_steps": value})._params.lag_steps == (1, 3)
+
+    def test_a_bad_hyperparameter_fails_at_construction_named(self) -> None:
+        with pytest.raises(ValueError, match=r"invalid params for detector 'team3_zscore'"):
+            build_detector("team3_zscore", {"window_size": 5, "lag_steps": [99]})
+
+    def test_rule_detectors_declare_no_learning_metadata(self) -> None:
+        # Both optional fields default to "not a learning adapter", so a rule-based
+        # detector says nothing and stays a first-class Detector.
+        for name in ("stub_threshold", "log_burst"):
+            assert DETECTORS[name].params_type is None
+            assert DETECTORS[name].artifact_param is None
+        assert DETECTORS["team3_zscore"].artifact_param == "artifact"

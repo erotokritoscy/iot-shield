@@ -13,7 +13,10 @@ an operator's triage queue (ADR-0021 D1).
 """
 
 from collections.abc import Sequence
+from typing import Any
 
+from iotshield.contracts import NormalizedEvent
+from iotshield.detect._fitted import is_fitted
 from iotshield.eval.corpus import Case, Corpus
 from iotshield.eval.fit import FitProtocol, prepare_detector
 from iotshield.eval.report import (
@@ -25,6 +28,7 @@ from iotshield.eval.report import (
 )
 from iotshield.eval.score import score_alerts, score_detections
 from iotshield.pipeline import (
+    NormalizedInputs,
     PipelineSpec,
     build_detectors,
     compute_result,
@@ -67,21 +71,50 @@ def _timeline(case: Case, result: RunResult) -> CaseTimeline:
     )
 
 
-def evaluate_case(
-    spec: PipelineSpec, case: Case, *, protocol: FitProtocol, include_timeline: bool = False
-) -> CaseReport:
-    """Run one spec over one labelled case and score both levels."""
-    _check_alignment(spec, case)
-    texts = [given.text for given in case.inputs]
-    ingested = normalize_sources(spec, texts, origins=[case.name] * len(texts))
+def _ingest_key(spec: PipelineSpec, case: Case) -> tuple[Any, ...]:
+    """What makes two (spec, case) pairs ingest identically: the case and the source chain.
 
-    holdout_events = (
-        normalize_sources(
-            spec, [given.text for given in case.holdout], origins=[f"{case.name}:holdout"]
-        ).events
-        if case.holdout
-        else None
-    )
+    Detectors are excluded deliberately — they consume the ingest phase's output and never
+    influence it. That is exactly what makes the cache pay off for a sweep, whose specs
+    differ *only* in detector params (``eval/sweep.py:_applied`` rewrites nothing else).
+    """
+    return (case.name, tuple((s.normalizer, s.source_format) for s in spec.sources))
+
+
+def evaluate_case(
+    spec: PipelineSpec,
+    case: Case,
+    *,
+    protocol: FitProtocol,
+    include_timeline: bool = False,
+    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
+    | None = None,
+) -> CaseReport:
+    """Run one spec over one labelled case and score both levels.
+
+    ``ingest_cache`` is an optional memo shared across the specs of one ``evaluate`` call.
+    Ingest is pure and depends only on the source chain, so a sweep of N values would
+    otherwise re-parse and re-validate the whole corpus N times — measured at ~3 s per
+    extra value on SKAB's 163k rows, for byte-identical output. Splitting normalize from
+    compute (ADR-0021) is what makes lifting it out possible; this is that payoff.
+    """
+    _check_alignment(spec, case)
+    key = _ingest_key(spec, case)
+    cached = ingest_cache.get(key) if ingest_cache is not None else None
+    if cached is None:
+        texts = [given.text for given in case.inputs]
+        ingested = normalize_sources(spec, texts, origins=[case.name] * len(texts))
+        holdout_events = (
+            normalize_sources(
+                spec, [given.text for given in case.holdout], origins=[f"{case.name}:holdout"]
+            ).events
+            if case.holdout
+            else None
+        )
+        if ingest_cache is not None:
+            ingest_cache[key] = (ingested, holdout_events)
+    else:
+        ingested, holdout_events = cached
 
     outcomes = [
         prepare_detector(
@@ -93,7 +126,12 @@ def evaluate_case(
         )
         for detector in build_detectors(spec)
     ]
-    result = compute_result(spec, ingested, [o.detector for o in outcomes])
+    # An untrained detector the protocol could not fit is dropped rather than called: its
+    # detect() would raise NotFitted and take the whole benchmark down, when what the
+    # reader needs is this case scored honestly at zero with the reason attached
+    # (ADR-0022). Every other outcome judges, fitted or as-configured.
+    judging = [o.detector for o in outcomes if is_fitted(o.detector)]
+    result = compute_result(spec, ingested, judging)
 
     return CaseReport.build(
         case=case.name,
@@ -115,13 +153,21 @@ def evaluate_spec(
     label: str,
     protocol: FitProtocol,
     include_timeline: bool = False,
+    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
+    | None = None,
 ) -> SpecReport:
     return SpecReport(
         spec=label,
         detectors=[entry.name for entry in spec.detectors],
         alert_engine=spec.alert_engine.name,
         cases=[
-            evaluate_case(spec, case, protocol=protocol, include_timeline=include_timeline)
+            evaluate_case(
+                spec,
+                case,
+                protocol=protocol,
+                include_timeline=include_timeline,
+                ingest_cache=ingest_cache,
+            )
             for case in corpus.cases
         ],
     )
@@ -134,7 +180,14 @@ def evaluate(
     protocol: FitProtocol = FitProtocol.NONE,
     include_timeline: bool = False,
 ) -> EvaluationReport:
-    """Benchmark every spec over every case in the corpus, head to head."""
+    """Benchmark every spec over every case in the corpus, head to head.
+
+    Ingest is memoized across the specs of one call: they typically read the same corpus
+    through the same normalizer chain, and a sweep guarantees it. Scoped to the call rather
+    than module-level so nothing outlives the benchmark that asked for it — a corpus's
+    events are large, and a process-wide cache would pin every corpus ever benchmarked.
+    """
+    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]] = {}
     return EvaluationReport(
         corpus=corpus.name,
         corpus_description=corpus.description,
@@ -143,7 +196,12 @@ def evaluate(
         incidents=corpus.incidents,
         specs=[
             evaluate_spec(
-                spec, corpus, label=label, protocol=protocol, include_timeline=include_timeline
+                spec,
+                corpus,
+                label=label,
+                protocol=protocol,
+                include_timeline=include_timeline,
+                ingest_cache=ingest_cache,
             )
             for label, spec in specs
         ],

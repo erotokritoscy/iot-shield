@@ -194,8 +194,23 @@ _SUMMARY_COLUMNS = (
 )
 
 
+_SPEC_COLUMN_MIN = 21
+_SPEC_COLUMN_MAX = 43
+"""Bounds on the spec-name column.
+
+A fixed 22 was fine while labels were file stems; a sweep generates
+``team3_scratch[window_size=120]``, and a table where every swept row truncates to the
+same prefix hides the one thing the sweep varied. Sized to the longest label present so
+the common case stays narrow, capped so a pathological label cannot wrap the table.
+"""
+
+
 def _summary_table(specs: list[SpecReport]) -> list[str]:
-    heading = f"{'spec':<22}{'detectors':<28}" + "".join(
+    # `cell` is the widest label shown; the column is one wider so there is always a space
+    # before `detectors`, exactly as the fixed-width version had.
+    longest = max((len(spec.spec) for spec in specs), default=0)
+    cell = min(max(longest, _SPEC_COLUMN_MIN), _SPEC_COLUMN_MAX)
+    heading = f"{'spec':<{cell + 1}}{'detectors':<28}" + "".join(
         f"{column.heading:>{column.width}}" for column in _SUMMARY_COLUMNS
     )
     rows = []
@@ -205,7 +220,9 @@ def _summary_table(specs: list[SpecReport]) -> list[str]:
             _cell(summary[column.key], column.width, column.places) for column in _SUMMARY_COLUMNS
         )
         fitted = f"{spec.cases_fitted}/{len(spec.cases)}"
-        rows.append(f"{spec.spec[:21]:<22}{','.join(spec.detectors)[:27]:<28}{cells}{fitted:>8}")
+        rows.append(
+            f"{spec.spec[:cell]:<{cell + 1}}{','.join(spec.detectors)[:27]:<28}{cells}{fitted:>8}"
+        )
     return [f"{heading}{'fitted':>8}", *rows]
 
 

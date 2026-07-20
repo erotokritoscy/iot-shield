@@ -80,8 +80,34 @@ class Fittable(Protocol):
 
     ``fit`` **returns a new detector rather than mutating self**, so the port's determinism law
     survives (no hidden fitted state), and so one evaluation case's fit can never leak into
-    another's. Learn only the *baseline*: hyperparameters belong to the adapter's construction,
-    not to fitting.
+    another's.
+
+    Hyperparameters vs fitted state (LAW — ADR-0022)
+    ------------------------------------------------
+    Three rules, binding on every adapter that learns anything. They exist because a
+    serialized model carries a human's choices and a fitting procedure's output in one
+    file, and mixing them makes ``fit()`` inherit stale settings while config can never
+    reach them (``detect/_fitted.py`` has the full argument):
+
+    1. **Hyperparameters are exactly the adapter's construction parameters** — declared as
+       a frozen pydantic model on its ``AdapterSpec.params_type``, so config sets them,
+       ``/modules`` reports them, and the evaluation harness can sweep them.
+    2. **``fit(events)`` recomputes learned parameters and learned schema from ``events``,
+       using the hyperparameters the instance was CONSTRUCTED with.** It must never read a
+       hyperparameter out of its own previous fitted state.
+    3. **A persisted artifact is an atomic cached fit**, not a source of configuration.
+       It records its hyperparameters, but an explicit override that contradicts them is a
+       construction error (``_fitted.resolve_params``) — its weights are aligned to the
+       features those hyperparameters produced.
+
+    The suite enforces rule 2 behaviourally: build twice differing in one hyperparameter,
+    fit both on identical data, and the results must differ. An adapter that read its
+    hyperparameters from a stale artifact would produce two identical detectors.
+
+    An adapter constructed from hyperparameters alone has nothing to judge with. It
+    reports ``is_fitted = False`` (see ``_fitted.is_fitted``; absent means fitted) and
+    ``detect()`` raises ``NotFitted`` rather than returning an empty list, which would be
+    a *successful* "no anomalies" verdict — the dangerous wrong answer.
     """
 
     def fit(self, events: Sequence[NormalizedEvent]) -> Detector: ...

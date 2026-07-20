@@ -8,6 +8,7 @@ nothing told them whether it was any good. Both halves of the extensibility cont
 one command each (ADR-0021).
 
     uv run python -m iotshield.eval --corpus synthetic --spec config/bench/team3.yaml
+    uv run python -m iotshield.eval --fit-protocol prefix --sweep window_size=20,60,120
     uv run python -m iotshield.eval list
     uv run python -m iotshield.eval fetch skab
     uv run python -m iotshield.eval generate
@@ -19,6 +20,7 @@ researcher types most often is the shortest.
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from iotshield.eval.corpus import (
     CorpusUnavailable,
@@ -31,6 +33,7 @@ from iotshield.eval.fit import FitProtocol
 from iotshield.eval.generate import CORPUS_NAME
 from iotshield.eval.report import render
 from iotshield.eval.runner import evaluate
+from iotshield.eval.sweep import expand, values
 from iotshield.pipeline import load_spec
 
 _DEFAULT_SPEC = Path("config/bench/team3.yaml")
@@ -62,6 +65,16 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         choices=list(FitProtocol),
         default=FitProtocol.NONE,
         help="how detectors learn 'normal' before judging (default: none)",
+    )
+    parser.add_argument(
+        "--sweep",
+        action="append",
+        dest="sweeps",
+        metavar="NAME=V1,V2",
+        help=(
+            "vary a detector hyperparameter across values, expanding each spec into one "
+            "run per combination; repeat for a cross-product (ADR-0022)"
+        ),
     )
     parser.add_argument(
         "--with-timeline",
@@ -132,6 +145,17 @@ def _generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_sweeps(raw: list[str] | None) -> dict[str, list[Any]]:
+    """``["window_size=20,60"]`` -> ``{"window_size": [20, 60]}``."""
+    parsed: dict[str, list[Any]] = {}
+    for entry in raw or []:
+        name, separator, text = entry.partition("=")
+        if not separator or not name.strip():
+            raise ValueError(f"--sweep expects NAME=V1,V2 but got {entry!r}")
+        parsed[name.strip()] = values(text)
+    return parsed
+
+
 def _run(args: argparse.Namespace) -> int:
     try:
         corpus = load_corpus(args.corpus, args.corpus_path)
@@ -143,14 +167,21 @@ def _run(args: argparse.Namespace) -> int:
 
     paths = args.specs or [_DEFAULT_SPEC]
     try:
-        specs = [(path.stem, load_spec(path)) for path in paths]
+        specs = expand([(path.stem, load_spec(path)) for path in paths], _parse_sweeps(args.sweeps))
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    report = evaluate(
-        corpus, specs, protocol=args.fit_protocol, include_timeline=args.with_timeline
-    )
+    try:
+        report = evaluate(
+            corpus, specs, protocol=args.fit_protocol, include_timeline=args.with_timeline
+        )
+    except ValueError as exc:
+        # Reached by a spec/corpus mismatch and by a construction refusal — notably
+        # sweeping a hyperparameter of a spec that names an artifact (ADR-0022: an artifact
+        # is atomic). Both are usage errors with actionable messages, not tracebacks.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(render(report))
 
     if args.out is not None:

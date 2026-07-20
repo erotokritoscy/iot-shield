@@ -30,7 +30,13 @@ from iotshield.contracts import (
     discovered_asset,
 )
 from iotshield.detect import Detector
-from iotshield.pipeline.compat import CompatLevel, ensure_compatible
+from iotshield.detect._fitted import is_fitted
+from iotshield.pipeline.compat import (
+    CompatIssue,
+    CompatLevel,
+    IncompatiblePipelineError,
+    ensure_compatible,
+)
 from iotshield.pipeline.config import PipelineConfig, PipelineSpec, SinkConfig
 from iotshield.pipeline.registry import (
     build_alert_engine,
@@ -271,6 +277,35 @@ def compute_result(
     )
 
 
+def _ensure_fitted(spec: PipelineSpec, detectors: Sequence[Detector]) -> None:
+    """Refuse a run whose detectors have hyperparameters but no learned state (ADR-0022).
+
+    A detector built without a cached fit is an *untrained model* — legal to construct and
+    to fit, but with nothing to judge with. Caught before the judge phase and before any
+    sink runs, so the operator gets a config error naming the entry rather than a
+    ``NotFitted`` from deep inside detection. Not in the compatibility guard, whose
+    defining property is that it reasons about a spec *without constructing* adapters;
+    this is the first check that needs the built object.
+    """
+    unfitted = [
+        entry.name
+        for entry, detector in zip(spec.detectors, detectors, strict=True)
+        if not is_fitted(detector)
+    ]
+    if unfitted:
+        raise IncompatiblePipelineError(
+            [
+                CompatIssue(
+                    CompatLevel.ERROR,
+                    "detectors",
+                    f"detector {name!r} has no trained state; name its artifact in params, "
+                    "or fit it in the evaluation harness (a run never fits)",
+                )
+                for name in unfitted
+            ]
+        )
+
+
 def compute_run(
     spec: PipelineSpec,
     inputs: Sequence[str],
@@ -284,10 +319,18 @@ def compute_run(
     shape and never the deployment's ``database_url`` or ``sinks``, so taking the narrower
     type makes "compute cannot reach a store" a fact the type checker enforces rather than
     a convention (ADR-0018, ADR-0021). ``PipelineConfig`` still satisfies it by subclassing.
+
+    The *product's* entry point specifically, which is why the untrained-detector refusal
+    lives here: the evaluation harness composes the same two phases itself, with a fitting
+    step between them, and must be free to report an unfitted detector rather than die.
     """
-    return compute_result(
-        spec, normalize_sources(spec, inputs, origins=origins), build_detectors(spec)
-    )
+    # Ingest first, so the compatibility guard (which runs inside it) reports a broken
+    # chain before a construction error does — an unknown adapter name is a *structural*
+    # issue the API maps to 422, and it must not be pre-empted by this narrower check.
+    ingested = normalize_sources(spec, inputs, origins=origins)
+    detectors = build_detectors(spec)
+    _ensure_fitted(spec, detectors)
+    return compute_result(spec, ingested, detectors)
 
 
 def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:

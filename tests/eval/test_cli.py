@@ -51,6 +51,27 @@ class TestCli:
         assert payload["corpus"] == "synthetic"
         assert payload["specs"][0]["cases"]
 
+    def test_a_sweep_becomes_one_labelled_row_per_value(self, capsys) -> None:
+        # A sweep is not a new report shape: it is N ordinary rows in the head-to-head
+        # table, which is what lets the console, the JSON and the dashboard render it
+        # with no knowledge that a sweep happened (ADR-0022).
+        exit_code = main(
+            ["--corpus", "synthetic", "--spec", str(STUB_SPEC), "--sweep", "threshold=40,80"]
+        )
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "stub[threshold=40]" in out and "stub[threshold=80]" in out
+
+    def test_a_malformed_sweep_is_a_usage_error(self, capsys) -> None:
+        assert main(["--corpus", "synthetic", "--spec", str(STUB_SPEC), "--sweep", "oops"]) == 2
+        assert "NAME=V1,V2" in capsys.readouterr().err
+
+    def test_a_sweep_of_an_unknown_parameter_names_the_real_ones(self, capsys) -> None:
+        argv = ["--corpus", "synthetic", "--spec", str(STUB_SPEC), "--sweep", "windo_size=2"]
+        assert main(argv) == 2
+        err = capsys.readouterr().err
+        assert "windo_size" in err and "threshold" in err
+
     def test_an_unknown_corpus_skips_and_lists_what_exists(self, capsys) -> None:
         # A skip (exit 0), not a usage error: "that corpus is not here" is an ordinary
         # state, and the message names the ones that are.

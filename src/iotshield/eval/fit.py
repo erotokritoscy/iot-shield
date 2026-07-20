@@ -30,6 +30,7 @@ from enum import StrEnum
 
 from iotshield.contracts import NormalizedEvent
 from iotshield.detect import Detector, Fittable
+from iotshield.detect._fitted import is_fitted
 from iotshield.eval.truth import GroundTruth
 
 
@@ -65,6 +66,24 @@ def normal_prefix(events: Sequence[NormalizedEvent], truth: GroundTruth) -> list
     return [event for event in events if event.timestamp < first_start]
 
 
+def _unfitted(detector: Detector, why: str) -> FitOutcome:
+    """A detector that was not fitted, with the reason — and whether it can judge at all.
+
+    Two different situations reach here and must not read alike. A detector with a shipped
+    baseline is merely *as configured*: it judges, and the note is context. One built from
+    hyperparameters alone (no artifact — the ADR-0022 way to say "fit from scratch") has
+    nothing to judge with, and its row of zeros would otherwise read as "this detector is
+    bad" when the truth is that it never ran. So the note says which, and the caller reads
+    ``is_fitted`` to drop it rather than let ``detect()`` raise mid-benchmark.
+    """
+    tail = (
+        "; evaluated as configured"
+        if is_fitted(detector)
+        else ", and it has no trained state to fall back on; it judged nothing"
+    )
+    return FitOutcome(detector, note=f"{why}{tail}")
+
+
 def prepare_detector(
     detector: Detector,
     *,
@@ -82,18 +101,20 @@ def prepare_detector(
     says which ones were.
     """
     if protocol is FitProtocol.NONE:
-        return FitOutcome(detector)
+        if is_fitted(detector):
+            return FitOutcome(detector)
+        return _unfitted(detector, "fit protocol is 'none' so nothing was learned")
     if not isinstance(detector, Fittable):
-        return FitOutcome(detector, note="not fittable; evaluated as configured")
+        return _unfitted(detector, "not fittable")
 
     if protocol is FitProtocol.HOLDOUT:
         training = list(holdout_events or ())
         if not training:
-            return FitOutcome(detector, note="no holdout data; used as configured")
+            return _unfitted(detector, "no holdout data")
     else:
         training = normal_prefix(events, truth)
         if not training:
-            return FitOutcome(detector, note="no clean prefix; used as configured")
+            return _unfitted(detector, "no clean prefix")
 
     try:
         return FitOutcome(detector.fit(training), fitted=True)
@@ -103,4 +124,4 @@ def prepare_detector(
         # TypeError: ``runtime_checkable`` matches on method *name* only, so an adapter with
         # a sklearn-shaped ``fit(self, X, y)`` satisfies the isinstance check above and then
         # fails on call. Neither may kill a benchmark twelve cases in — degrade and report.
-        return FitOutcome(detector, note=f"fit refused ({exc}); used as configured")
+        return _unfitted(detector, f"fit refused ({exc})")

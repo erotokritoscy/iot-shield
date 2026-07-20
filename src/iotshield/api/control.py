@@ -19,7 +19,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -44,6 +44,7 @@ from iotshield.pipeline.registry import (
     SINKS,
     AdapterSpec,
     SinkSpec,
+    config_parameters,
 )
 from iotshield.pipeline.runner import RunReport, execute_run
 from iotshield.sink import SinkResources
@@ -141,28 +142,42 @@ class RunResponse(BaseModel):
 # --- Registry introspection (drives /modules) --------------------------------
 
 
-def _describe_params(factory: Any) -> list[ParamInfo]:
-    try:
-        signature = inspect.signature(factory)
-    except (TypeError, ValueError):
-        return []
+def _type_name(annotation: Any) -> str | None:
+    """The name a form should type a widget by, seeing through ``X | None``.
+
+    Learning adapters declare every hyperparameter as ``T | None`` — ``None`` is the
+    "not given" sentinel ADR-0022 needs — and a union has no ``__name__``, so without this
+    every one of them would reach a UI as an untyped text box.
+    """
+    if annotation is inspect.Parameter.empty:
+        return None
+    inner = [arg for arg in get_args(annotation) if arg is not type(None)]
+    if len(inner) == 1:
+        annotation = inner[0]
+    return getattr(annotation, "__name__", None)
+
+
+def describe_params(factory: Any, params_type: type[BaseModel] | None = None) -> list[ParamInfo]:
+    """Introspect a factory's configuration surface: the adapter's tunables.
+
+    ``params_type`` supplies the *real* defaults when given. A learning adapter's factory
+    params all default to ``None`` (the sentinel above), so the signature alone would tell
+    a UI nothing to prefill; its hyperparameter model holds the true values (ADR-0022).
+    Public because the evaluation API reports the same schema on ``/eval/detectors``, so
+    the Evaluate page can build a hyperparameter form from one call.
+    """
+    fields = params_type.model_fields if params_type is not None else {}
     params: list[ParamInfo] = []
-    for name, parameter in signature.parameters.items():
-        # 'resources' is the injected deployment bag (sink factories), not a config param.
-        if name in ("self", "resources") or parameter.kind in (
-            inspect.Parameter.VAR_KEYWORD,
-            inspect.Parameter.VAR_POSITIONAL,
-        ):
-            continue
-        annotation = parameter.annotation
-        empty = inspect.Parameter.empty
-        type_name = None if annotation is empty else getattr(annotation, "__name__", None)
-        has_default = parameter.default is not empty
+    for parameter in config_parameters(factory):
+        has_default = parameter.default is not inspect.Parameter.empty
+        default = parameter.default if has_default else None
+        if default is None and parameter.name in fields:
+            default = fields[parameter.name].get_default(call_default_factory=True)
         params.append(
             ParamInfo(
-                name=name,
-                type=type_name,
-                default=parameter.default if has_default else None,
+                name=parameter.name,
+                type=_type_name(parameter.annotation),
+                default=default,
                 required=not has_default,
             )
         )
@@ -178,12 +193,12 @@ def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:
         consumes=sorted(token.render() for token in capability.consumes),
         produces=sorted(token.render() for token in capability.produces),
         formats=sorted(formats_in(capability.consumes)),
-        params=_describe_params(spec.factory),
+        params=describe_params(spec.factory, spec.params_type),
     )
 
 
 def _sink_info(name: str, spec: SinkSpec) -> SinkInfo:
-    return SinkInfo(name=name, params=_describe_params(spec.factory))
+    return SinkInfo(name=name, params=describe_params(spec.factory))
 
 
 def _issue_info(issue: CompatIssue) -> IssueInfo:

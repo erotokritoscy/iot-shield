@@ -1,8 +1,11 @@
 """Offline training for the team3 z-score detector (ADR-0012 D2/D3).
 
-``train_artifact`` is a pure function (frame in, ``Team3Artifact`` out, no I/O) so
-the port suite can build a hermetic in-memory artifact on synthetic data. The
-``main`` CLI is the one-time producer of the committed artifact.
+``train_state`` is a pure function (frame + hyperparameters in, ``Team3State`` out, no
+I/O), so it serves both the ``main`` CLI that produces the committed artifact and the
+detector's own ``fit()`` — which is what guarantees the two can never disagree about what
+fitting means. It takes ``Team3Params`` rather than loose keyword arguments precisely
+because that object *is* the hyperparameter set (ADR-0022): there is one place to add a
+knob, and no way for a caller to pass half of them.
 
 Two empirical findings shaped the defaults (see ADR-0012 D3; details in the
 integration notes):
@@ -31,7 +34,8 @@ import pandas as pd
 
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import fit_robust_baseline, score_robust_z
-from iotshield.detect.team3.artifact import FftConfig, Team3Artifact
+from iotshield.detect.team3.artifact import Team3Artifact, Team3State
+from iotshield.detect.team3.params import Team3Params
 
 # SKAB's eight channels, in the order they appear in the dataset header.
 SKAB_CHANNELS: tuple[str, ...] = (
@@ -44,11 +48,9 @@ SKAB_CHANNELS: tuple[str, ...] = (
     "Voltage",
     "Volume Flow RateRMS",
 )
-_DEFAULT_LAGS = (1, 5, 10)
-_DEFAULT_WINDOW = 60
-_DEFAULT_PERCENTILE = 99.0
-_DEFAULT_MIN_MAD = 1e-6  # below this a feature's spread is at the MAD floor -> degenerate
-_METHOD = "team3_zscore"  # the detector name; also the registry key for this adapter
+# A numerical-stability floor, not a modelling choice — hence a constant here rather than
+# a hyperparameter: below it a feature's spread is at the MAD floor and carries no signal.
+_DEFAULT_MIN_MAD = 1e-6
 
 # Repo layout: src/iotshield/detect/team3/train.py -> parents[4] is the iotshield
 # repo root; the read-only reference tree sits beside it. We train on the normal
@@ -66,27 +68,29 @@ _DEFAULT_SOURCE = (
 _DEFAULT_OUT = Path(__file__).resolve().parent / "artifacts" / "skab_zscore.json"
 
 
-def train_artifact(
+def train_state(
     frame: pd.DataFrame,
+    params: Team3Params,
     *,
     channels: Sequence[str],
-    window_size: int = _DEFAULT_WINDOW,
-    lag_steps: Sequence[int] = _DEFAULT_LAGS,
-    fft_enabled: bool = False,
-    fft_include_dc: bool = False,
-    percentile: float = _DEFAULT_PERCENTILE,
+    provenance: str,
     min_mad: float = _DEFAULT_MIN_MAD,
-    provenance: str = "team3-telemetry-ad robust z-score (ADR-0012)",
-) -> Team3Artifact:
-    """Fit the robust baseline + threshold on ``frame`` (assumed all-normal)."""
+) -> Team3State:
+    """Fit the robust baseline + threshold on ``frame`` (assumed all-normal).
+
+    ``channels`` is passed separately rather than read from ``params.channels`` because it
+    may have been *learned* from the training data when the caller left it unpinned — the
+    resolution of "pinned or learned" belongs to the caller, and the answer lands in the
+    returned state as this fit's schema (ADR-0022).
+    """
     channels = list(channels)
     matrix = frame.reindex(columns=channels)
     features = build_multivariate_features(
         matrix,
-        window=window_size,
-        lag_steps=lag_steps,
-        fft_enabled=fft_enabled,
-        fft_include_dc=fft_include_dc,
+        window=params.window_size,
+        lag_steps=params.lag_steps,
+        fft_enabled=params.fft_enabled,
+        fft_include_dc=params.fft_include_dc,
     )
     if features.empty:
         raise ValueError("training frame produced no feature rows (too few samples for the window)")
@@ -103,20 +107,15 @@ def train_artifact(
     mad = baseline["mad"][keep]
 
     scores = score_robust_z(values[:, keep], {"median": median, "mad": mad})
-    threshold = float(np.percentile(scores, percentile))
+    threshold = float(np.percentile(scores, params.percentile))
 
-    return Team3Artifact(
-        method=_METHOD,
+    return Team3State(
         provenance=provenance,
-        window_size=window_size,
-        lag_steps=list(lag_steps),
-        fft=FftConfig(enabled=fft_enabled, include_dc=fft_include_dc),
         channels=channels,
         feature_columns=feature_columns,
         median=median.tolist(),
         mad=mad.tolist(),
         threshold=threshold,
-        percentile=percentile,
     )
 
 
@@ -143,27 +142,32 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train the team3 z-score artifact.")
     parser.add_argument("--source", type=Path, default=_DEFAULT_SOURCE, help="SKAB CSV")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT, help="artifact JSON output path")
-    parser.add_argument("--window", type=int, default=_DEFAULT_WINDOW)
-    parser.add_argument("--percentile", type=float, default=_DEFAULT_PERCENTILE)
+    parser.add_argument("--window", type=int, default=Team3Params().window_size)
+    parser.add_argument("--percentile", type=float, default=Team3Params().percentile)
     args = parser.parse_args(argv)
 
+    # The committed artifact pins SKAB's channel order explicitly: it ships as a
+    # ready-to-run model for that rig, so its schema is a choice, not a discovery.
+    params = Team3Params(
+        window_size=args.window, percentile=args.percentile, channels=SKAB_CHANNELS
+    )
     frame, prefix_rows, total_rows = load_normal_frame(args.source, SKAB_CHANNELS)
     source_label = f"{args.source.parent.name}/{args.source.name}"
-    artifact = train_artifact(
+    state = train_state(
         frame,
+        params,
         channels=SKAB_CHANNELS,
-        window_size=args.window,
-        percentile=args.percentile,
         provenance=(
             f"team3-telemetry-ad robust z-score; trained on the normal prefix "
             f"({prefix_rows}/{total_rows} rows) of SKAB {source_label} (ADR-0012)"
         ),
     )
+    artifact = Team3Artifact(params=params, state=state)
     args.out.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
     print(
-        f"wrote {args.out} — {len(artifact.feature_columns)} features "
-        f"(from {prefix_rows} normal rows), threshold={artifact.threshold:.4f}"
-        f" (p{artifact.percentile:g})"
+        f"wrote {args.out} — {len(state.feature_columns)} features "
+        f"(from {prefix_rows} normal rows), threshold={state.threshold:.4f}"
+        f" (p{params.percentile:g})"
     )
 
 

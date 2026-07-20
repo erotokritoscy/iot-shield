@@ -60,6 +60,10 @@ uv run python -m iotshield.eval --corpus synthetic --spec config/bench/stub.yaml
     --with-timeline --out reports/evaluation.json
 uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
     --spec config/bench/team3.yaml
+# Sweep a hyperparameter (ADR-0022): N labelled rows in the same head-to-head table.
+uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
+    --spec config/bench/team3_scratch.yaml --spec config/bench/stub.yaml \
+    --sweep window_size=20,60,120
 ```
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
@@ -122,6 +126,9 @@ same spike scores ~27/LOW on telemetry alone vs ~56/HIGH corroborated — ADR-00
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
+Its layout is schema v2 — `{params, state}`, the ADR-0022 split made visible in the file:
+`params` is what a human chose, `state` is what fitting computed (baseline, threshold, and
+the channel/feature schema it learned). A v1 file is rejected with instructions to regenerate.
 
 ## Layout
 
@@ -136,8 +143,9 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks, env-gated)
+  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps, env-gated)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
+                sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
@@ -165,6 +173,26 @@ learn "normal" from an asset's own clean history instead of measuring domain shi
 implementing it is not a defect — the harness reports "not fittable" and evaluates as
 configured. A detector that scores rows should form judgments with `detect/_runs.py:
 merge_runs`; see the port docstring for why the alert engine's `volume` factor depends on it.
+
+**Hyperparameters vs fitted state (ADR-0022, a LAW for any adapter that learns).**
+A detector's hyperparameters are *exactly* its registry factory's parameters — declared as
+a frozen pydantic model on `AdapterSpec.params_type`, so config sets them, `/modules`
+reports them, and the harness sweeps them. `fit()` recomputes learned parameters *and*
+learned schema from the data, using the hyperparameters it was **constructed** with; it may
+never read one out of its own previous fitted state. A persisted artifact is an **atomic**
+cached fit (its weights are aligned to the features its own hyperparameters produced), so
+`{artifact: x, window_size: 20}` is refused at construction with the artifact's settings
+printed as copy-pasteable YAML. Naming no artifact yields an *untrained* detector:
+`is_fitted` is False, `detect()` raises `NotFitted`, a **run refuses** it (`compute_run`,
+before judging and before any sink) and a **benchmark reports** it. The port suite enforces
+the law behaviourally — build twice differing in one hyperparameter, fit both on the same
+data, the results must differ. Adapters that learn nothing (`stub_threshold`, `log_burst`)
+declare neither field and are unaffected.
+
+`config/bench/team3.yaml` names an artifact (fixed hyperparameters, sweepable only across
+*detectors*); `config/bench/team3_scratch.yaml` names hyperparameters and no artifact, so it
+is the one to `--sweep` — and it requires `--fit-protocol prefix|holdout`, since an
+untrained model has nothing to judge with.
 
 ## Conventions
 

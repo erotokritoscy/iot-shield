@@ -7,6 +7,7 @@ chart is accompanied by a table/caption in the app, so nothing depends on
 color perception alone.
 """
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar, cast
 
@@ -163,6 +164,67 @@ def spec_scores(rows: list[dict]) -> alt.Chart | None:
         )
         .properties(height=alt.Step(26))
     )
+    return _recessive(chart)
+
+
+SWEEP_LABEL = re.compile(r"^(?P<base>.+)\[(?P<name>[^=\[\]]+)=(?P<value>[^,\[\]]+)\]$")
+"""Recognises the one label shape ``eval.sweep`` generates: ``team3[window_size=20]``.
+
+Parsing the label rather than threading sweep metadata through the report keeps the report
+a flat list of specs — which is what lets a sweep, a hand-written head-to-head, and a
+saved CLI report all render through the same path. A label that does not match is simply
+not part of a sweep, so the fallback is the ordinary bar chart.
+"""
+
+
+def sweep_curve(rows: list[dict]) -> alt.LayerChart | None:
+    """Event F1 against a swept hyperparameter — the shape of an experiment.
+
+    A bar chart of ``team3[window_size=20]``, ``…=60``, ``…=120`` is a bar chart of three
+    unrelated things; the reader has to decode the ordering out of the labels. A line over
+    a *quantitative* x-axis says the one thing the sweep was run to learn: whether the
+    parameter matters at all, and where it peaks. Falls back to ``None`` (caller draws the
+    bars) unless every scored row is a single-parameter sweep of one numeric value.
+    """
+    parsed: list[dict] = []
+    for row in _scored(rows):
+        match = SWEEP_LABEL.match(str(row["spec"]))
+        if match is None:
+            return None
+        try:
+            value = float(match["value"])
+        except ValueError:
+            return None  # a non-numeric sweep has no meaningful axis order
+        parsed.append(
+            {
+                "base": match["base"],
+                "name": match["name"],
+                "value": value,
+                "event_f1": row["event_f1"],
+            }
+        )
+    # One point is not a curve, and two different single-parameter sweeps in one report
+    # are two series — neither is a line over one axis.
+    if len(parsed) < 2 or len({(item["base"], item["name"]) for item in parsed}) != 1:
+        return None
+
+    frame = pd.DataFrame(parsed).sort_values("value")
+    axis_title = parsed[0]["name"]
+    base = alt.Chart(frame).encode(
+        x=alt.X("value:Q", title=axis_title),
+        y=alt.Y("event_f1:Q", title="event F1", scale=alt.Scale(domain=[0, 1])),
+        tooltip=[
+            alt.Tooltip("value:Q", title=axis_title),
+            alt.Tooltip("event_f1:Q", format=".3f"),
+        ],
+    )
+    chart = cast(
+        alt.LayerChart,
+        alt.layer(
+            base.mark_line(strokeWidth=2, color=SERIES),
+            base.mark_point(size=90, filled=True, color=SERIES, stroke="#fcfcfb", strokeWidth=2),
+        ),
+    ).properties(height=240)
     return _recessive(chart)
 
 

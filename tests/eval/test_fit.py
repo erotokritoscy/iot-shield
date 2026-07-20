@@ -6,15 +6,14 @@ died because one of several detectors was not fittable would be far less useful 
 that reports which ones were.
 """
 
-import numpy as np
-import pandas as pd
-
 from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.detect import Fittable, LogBurstDetector, StubThresholdDetector, Team3ZScoreDetector
-from iotshield.detect.team3.train import train_artifact
+from iotshield.detect._fitted import is_fitted
+from iotshield.detect.team3.params import Team3Params
 from iotshield.eval import prepare_detector
 from iotshield.eval.fit import FitProtocol, normal_prefix
 from tests.eval.conftest import at, truth_of
+from tests.team3_fixtures import make_detector
 
 
 def event(second: int, value: float = 10.0, asset: str = "pump-02") -> NormalizedEvent:
@@ -30,16 +29,12 @@ def event(second: int, value: float = 10.0, asset: str = "pump-02") -> Normalize
 
 
 def fittable_detector() -> Team3ZScoreDetector:
-    rng = np.random.default_rng(0)
-    artifact = train_artifact(
-        pd.DataFrame({"Pressure": rng.normal(10.0, 0.5, 300)}),
-        channels=["Pressure"],
-        window_size=3,
-        lag_steps=[1],
-        fft_enabled=False,
-        percentile=99.0,
-    )
-    return Team3ZScoreDetector(artifact)
+    return make_detector(["Pressure"], window=3)
+
+
+def untrained_detector() -> Team3ZScoreDetector:
+    """Hyperparameters, no cached fit — how a spec asks to fit from scratch (ADR-0022)."""
+    return Team3ZScoreDetector(Team3Params(window_size=3, lag_steps=(1,)))
 
 
 class TestNormalPrefix:
@@ -117,6 +112,44 @@ class TestOptionality:
         assert outcome.note is not None and "no holdout" in outcome.note
 
 
+class TestUntrained:
+    """A detector with hyperparameters and no cached fit (ADR-0022).
+
+    The harness must never crash on one and never silently score it as a bad detector:
+    both readings are wrong in opposite directions, so every path reports which it is.
+    """
+
+    def test_protocol_none_leaves_it_unable_to_judge_and_says_why(self) -> None:
+        outcome = prepare_detector(
+            untrained_detector(),
+            protocol=FitProtocol.NONE,
+            events=[event(i) for i in range(50)],
+            truth=truth_of([False] * 50),
+        )
+        assert is_fitted(outcome.detector) is False
+        assert outcome.note is not None and "judged nothing" in outcome.note
+
+    def test_a_prefix_fit_makes_it_able_to_judge(self) -> None:
+        outcome = prepare_detector(
+            untrained_detector(),
+            protocol=FitProtocol.PREFIX,
+            events=[event(i, value=10.0 + (i % 3) * 0.1) for i in range(80)],
+            truth=truth_of([False] * 80),
+        )
+        assert outcome.fitted is True and is_fitted(outcome.detector) is True
+
+    def test_a_configured_detector_can_always_judge(self) -> None:
+        # The distinction that matters: "not fitted" and "cannot judge" are different, and
+        # a shipped artifact under a failed protocol is still perfectly able to run.
+        outcome = prepare_detector(
+            fittable_detector(),
+            protocol=FitProtocol.PREFIX,
+            events=[event(i) for i in range(5)],
+            truth=truth_of([True] * 5),
+        )
+        assert outcome.fitted is False and is_fitted(outcome.detector) is True
+
+
 class TestFitting:
     def test_a_successful_fit_returns_a_new_detector(self) -> None:
         original = fittable_detector()
@@ -134,9 +167,10 @@ class TestFitting:
 
     def test_fitting_leaves_the_original_untouched(self) -> None:
         original = fittable_detector()
-        before = original._artifact.threshold
+        assert original._state is not None
+        before = original._state.threshold
         events = [event(i, value=10.0 + (i % 5) * 2.0) for i in range(80)]
         prepare_detector(
             original, protocol=FitProtocol.PREFIX, events=events, truth=truth_of([False] * 80)
         )
-        assert original._artifact.threshold == before
+        assert original._state.threshold == before
