@@ -193,6 +193,25 @@ class TestRejects:
         result = run(csv(row))
         assert "timezone-aware" in result.malformed[0].error
 
+    def test_an_unreadable_counter_is_quarantined_not_fatal(self) -> None:
+        """A bad *record* is data, not an exception (the port's first law).
+
+        float("1e400") is inf and int(inf) raises OverflowError, not ValueError — uncaught,
+        one corrupt counter escaped normalize() and aborted the whole multi-source run.
+        """
+        row = "2026-07-07T12:00:00+00:00,10.0.0.7,1,203.0.113.9,23,tcp,0,1e400,0,1,0,S0"
+        result = run(csv(row))
+        assert result.events == []
+        assert "not a usable number" in result.malformed[0].error
+
+    def test_a_truncated_separator_directive_does_not_abort_the_run(self) -> None:
+        # A hand-edited or torn conn.log: "\\" is an incomplete escape and raised
+        # UnicodeDecodeError out of normalize(). The dialect's declared delimiter stands.
+        text = "#separator \\" + chr(10) + ZEEK_HEADER.split(chr(10), 1)[1]
+        row = "1783425600.0	10.0.0.7	1	203.0.113.9	23	tcp	-	0	0	0	S0	1	0"
+        result = run(text + row + chr(10), "zeek-conn")
+        assert len(result.events) == 1
+
     def test_an_unknown_dialect_is_a_config_error_not_a_data_error(self) -> None:
         with pytest.raises(ValueError, match="unsupported source_format"):
             FlowNormalizer().normalize("anything", source_format="netflow-v9", origin=ORIGIN)

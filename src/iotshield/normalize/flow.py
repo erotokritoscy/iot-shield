@@ -238,8 +238,12 @@ def _number(reader: _Reader, parts: Sequence[str], name: str, *, default: int = 
     try:
         # Some exporters write counters as floats ("1024.0"); int(float(x)) accepts both.
         return int(float(text))
-    except ValueError as exc:
-        raise FlowParseError(f"{name} is not a number: {text!r}") from exc
+    except (ValueError, OverflowError) as exc:
+        # OverflowError, not just ValueError: float("1e400") is inf, and int(inf) raises
+        # OverflowError. Uncaught, one corrupt counter escaped normalize() and killed the
+        # whole multi-source run — the port's first law is that a bad *record* is data, not
+        # an exception, so it is quarantined like any other unreadable field.
+        raise FlowParseError(f"{name} is not a usable number: {text!r}") from exc
 
 
 def _port(reader: _Reader, parts: Sequence[str], name: str) -> int | None:
@@ -351,8 +355,10 @@ class FlowNormalizer:
                 # `#fields` names the columns; the rest is metadata we must not read as data.
                 if line.startswith("#separator"):
                     _, _, value = line.partition(" ")
-                    if value.strip():
-                        delimiter = _unescape(value)
+                    # An unreadable or empty separator keeps the dialect's declared
+                    # delimiter rather than adopting "" — which str.split() rejects.
+                    if value.strip() and (separator := _unescape(value)):
+                        delimiter = separator
                 elif dialect.fields_directive and line.startswith(dialect.fields_directive):
                     if error := reader.consume_header(line.split(delimiter)[1:]):
                         reject(line, error)
@@ -381,4 +387,16 @@ class FlowNormalizer:
 
 
 def _unescape(value: str) -> str:
-    return value.strip().encode().decode("unicode_escape")
+    """Decode a directive's escaped value (Zeek writes its separator as ``\\x09``).
+
+    A truncated or hand-edited escape (``\\``, ``\\x``, ``\\u``) raises UnicodeDecodeError,
+    which escaped ``normalize()`` and killed the run. A directive we cannot read is a
+    malformed *header*, not a fatal condition: fall back to the dialect's declared
+    delimiter, which is right for every well-formed file of that dialect anyway.
+    """
+    try:
+        unescaped = value.strip().encode().decode("unicode_escape")
+    except UnicodeDecodeError:
+        return ""
+    # An empty delimiter would make str.split() raise on every subsequent row.
+    return unescaped
