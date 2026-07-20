@@ -27,7 +27,6 @@ def event(
     bytes_out: int = 44,
     direction: Direction = Direction.OUTBOUND,
     asset: str = ASSET,
-    lane: Lane = Lane.FLOW,
     with_record: bool = True,
 ) -> NormalizedEvent:
     record = FlowRecord(
@@ -41,7 +40,7 @@ def event(
     return NormalizedEvent(
         timestamp=T0 + timedelta(seconds=offset_s),
         asset_id=asset,
-        source_type=lane,
+        source_type=Lane.FLOW,
         source_format="flow-csv",
         metric="bytes_out",
         value=float(bytes_out),

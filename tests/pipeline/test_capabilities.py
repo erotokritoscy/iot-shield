@@ -5,13 +5,13 @@ adapter ships undeclared, plus behavioural cross-checks that a declared shape ag
 with what the built adapter actually does — so the guard never reads a stale lie.
 """
 
+import sys
+
 import pytest
 
-from iotshield.api.control import _describe_params
+from iotshield.api.control import describe_params
 from iotshield.capabilities import Capability, formats_in, lanes_in
 from iotshield.contracts import Lane
-from iotshield.detect.flow_burst import PRESETS as _FLOW_PRESETS
-from iotshield.detect.log_burst import PRESETS as _LOG_PRESETS
 from iotshield.normalize import FLOW_DIALECTS, STUB_SOURCE_FORMAT, SYSLOG_SOURCE_FORMAT
 from iotshield.pipeline.registry import (
     ALERT_ENGINES,
@@ -101,7 +101,7 @@ def test_team3_detector_declared_lane_matches_built_instance() -> None:
 
 
 def _choices_of(spec: AdapterSpec, param: str) -> list[str] | None:
-    return next(p.choices for p in _describe_params(spec.factory) if p.name == param)
+    return next(p.choices for p in describe_params(spec.factory) if p.name == param)
 
 
 def test_declared_lane_choices_match_the_lane_vocabulary() -> None:
@@ -110,18 +110,32 @@ def test_declared_lane_choices_match_the_lane_vocabulary() -> None:
     assert _choices_of(DETECTORS["stub_threshold"], "lane") == [lane.value for lane in Lane]
 
 
-def test_declared_preset_choices_match_the_shipped_presets() -> None:
-    # Same guard on the other side: a new PRESETS entry the Literal does not list would be
-    # unreachable from the UI even though the adapter supports it.
-    assert set(_choices_of(DETECTORS["log_burst"], "preset") or []) == set(_LOG_PRESETS)
-    assert set(_choices_of(DETECTORS["flow_burst"], "preset") or []) == set(_FLOW_PRESETS)
+def test_every_preset_adapter_declares_its_presets_as_choices() -> None:
+    """Same guard on the other side: a new PRESETS entry the Literal does not list would be
+    unreachable from the UI even though the adapter supports it.
+
+    Discovered from the registry rather than named by hand, so the law covers the *next*
+    preset adapter automatically — naming them would only guarantee it for the ones
+    somebody remembered to add here.
+    """
+    checked: list[str] = []
+    for name in DETECTORS:
+        module = sys.modules[type(build_detector(name, {})).__module__]
+        presets = getattr(module, "PRESETS", None)
+        if presets is None:
+            continue  # an adapter with no preset vocabulary has nothing to mirror
+        assert set(_choices_of(DETECTORS[name], "preset") or []) == set(presets), name
+        checked.append(name)
+    # Guard the guard: if the discovery above ever stops finding anything, this test would
+    # pass vacuously while asserting nothing at all.
+    assert set(checked) == {"log_burst", "flow_burst"}
 
 
 def test_flow_burst_declared_lane_matches_built_instance() -> None:
     # Fixed-lane detector: the declaration must hold for every preset, since a preset
     # changes *what* it measures but never *which* lane it reads.
     assert lanes_in(DETECTORS["flow_burst"].capability({}).consumes) == {Lane.FLOW}
-    for preset in _FLOW_PRESETS:
+    for preset in ("fan_out", "port_scan", "exfiltration"):
         assert build_detector("flow_burst", {"preset": preset}).lane == Lane.FLOW
 
 

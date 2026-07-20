@@ -5,6 +5,7 @@ one place a flow crosses an unchecked ``dict[str, Any]``, so a field that stops 
 the trip is exactly the silent-emptiness bug this module exists to make impossible.
 """
 
+from dataclasses import fields
 from datetime import UTC, datetime
 
 import pytest
@@ -17,6 +18,7 @@ from iotshield.flow import (
     FlowFieldError,
     FlowOrientationError,
     FlowRecord,
+    Locality,
     is_local,
     orient,
     parse_networks,
@@ -68,6 +70,35 @@ class TestNetworks:
     def test_a_bad_cidr_names_itself(self) -> None:
         with pytest.raises(ValueError, match="invalid network 'nope/8'"):
             parse_networks(["10.0.0.0/8", "nope/8"])
+
+
+class TestLocality:
+    """The memo in front of is_local — two calls per flow row make it the hot path."""
+
+    def test_it_answers_the_same_as_the_uncached_test(self) -> None:
+        local = Locality()
+        for address in ("10.0.0.7", "8.8.8.8", "fd00::1", "not-an-ip", ""):
+            assert local(address) == is_local(address, DEFAULT_NETWORKS)
+
+    def test_a_repeated_address_is_answered_from_the_memo(self) -> None:
+        local = Locality()
+        assert local("10.0.0.7") is True
+        assert local("10.0.0.7") is True  # second call must not disagree with the first
+
+    def test_a_cached_false_is_not_mistaken_for_a_cache_miss(self) -> None:
+        # The memo stores bools, so `is None` is the only test that distinguishes
+        # "not cached" from "cached as False" — `if not cached` would re-compute forever.
+        local = Locality()
+        assert local("8.8.8.8") is False
+        assert local("8.8.8.8") is False
+
+    def test_the_memo_is_bounded(self) -> None:
+        # A capture can carry millions of distinct peers; an unbounded memo would trade
+        # CPU for a memory leak.
+        local = Locality()
+        for octet in range(Locality._CAP + 50):
+            local(f"203.0.113.{octet % 256}.{octet}")
+        assert len(local._seen) <= Locality._CAP
 
 
 class TestOrientation:
@@ -126,9 +157,9 @@ class TestOrientation:
             orient(src_ip="8.8.8.8", dst_ip="1.1.1.1", protocol="udp")
 
     def test_home_networks_are_configurable(self) -> None:
-        public_fleet = parse_networks(["203.0.113.0/24"])
+        public_fleet = Locality(parse_networks(["203.0.113.0/24"]))
         record = orient(
-            src_ip="8.8.8.8", dst_ip="203.0.113.9", protocol="tcp", home_networks=public_fleet
+            src_ip="8.8.8.8", dst_ip="203.0.113.9", protocol="tcp", locality=public_fleet
         )
         assert record.asset_ip == "203.0.113.9"
         assert record.direction is Direction.INBOUND
@@ -158,6 +189,16 @@ class TestMetadataRoundTrip:
 
     def test_round_trip_preserves_every_field(self) -> None:
         assert FlowRecord.from_metadata(self.RECORD.to_metadata()) == self.RECORD
+
+    def test_to_metadata_writes_every_field_of_the_record(self) -> None:
+        """Drift guard for the hand-written writer.
+
+        ``to_metadata`` lists its keys explicitly (it runs once per flow row, so it is
+        deliberately not ``asdict``). The round-trip test above cannot catch a field added
+        to ``FlowRecord`` but forgotten here — both sides would simply default it — so the
+        completeness check is made directly.
+        """
+        assert set(self.RECORD.to_metadata()) == {f.name for f in fields(FlowRecord)}
 
     def test_round_trip_survives_json(self) -> None:
         # Metadata is stored as JSON/JSONB, so the trip through a serializer is the real one.

@@ -5,7 +5,9 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 """
 
 import json
+import math
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +23,7 @@ from iotshield.dashboard.charts import (
     case_variance,
     severity_bar,
     spec_scores,
+    sweep_curve,
     telemetry_timeline,
 )
 from iotshield.dashboard.client import ApiClient
@@ -28,6 +31,7 @@ from iotshield.dashboard.control_client import ControlClient
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV_FORMAT
 
 if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see load_eval_report
+    from iotshield.api.evaluation import CorporaResponse, DetectorSummary
     from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
@@ -222,37 +226,47 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
             default = str(param.default) if param.default is not None else None
             index = param.choices.index(default) if default in param.choices else 0
             values[param.name] = st.selectbox(param.name, param.choices, index=index, key=key)
-        elif param.type == "float":
-            values[param.name] = st.number_input(
-                param.name, value=float(param.default or 0.0), key=key
-            )
-        elif param.type == "int":
-            values[param.name] = st.number_input(
-                param.name, value=int(param.default or 0), step=1, key=key
-            )
+        elif param.type in ("float", "int"):
+            # A numeric whose own default is None is *optional*: it must render empty and
+            # be omitted when untouched, exactly as the free-text branch below does. Coercing
+            # None to 0 instead would silently submit a value the adapter never offered —
+            # and for a param whose real default is preset-owned (flow_burst's window and
+            # threshold, ADR-0024 D3) that fabricated 0 is refused at construction, turning
+            # "pick a detector and press run" into a failed run.
+            whole = param.type == "int"
+            # Keep value and step the same Python type — Streamlit infers the widget's mode
+            # from them and rejects a mix.
+            default = None if param.default is None else (int if whole else float)(param.default)
+            number = st.number_input(param.name, value=default, step=1 if whole else None, key=key)
+            if number is not None:
+                values[param.name] = int(number) if whole else float(number)
+        elif param.type == "bool":
+            values[param.name] = st.checkbox(param.name, value=bool(param.default), key=key)
         else:
             default = "" if param.default is None else str(param.default)
-            values[param.name] = st.text_input(param.name, value=default, key=key)
+            text = st.text_input(param.name, value=default, key=key)
+            # A blank box on a param whose own default is None means "leave it unset" —
+            # sending "" instead would be an explicit empty value, which for an optional
+            # param (an artifact id, a channel pin) is a different and wrong request.
+            if text or param.default is not None:
+                values[param.name] = text
     return values
 
 
-def _default_normalizer_index(names: list[str], normalizers: dict[str, Any]) -> int:
-    """Open the page on the reference telemetry normalizer, not on an alphabetical accident.
+def _first_index(names: list[str], fits: Callable[[str], bool]) -> int:
+    """Preselect the first name that fits, else fall back to the first entry.
 
-    The detector picker learned this lesson in ADR-0020 ("whichever name sorts first"
-    silently became wrong when a second lane arrived); the source picker had the same latent
-    bug and ADR-0023 tripped it — ``flow`` sorts before ``stub``, so registering it would
-    have opened every fresh session on a flow chain fed telemetry CSV. Identified by the
-    format the reference normalizer accepts rather than by its name, so this follows the
-    registry instead of restating it.
+    Both pickers need this and neither may preselect "whichever name sorts first": that was
+    silently wrong for detectors the moment a second lane arrived (ADR-0020), and it became
+    wrong for sources when ``flow`` was registered, since it sorts before ``stub`` — a fresh
+    session would have opened on a flow chain fed telemetry CSV. Falling back to 0 rather
+    than to nothing is deliberate: the guard reports a mismatched chain, which is more
+    useful than a row that contributes no adapter at all.
     """
-    for index, name in enumerate(names):
-        if STUB_CSV_FORMAT in normalizers[name].formats:
-            return index
-    return 0
+    return next((index for index, name in enumerate(names) if fits(name)), 0)
 
 
-def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, str], str, str]:
+def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
     """One input source: normalizer + format picker, and its content (upload or paste).
 
     Returns the source descriptor (what the guard/spec need), the raw content, and a
@@ -264,7 +278,9 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
     normalizer_name = st.selectbox(
         "Normalizer",
         names,
-        index=_default_normalizer_index(names, normalizers),
+        # By the format the reference normalizer accepts, not by its name — follows the
+        # registry rather than restating it.
+        index=_first_index(names, lambda name: STUB_CSV_FORMAT in normalizers[name].formats),
         key=f"src_{index}_norm",
     )
     formats = normalizers[normalizer_name].formats
@@ -273,6 +289,8 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
         if len(formats) > 1
         else (formats[0] if formats else "")
     )
+    with st.expander(f"{normalizer_name} parameters"):
+        params = _param_widgets(f"src_{index}", normalizers[normalizer_name].params)
     uploaded = st.file_uploader("Upload a file", key=f"src_{index}_file")
     pasted = st.text_area(
         "…or paste records",
@@ -285,28 +303,11 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
         origin = uploaded.name
     else:
         content, origin = pasted, f"source-{index + 1}"
-    return {"normalizer": normalizer_name, "source_format": source_format}, content, origin
-
-
-def _default_detector_index(names: list[str], detectors: dict[str, Any], produced: set[str]) -> int:
-    """Which detector to preselect: one the page's sources can actually feed.
-
-    Registry-driven rather than hardcoded, which is the whole point: "whichever name sorts
-    first" silently became wrong the moment the registry held a detector for a second lane
-    (ADR-0020), preselecting a *log* detector beside the default telemetry source — a chain
-    the guard immediately warns about. Streamlit honours ``index=`` only on a widget's
-    first render, so this reads the sources at their defaults too; switching the source
-    afterwards leaves the operator's own selection alone (and the guard speaks up if it no
-    longer fits). Falling back to 0 when nothing fits is deliberate — the guard will say so,
-    which beats an empty row that silently contributes no detector at all.
-
-    Matching rendered tokens is safe only because normalizers produce lane tokens and
-    detectors consume them; the typed version of this joint is ``compat.lanes_in``. If the
-    UI ever needs another axis, decode lanes server-side beside ``ModuleInfo.formats``
-    rather than growing a string scheme here.
-    """
-    fitting = [name for name in names if set(detectors[name].consumes) & produced]
-    return names.index(fitting[0]) if fitting else 0
+    return (
+        {"normalizer": normalizer_name, "source_format": source_format, "params": params},
+        content,
+        origin,
+    )
 
 
 def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str]) -> dict[str, Any]:
@@ -327,7 +328,17 @@ def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str])
     name = st.selectbox(
         f"Detector {index + 1}",
         names,
-        index=_default_detector_index(names, detectors, produced) if index == 0 else 0,
+        # Preselect a detector the page's sources can actually feed. Streamlit honours
+        # `index=` only on a widget's first render, so this reads the sources at their
+        # defaults; switching the source afterwards leaves the operator's choice alone (and
+        # the guard speaks up if it no longer fits). Matching rendered tokens is safe only
+        # because normalizers produce lane tokens and detectors consume them — the typed
+        # version of this joint is `compat.lanes_in`.
+        index=(
+            _first_index(names, lambda n: bool(set(detectors[n].consumes) & produced))
+            if index == 0
+            else 0
+        ),
         key=f"det_{index}_name",
     )
     with st.expander(f"{name} parameters"):
@@ -365,7 +376,7 @@ def compose_page(client: ControlClient) -> None:
             "How many input sources?", min_value=1, max_value=10, value=1, step=1, key="compose_n"
         )
     )
-    sources: list[dict[str, str]] = []
+    sources: list[dict[str, Any]] = []
     inputs: list[dict[str, str]] = []
     for index in range(count):
         descriptor, content, origin = _source_widgets(index, normalizers)
@@ -500,7 +511,7 @@ PROTOCOL_HELP = {
 }
 
 
-def _bench_spec(detector: str, engine: str) -> dict[str, Any]:
+def _bench_spec(detector: str, params: dict[str, Any], engine: str) -> dict[str, Any]:
     """One spec per detector — because several detectors in ONE spec run *together*.
 
     The researcher's mental model is "compare these detectors", but head-to-head comparison
@@ -509,12 +520,138 @@ def _bench_spec(detector: str, engine: str) -> dict[str, Any]:
     """
     return {
         "sources": [{"normalizer": "stub", "source_format": STUB_CSV_FORMAT}],
-        "detectors": [{"name": detector}],
+        "detectors": [{"name": detector, "params": params}],
         "alert_engine": {"name": engine},
     }
 
 
 _EVAL_RUN_KEY = "eval_latched_run"
+
+# Modes for a detector that can load a cached fit (ADR-0022). Two exclusive choices rather
+# than one form, because an artifact is atomic: its weights are aligned to the features its
+# own hyperparameters produced, so editing one knob while keeping the weights is refused at
+# construction. Offering the modes separately means the UI never builds that request.
+_TRAINED = "Use trained weights"
+_SCRATCH = "Fit from scratch with my hyperparameters"
+
+_DEFAULT_ARTIFACT = {"team3_zscore": "skab_zscore"}
+"""Which artifact to prefill per detector, so the page is runnable on arrival.
+
+A UI convenience, not a contract: the *factory* default is deliberately ``None`` (no
+artifact means untrained, ADR-0022), so there is nothing on the wire to prefill from. A
+blank box is still a legal state — it is reported as a blocker rather than silently
+building an untrained detector. This table disappears the day ``/eval/detectors``
+enumerates each adapter's shipped artifacts, which is the real fix and is why it is
+listed beside ``_bench_spec``'s hardcoded normalizer as a known deferral.
+"""
+
+
+def _sweep_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, list[Any]]:
+    """Pick one numeric hyperparameter and the values to vary it across.
+
+    One parameter, not many: a 2-D sweep is a surface, and a head-to-head table of 24 rows
+    is not how anyone reads one. The server cross-products anyway (the CLI can sweep two),
+    so this is a UI judgment about legibility, not a limit on the mechanism.
+    """
+    # Deferred so the eval plane stays deletable; shared so the dashboard and the CLI
+    # cannot disagree about whitespace, empty items or value types.
+    from iotshield.eval.sweep import values as parse_values
+
+    numeric = [param.name for param in params if param.type in ("int", "float")]
+    if not numeric:
+        return {}
+    chosen = st.selectbox("Sweep a hyperparameter", ["(no sweep)", *numeric], key=f"{prefix}_sw")
+    if chosen == "(no sweep)":
+        return {}
+    default = next((p.default for p in params if p.name == chosen), None)
+    raw = st.text_input(
+        f"{chosen} values (comma-separated)", value=str(default or ""), key=f"{prefix}_swv"
+    )
+    swept = parse_values(raw)
+    if not swept:
+        return {}
+    st.caption(f"-> {len(swept)} run(s), one per value, compared head to head")
+    return {chosen: swept}
+
+
+def _eval_catalogue() -> tuple["CorporaResponse", list["DetectorSummary"]]:
+    """The Evaluate page's two catalogue calls.
+
+    Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale
+    catalogue after the Pipeline API goes away, defeating the saved-report fallback below
+    — which is the page's whole degradation story. The server builds this response once
+    (``api/evaluation.py``), so the per-rerun cost is two local round-trips against a
+    precomputed payload, not repeated introspection.
+    """
+    client = get_control_client()
+    return client.corpora(), client.eval_detectors()
+
+
+def _run_count(sweep: dict[str, list[Any]]) -> int:
+    """How many benchmarks one detector's plan costs: one per swept value, else one."""
+    return math.prod(len(values) for values in sweep.values()) if sweep else 1
+
+
+def _detector_plan(summary: "DetectorSummary", protocol: str) -> tuple[dict[str, Any], str | None]:
+    """One detector's benchmark configuration, plus anything blocking the run.
+
+    Renders the ADR-0022 split as the page's central choice. A detector with no cached-fit
+    param (a rule, like ``stub_threshold``) shows only its knobs; one that has an artifact
+    shows the two modes, and picking "from scratch" makes the fit protocol load-bearing —
+    which the returned problem says out loud, because an untrained model under protocol
+    ``none`` scores a row of zeros that reads like a bad detector rather than a skipped one.
+
+    The blocker rides beside the entry rather than inside it: the entry is serialized whole
+    as the run's cache key, and a UI-only field in there would make an error message part
+    of the identity of a benchmark.
+    """
+    prefix = f"eval_{summary.name}"
+    tunables = [param for param in summary.params if param.name != summary.artifact_param]
+    params: dict[str, Any]
+    sweep: dict[str, list[Any]] = {}
+    problem: str | None = None
+
+    if summary.artifact_param is None:
+        params = _param_widgets(prefix, summary.params)
+        sweep = _sweep_widgets(prefix, tunables)
+    else:
+        mode = st.radio(
+            "Weights",
+            [_TRAINED, _SCRATCH],
+            key=f"{prefix}_mode",
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if mode == _TRAINED:
+            artifact = next((p for p in summary.params if p.name == summary.artifact_param), None)
+            shipped = "" if artifact is None or artifact.default is None else str(artifact.default)
+            chosen = st.text_input(
+                summary.artifact_param,
+                value=shipped or _DEFAULT_ARTIFACT.get(summary.name, ""),
+                key=f"{prefix}_art",
+                placeholder="artifact id",
+                help=(
+                    "A committed artifact id. It supplies both the weights and the "
+                    "hyperparameters they were fitted with — the two travel together."
+                ),
+            )
+            params = {summary.artifact_param: chosen}
+            if not chosen:
+                problem = (
+                    f"**{summary.name}** is set to use trained weights but no artifact is "
+                    "named. Enter an artifact id, or switch it to fit from scratch."
+                )
+        else:
+            params = _param_widgets(prefix, tunables)
+            sweep = _sweep_widgets(prefix, tunables)
+            if protocol == "none":
+                problem = (
+                    f"**{summary.name}** has no trained weights in this mode, and the fit "
+                    "protocol is `none` — it would judge nothing. Pick `prefix` or "
+                    "`holdout` above, or switch it back to trained weights."
+                )
+
+    return {"name": summary.name, "params": params, "sweep": sweep}, problem
 
 
 @st.cache_data(show_spinner=False)
@@ -532,18 +669,31 @@ def _parse_report(payload: str) -> "EvaluationReport":
 
 
 @st.cache_data(show_spinner=False)
-def _run_benchmark(corpus: str, detectors: tuple[str, ...], engine: str, protocol: str) -> str:
+def _run_benchmark(corpus: str, plan_json: str, engine: str, protocol: str) -> str:
     """Run a benchmark through the API and return its JSON.
 
     Cached on the arguments, which is what makes running one from a Streamlit page safe:
     the script re-executes on *every* interaction, so uncached work here would re-run the
     benchmark on each click. With the cache, it runs on the button press and every later
     interaction (switch spec, switch case) replays instantly. Returns JSON rather than a
-    model because the cache wants a serializable value.
+    model because the cache wants a serializable value — and takes the plan as JSON for
+    the same reason, since it is the cache key as well as the request.
+
+    Sweeps are expanded *server-side* (ADR-0022): the plan carries the values, the API
+    cross-products them into labelled specs, and this page never has to know that four
+    rows in the report came from one detector.
     """
+    plan = json.loads(plan_json)
     report = get_control_client().evaluate(
         corpus=corpus,
-        specs=[{"label": name, "spec": _bench_spec(name, engine)} for name in detectors],
+        specs=[
+            {
+                "label": item["name"],
+                "spec": _bench_spec(item["name"], item["params"], engine),
+                "sweep": item["sweep"],
+            }
+            for item in plan
+        ],
         fit_protocol=protocol,
         include_timeline=True,
     )
@@ -607,11 +757,20 @@ def _render_report(report: "EvaluationReport") -> None:
             for spec in report.specs
         ]
     )
-    chart = spec_scores(
-        [{"spec": row["spec"], "event_f1": row["event_f1"]} for _, row in summary.iterrows()]
-    )
+    scores = [{"spec": row["spec"], "event_f1": row["event_f1"]} for _, row in summary.iterrows()]
+    # A sweep gets a curve, everything else gets bars: over a quantitative axis the reader
+    # sees whether the parameter matters and where it peaks, which is the question the
+    # sweep was run to answer and the one a bar chart of decoded labels hides (ADR-0022).
+    curve = sweep_curve(scores)
+    chart = curve if curve is not None else spec_scores(scores)
     if chart is not None:
         st.altair_chart(chart, width="stretch")
+    if curve is not None:
+        st.caption(
+            "One point per swept value, all other settings held fixed. A flat line means "
+            "the hyperparameter does not matter on this corpus — a real result, and a "
+            "cheaper one than tuning it."
+        )
     st.dataframe(summary, width="stretch", hide_index=True)
     st.caption(
         "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
@@ -692,10 +851,8 @@ def evaluate_page(report_path: Path) -> None:
         "ground truth, which production data by definition never has."
     )
 
-    client = get_control_client()
     try:
-        catalogue = client.corpora()
-        detectors = client.eval_detectors()
+        catalogue, detectors = _eval_catalogue()
     except _API_ERRORS:
         _saved_report_fallback(report_path)
         return
@@ -735,13 +892,32 @@ def evaluate_page(report_path: Path) -> None:
             "configured and the report will say so."
         )
 
+    # Each detector's own hyperparameters, weights source and sweep. In an expander because
+    # the defaults are the common case: the page still opens as "tick two boxes and run".
+    by_name = {item.name: item for item in detectors}
+    plan = []
+    problems = []
+    for name in chosen:
+        with st.expander(f"{name} — hyperparameters", expanded=False):
+            entry, problem = _detector_plan(by_name[name], protocol)
+        plan.append(entry)
+        problems.append(problem)
+    for problem in filter(None, problems):
+        st.error(problem)
+
+    total = sum(_run_count(entry["sweep"]) for entry in plan)
+    if total > len(plan):
+        st.caption(f"This will run **{total}** benchmark(s) — one per swept value.")
+
     # Latch the run into session state rather than rendering only on the click. A bare
     # `if not st.button(): return` renders the report *only* on the click rerun — so the
     # first touch of a selectbox inside it (the timeline's spec/case pickers) reruns with
     # the button False and wipes the page. Latching is what lets the cache below pay off:
     # exploring a finished report replays from cache instead of clearing it.
-    selection = (corpus_name, tuple(chosen), engine, protocol)
-    if st.button("Run benchmark", type="primary", disabled=not chosen):
+    # The plan is carried as JSON so the whole selection stays a hashable cache key.
+    selection = (corpus_name, json.dumps(plan, sort_keys=True), engine, protocol)
+    blocked = not chosen or any(problems)
+    if st.button("Run benchmark", type="primary", disabled=blocked):
         st.session_state[_EVAL_RUN_KEY] = selection
 
     latched = st.session_state.get(_EVAL_RUN_KEY)
@@ -754,13 +930,14 @@ def evaluate_page(report_path: Path) -> None:
     # showed the previous protocol's numbers. Say so rather than re-running unasked: a
     # benchmark is not something to trigger on a stray click.
     if latched != selection:
+        previous = ", ".join(item["name"] for item in json.loads(latched[1]))
         st.warning(
-            f"Showing the previous run (corpus **{latched[0]}**, "
-            f"{', '.join(latched[1])}, fit protocol **{latched[3]}**). "
+            f"Showing the previous run (corpus **{latched[0]}**, {previous}, "
+            f"fit protocol **{latched[3]}**). "
             "Press **Run benchmark** to apply the settings above."
         )
 
-    with st.spinner(f"Benchmarking {len(latched[1])} detector(s)…"):
+    with st.spinner("Benchmarking…"):
         try:
             payload = _run_benchmark(*latched)
         except _API_ERRORS as exc:

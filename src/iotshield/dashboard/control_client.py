@@ -80,8 +80,11 @@ class ControlClient:
     ) -> "EvaluationReport":
         """Run a benchmark server-side and return the full report.
 
-        ``specs`` are ``{"label", "spec"}`` objects — one per detector being compared, since
-        several detectors in ONE spec run together rather than competing.
+        ``specs`` are ``{"label", "spec", "sweep"}`` objects — one per detector being
+        compared, since several detectors in ONE spec run together rather than competing.
+        ``sweep`` maps a hyperparameter to the values to vary it across; the server
+        cross-products it into one labelled spec per combination (ADR-0022), so a swept run
+        and a hand-written head-to-head come back in exactly the same shape.
         """
         from iotshield.eval import EvaluationReport
 

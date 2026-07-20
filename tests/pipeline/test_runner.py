@@ -25,6 +25,7 @@ from iotshield.pipeline import (
     run_pipeline,
 )
 from iotshield.pipeline import runner as runner_module
+from iotshield.pipeline.compat import IncompatiblePipelineError
 from iotshield.storage import make_engine, make_session_factory, repository
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -447,6 +448,34 @@ class TestComputePhases:
         assert not hasattr(spec, "database_url")
         assert compute_run(spec, [INLINE_CSV]).detections
         assert not (tmp_path / "run.db").exists()
+
+    def test_an_untrained_detector_is_refused_before_judging(self) -> None:
+        """A run never fits (ADR-0022), so a spec with no cached fit is a config error.
+
+        Naming hyperparameters and no artifact is how you ask the *harness* to fit from
+        scratch; asking the product to run it means judging with an untrained model. It is
+        refused as a named config error rather than surfacing as a NotFitted from deep
+        inside the judge phase — and before any sink runs.
+        """
+        spec = PipelineSpec.model_validate(
+            {
+                "source_format": "stub-csv",
+                "normalizer": "stub",
+                "detectors": [{"name": "team3_zscore", "params": {"window_size": 20}}],
+            }
+        )
+        with pytest.raises(IncompatiblePipelineError, match="no trained state"):
+            compute_run(spec, [INLINE_CSV])
+
+    def test_a_configured_artifact_runs_normally(self) -> None:
+        spec = PipelineSpec.model_validate(
+            {
+                "source_format": "stub-csv",
+                "normalizer": "stub",
+                "detectors": [{"name": "team3_zscore", "params": {"artifact": "skab_zscore"}}],
+            }
+        )
+        assert compute_run(spec, [INLINE_CSV]).events  # no raise; it simply finds nothing
 
     def test_guard_errors_still_raise_before_any_work(self, tmp_path: Path) -> None:
         # The guard runs inside the ingest phase, so both compute_run and a harness that

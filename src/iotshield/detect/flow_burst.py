@@ -9,7 +9,7 @@ cannot say *which device* or *when* cannot produce a ``DetectionResult`` at all.
 information our contract needs is destroyed upstream of any seam an adapter could sit on,
 which is the same situation ADR-0011 met with team4 and resolved by rewriting.
 
-Why behavioural aggregation rather than a classifier (ADR-0024 D7)
+Why behavioural aggregation rather than a classifier (ADR-0024 D2)
 ------------------------------------------------------------------
 The unit of anomaly in flow data is not a row. One connection to port 23 is nothing; forty
 connections to forty different hosts on port 23 in ten seconds is a compromised device
@@ -23,7 +23,7 @@ It earns the lane its place: a compromised camera scanning the internet produces
 normal telemetry (it still reads 22 degrees) and writes no log lines (it is not going to
 log about it). Only its network behaviour betrays it.
 
-One mechanism, several presets (ADR-0024 D8)
+One mechanism, several presets (ADR-0024 D3)
 --------------------------------------------
 Fan-out, port scanning and exfiltration look like three detectors but are one: *per asset,
 over a sliding window, does some aggregate exceed a threshold?* Only the aggregate differs,
@@ -39,6 +39,8 @@ which is what the orchestration UI's detector list exists to express (ADR-0023).
 
 from __future__ import annotations
 
+import heapq
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
@@ -218,12 +220,26 @@ class FlowBurstDetector:
         return detections
 
     def _evidence(self, span: Sequence[_Flow], episode: Episode) -> dict[str, Any]:
-        records = [flow.record for flow in span]
-        peers: dict[str, int] = {}
-        for record in records:
-            peers[record.peer_ip] = peers.get(record.peer_ip, 0) + 1
-        top = sorted(peers.items(), key=lambda item: (-item[1], item[0]))[:_TOP_PEERS]
-        ports = sorted({record.peer_port for record in records if record.peer_port is not None})
+        # One pass, not six. An `exfiltration` episode spans a 30-minute window and can
+        # legitimately cover a large fraction of a capture, so walking the span once per
+        # summary field (plus a list copy) is real work on the largest episodes.
+        peers: Counter[str] = Counter()
+        ports: set[int] = set()
+        protocols: set[str] = set()
+        directions: set[str] = set()
+        bytes_out = 0
+        for flow in span:
+            record = flow.record
+            peers[record.peer_ip] += 1
+            if record.peer_port is not None:
+                ports.add(record.peer_port)
+            protocols.add(record.protocol)
+            directions.add(record.direction.value)
+            bytes_out += record.bytes_out
+        # nsmallest, not a full sort: a wide sweep is exactly when the peer count is large,
+        # and taking 5 of 50k costs O(n log 5) instead of O(n log n). The explicit key keeps
+        # ties broken by peer name, which Counter.most_common does not promise.
+        top = heapq.nsmallest(_TOP_PEERS, peers.items(), key=lambda item: (-item[1], item[0]))
         return {
             # `category` is the preset name — the semantic label of what was detected, the
             # same convention log_burst uses (ADR-0020 D6).
@@ -235,10 +251,10 @@ class FlowBurstDetector:
             "flows": len(span),
             "distinct_peers": len(peers),
             "top_peers": [{"peer": peer, "flows": count} for peer, count in top],
-            "peer_ports": ports[:_SAMPLE_PORTS],
-            "bytes_out": sum(record.bytes_out for record in records),
-            "protocols": sorted({record.protocol for record in records}),
-            "directions": sorted({record.direction.value for record in records}),
+            "peer_ports": sorted(ports)[:_SAMPLE_PORTS],
+            "bytes_out": bytes_out,
+            "protocols": sorted(protocols),
+            "directions": sorted(directions),
         }
 
 

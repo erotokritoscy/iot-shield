@@ -213,13 +213,33 @@ Add `--fit-protocol prefix` to let detectors implementing the optional `Fittable
 relearn their baseline from each case's own clean history; ones that cannot are evaluated as
 configured and the report says so. `--out report.json` writes a diffable artifact.
 
+### Choosing hyperparameters
+
+Every knob a detector has is a parameter of its adapter, so a config can set it and a
+benchmark can vary it (ADR-0022):
+
+```
+uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
+    --spec config/bench/team3_scratch.yaml --spec config/bench/stub.yaml \
+    --sweep window_size=20,60,120
+```
+
+That is four rows in the same head-to-head table: three fitted `team3` configurations plus
+the rule-based baseline, which has no `window_size` and rides along once as the control.
+
+A spec either names a trained `artifact:` — which supplies its weights *and* the
+hyperparameters they were fitted with, as one unit — **or** names hyperparameters and fits
+from scratch under a fit protocol. Mixing the two is refused, because a stored baseline is
+aligned to the features its own hyperparameters produced.
+
 ### In the dashboard
 
 Set `IOTSHIELD_EVAL_API=1` on the Pipeline API and `IOTSHIELD_EVAL_UI=1` on the dashboard
-(compose sets both) and an **Evaluate** mode appears: pick a corpus and detectors, run a
-benchmark, and read it as charts — a head-to-head bar, a per-case strip showing consistency,
-and a timeline drawing truth against detections and alerts on one clock. Both flags are off
-by default; it is a research instrument, not a product feature.
+(compose sets both) and an **Evaluate** mode appears: pick a corpus and detectors, set each
+detector's hyperparameters (or sweep one), run a benchmark, and read it as charts — a
+head-to-head bar, or a **curve** when you swept a parameter, plus a per-case strip showing
+consistency and a timeline drawing truth against detections and alerts on one clock. Both
+flags are off by default; it is a research instrument, not a product feature.
 
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).

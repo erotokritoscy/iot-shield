@@ -7,7 +7,7 @@ FlowBurstDetector (flow-lane behavioural aggregation — fan-out, port scanning,
 exfiltration — designed here, ADR-0024).
 
 Deferred: a supervised per-flow classifier in team5's shape, once there is a labelled
-flow corpus to prove it on and scikit-learn has earned its own ADR (ADR-0024 D7).
+flow corpus to prove it on and scikit-learn has earned its own ADR (ADR-0024 D1).
 """
 
 from iotshield.detect._runs import merge_runs

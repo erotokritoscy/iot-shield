@@ -127,6 +127,41 @@ def is_local(address: str, networks: Sequence[Network]) -> bool:
     return any(parsed.version == net.version and parsed in net for net in networks)
 
 
+class Locality:
+    """ "Is this address one of ours?", memoized — the hot path of flow ingest.
+
+    Every flow row asks this twice, and the answer costs an ``ip_address()`` parse plus a
+    walk of the monitored networks: measured at 6.8us per row, ~28% of the cost of reading
+    a row. A device's own address repeats on essentially every one of its rows, so a memo
+    keyed on the literal collapses that to a dict hit.
+
+    The cache is capped and cleared wholesale rather than grown without bound: a capture
+    can carry millions of *distinct* peers, and an unbounded memo would trade the CPU for
+    a memory leak. Clearing beats an LRU here because the working set that matters (the
+    handful of local devices) is re-populated on its next row for one miss each.
+    """
+
+    _CAP = 4096
+
+    def __init__(self, networks: Sequence[Network] = DEFAULT_NETWORKS) -> None:
+        self._networks = tuple(networks)
+        self._seen: dict[str, bool] = {}
+
+    def __call__(self, address: str) -> bool:
+        # `.get` rather than `in`: the values are bools, so `is None` is the only test that
+        # distinguishes "not cached" from "cached as False".
+        cached = self._seen.get(address)
+        if cached is None:
+            cached = is_local(address, self._networks)
+            if len(self._seen) >= self._CAP:
+                self._seen.clear()
+            self._seen[address] = cached
+        return cached
+
+
+DEFAULT_LOCALITY = Locality()
+
+
 @dataclass(frozen=True)
 class FlowRecord:
     """One network conversation, oriented so that "out" and "in" are the *asset's* view.
@@ -249,7 +284,7 @@ def orient(
     dst_packets: int = 0,
     state: str | None = None,
     service: str | None = None,
-    home_networks: Sequence[Network] = DEFAULT_NETWORKS,
+    locality: Locality = DEFAULT_LOCALITY,
 ) -> FlowRecord:
     """Decide which endpoint is the asset, and re-express the flow from its point of view.
 
@@ -264,8 +299,8 @@ def orient(
     - neither local -> ``FlowOrientationError``. It is not our traffic, and inventing an
       asset for it would fill the registry with the public internet.
     """
-    src_local = is_local(src_ip, home_networks)
-    dst_local = is_local(dst_ip, home_networks)
+    src_local = locality(src_ip)
+    dst_local = locality(dst_ip)
 
     if not src_local and not dst_local:
         raise FlowOrientationError(
@@ -273,44 +308,35 @@ def orient(
             f"widen home_networks if this traffic is yours"
         )
 
-    asset_is_source = src_local  # both-local falls here too: the originator wins
     if src_local and dst_local:
-        direction = Direction.INTERNAL
+        direction = Direction.INTERNAL  # lateral: the originator wins, as below
     elif src_local:
         direction = Direction.OUTBOUND
     else:
         direction = Direction.INBOUND
 
-    if asset_is_source:
-        return FlowRecord(
-            asset_ip=src_ip,
-            peer_ip=dst_ip,
-            protocol=protocol,
-            direction=direction,
-            asset_port=src_port,
-            peer_port=dst_port,
-            duration_s=duration_s,
-            bytes_out=src_bytes,
-            bytes_in=dst_bytes,
-            packets_out=src_packets,
-            packets_in=dst_packets,
-            state=state,
-            service=service,
-        )
-    # The asset responded, so every counter swaps: what the exporter called "source"
-    # arrived AT the asset.
+    # Orientation is entirely a matter of which end is "near". Choosing the two tuples up
+    # front, then building once, keeps the rule that *every* counter swaps together visible
+    # in one place — two near-identical constructors let a field drift out of step silently.
+    near = (src_ip, src_port, src_bytes, src_packets)
+    far = (dst_ip, dst_port, dst_bytes, dst_packets)
+    if not src_local:
+        near, far = far, near
+    asset_ip, asset_port, bytes_out, packets_out = near
+    peer_ip, peer_port, bytes_in, packets_in = far
+
     return FlowRecord(
-        asset_ip=dst_ip,
-        peer_ip=src_ip,
+        asset_ip=asset_ip,
+        peer_ip=peer_ip,
         protocol=protocol,
         direction=direction,
-        asset_port=dst_port,
-        peer_port=src_port,
+        asset_port=asset_port,
+        peer_port=peer_port,
         duration_s=duration_s,
-        bytes_out=dst_bytes,
-        bytes_in=src_bytes,
-        packets_out=dst_packets,
-        packets_in=src_packets,
+        bytes_out=bytes_out,
+        bytes_in=bytes_in,
+        packets_out=packets_out,
+        packets_in=packets_in,
         state=state,
         service=service,
     )

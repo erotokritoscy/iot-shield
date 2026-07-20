@@ -10,7 +10,9 @@ both on the host (its SQLite default) and in compose (Postgres, injected per
 12-factor) — matching how the API and dashboard already resolve their wiring.
 """
 
+import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Self
 
@@ -48,6 +50,20 @@ def _default_sinks() -> list[SinkConfig]:
     # The default is the Postgres store — so a config that names no sinks (every config
     # written before the output seam existed) behaves exactly as it did before.
     return [SinkConfig(name=_POSTGRES_SINK)]
+
+
+def config_fingerprint(name: str, params: Mapping[str, Any]) -> str:
+    """Identity of a configured adapter: its name plus its construction params.
+
+    Two rules in this package depend on deciding when two entries are *the same entry* —
+    the runner caches one normalizer per distinct configuration, and the guard warns about a
+    detector configured twice identically. They must agree, so the rule lives once.
+
+    JSON rather than a tuple because param values may be lists (``home_networks``), which
+    are unhashable; ``sort_keys`` so two mappings written in a different order compare
+    equal; ``default=str`` so an exotic value degrades to a stable string instead of raising.
+    """
+    return json.dumps([name, dict(params)], sort_keys=True, default=str)
 
 
 class SourceSpec(_ConfigModel):

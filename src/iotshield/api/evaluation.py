@@ -23,15 +23,18 @@ Two constraints the design keeps:
 """
 
 from functools import cache
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from iotshield.api._eval_gate import EVAL_API_ENV, eval_api_enabled
+from iotshield.api.control import ParamInfo, describe_params
 from iotshield.capabilities import lanes_in
 from iotshield.detect import Fittable
 from iotshield.eval import CorpusUnavailable, EvaluationReport, FitProtocol, evaluate, load_corpus
 from iotshield.eval.corpus import corpus_root, fetchable, list_corpora
+from iotshield.eval.sweep import expand
 from iotshield.pipeline import PipelineSpec
 from iotshield.pipeline.registry import DETECTORS, build_detector
 
@@ -65,11 +68,20 @@ class DetectorSummary(BaseModel):
     so a client never has to know the ``lane:`` prefix scheme (``capabilities.py``). Plural
     because ``consumes`` is a set — a detector may legitimately consume more than one lane,
     and picking one arbitrarily would misreport it.
+
+    ``params`` and ``artifact_param`` are the ADR-0022 declaration, carried here so the
+    Evaluate page needs *one* call rather than joining this against ``/modules``: which
+    hyperparameters exist (with real defaults, so a form can prefill them), and which
+    param — if any — names a cached fit. A UI reads the latter to offer "use trained
+    weights" and "fit from scratch with my own hyperparameters" as two exclusive modes,
+    instead of letting someone combine them and hit the atomicity error.
     """
 
     name: str
     lanes: list[str]
     fittable: bool
+    params: list[ParamInfo] = Field(default_factory=list)
+    artifact_param: str | None = None
 
 
 class EvalRunRequest(BaseModel):
@@ -80,10 +92,17 @@ class EvalRunRequest(BaseModel):
 
 
 class LabelledSpec(BaseModel):
-    """A spec plus the name it appears under in the report."""
+    """A spec plus the name it appears under in the report, optionally swept.
+
+    ``sweep`` maps a detector hyperparameter to the values to vary it across; the server
+    cross-products them into one labelled spec per combination before evaluating
+    (ADR-0022). Expanding server-side rather than in the client is what keeps the CLI and
+    the dashboard producing identical labels and obeying one expansion cap.
+    """
 
     label: str = Field(min_length=1)
     spec: PipelineSpec
+    sweep: dict[str, list[Any]] = Field(default_factory=dict)
 
 
 @cache
@@ -94,8 +113,7 @@ def _is_fittable(name: str) -> bool:
     registry declaration (ADR-0021 D3). Acceptable here because this endpoint is a catalogue
     call, not an inner loop; if it ever moves onto a hot path, the answer belongs in
     ``AdapterSpec`` beside ``SinkSpec.requires_database``. Cached because ``DETECTORS`` is a
-    module-level constant with static factories, so the answer cannot change in a process —
-    and constructing ``team3_zscore`` reads its artifact off disk.
+    module-level constant with static factories, so the answer cannot change in a process.
     """
     try:
         return isinstance(build_detector(name, {}), Fittable)
@@ -105,8 +123,30 @@ def _is_fittable(name: str) -> bool:
         return False
 
 
+def _detector_summaries() -> list[DetectorSummary]:
+    """The benchmarkable-detector catalogue, built once.
+
+    ``DETECTORS`` is a module-level constant with static factories and static capabilities,
+    so this cannot change in a process — the same invariant ``/modules`` relies on for
+    ``_MODULES_RESPONSE``. Worth building once because the Evaluate page re-fetches it on
+    every Streamlit rerun (i.e. every widget click), and the answer costs a signature
+    introspection per parameter per detector.
+    """
+    return [
+        DetectorSummary(
+            name=name,
+            lanes=sorted(lane.value for lane in lanes_in(spec.capability({}).consumes)),
+            fittable=_is_fittable(name),
+            params=describe_params(spec.factory, spec.params_type),
+            artifact_param=spec.artifact_param,
+        )
+        for name, spec in sorted(DETECTORS.items())
+    ]
+
+
 def create_eval_router() -> APIRouter:
     router = APIRouter(prefix="/eval", tags=["evaluation"])
+    detector_catalogue = _detector_summaries()
 
     @router.get("/corpora")
     def corpora() -> CorporaResponse:
@@ -129,14 +169,7 @@ def create_eval_router() -> APIRouter:
     @router.get("/detectors")
     def detectors() -> list[DetectorSummary]:
         """The detectors a benchmark can compare, with their training capability."""
-        return [
-            DetectorSummary(
-                name=name,
-                lanes=sorted(lane.value for lane in lanes_in(spec.capability({}).consumes)),
-                fittable=_is_fittable(name),
-            )
-            for name, spec in sorted(DETECTORS.items())
-        ]
+        return detector_catalogue
 
     @router.post("/run")
     def run(request: EvalRunRequest) -> EvaluationReport:
@@ -152,15 +185,24 @@ def create_eval_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         try:
+            # Sweeps expand before evaluation, into ordinary labelled specs — so a swept
+            # run and a hand-written head-to-head are the same request downstream.
+            specs = [
+                pair
+                for entry in request.specs
+                for pair in expand([(entry.label, entry.spec)], entry.sweep)
+            ]
             return evaluate(
                 corpus,
-                [(entry.label, entry.spec) for entry in request.specs],
+                specs,
                 protocol=request.fit_protocol,
                 include_timeline=request.include_timeline,
             )
         except ValueError as exc:
-            # _check_alignment: the corpus does not match what the spec says it ingests.
-            # Refusing beats scoring, because a mismatch reads exactly like a bad detector.
+            # Two incoherent-request kinds share this mapping: a sweep naming a parameter
+            # no detector accepts (or exceeding the expansion cap), and _check_alignment's
+            # corpus/spec mismatch. Refusing beats scoring — a mismatch reads exactly like
+            # a bad detector.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return router

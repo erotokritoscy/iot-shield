@@ -57,11 +57,10 @@ from pydantic import ValidationError
 from iotshield.capabilities import Capability, FormatToken, LaneToken
 from iotshield.contracts import Lane, MalformedRecord, NormalizedEvent
 from iotshield.flow import (
-    DEFAULT_NETWORKS,
     METADATA_KEY,
     METRIC,
     FlowOrientationError,
-    Network,
+    Locality,
     orient,
     parse_networks,
 )
@@ -98,11 +97,15 @@ class Dialect:
     delimiter: str = ","
     comment_prefix: str | None = None
     fields_directive: str | None = None
-    missing: tuple[str, ...] = ("", "-")
-    header_is_first_row: bool = True
 
-    def is_missing(self, value: str) -> bool:
-        return value.strip() in self.missing
+    @property
+    def header_is_first_row(self) -> bool:
+        """A format that names its columns in a directive never takes them from row 1.
+
+        Derived rather than declared: as two independent fields they could contradict each
+        other, and there is no coherent dialect in which they would.
+        """
+        return self.fields_directive is None
 
 
 ZEEK_CONN = Dialect(
@@ -129,7 +132,6 @@ ZEEK_CONN = Dialect(
     delimiter="\t",
     comment_prefix="#",
     fields_directive="#fields",
-    header_is_first_row=False,
 )
 
 FLOW_CSV = Dialect(
@@ -154,12 +156,15 @@ FLOW_CSV = Dialect(
 
 DIALECTS: dict[str, Dialect] = {ZEEK_CONN.name: ZEEK_CONN, FLOW_CSV.name: FLOW_CSV}
 
-SOURCE_FORMATS = tuple(DIALECTS)
+# Missing-value markers. A module constant rather than a per-dialect field: no shipped
+# dialect varies it, and a knob nothing turns is a knob that goes untested. Promote it back
+# onto Dialect the first time a format genuinely disagrees.
+MISSING = ("", "-")
 
 # Consumes every dialect's format; every event it emits is flow-lane. The first normalizer
 # to declare more than one format token — the guard and the UI already supported it.
 CAPABILITY = Capability.of(
-    consumes={FormatToken(name) for name in SOURCE_FORMATS},
+    consumes={FormatToken(name) for name in DIALECTS},
     produces={LaneToken(Lane.FLOW)},
 )
 
@@ -186,25 +191,39 @@ class _Reader:
     def ready(self) -> bool:
         return bool(self.index_of)
 
-    def take_header(self, headings: Sequence[str]) -> None:
-        """Bind canonical fields to column positions, ignoring columns we do not use."""
+    def consume_header(self, headings: Sequence[str]) -> str | None:
+        """Bind canonical fields to column positions; return why the header is unusable.
+
+        Owns the whole transition — mark seen, map columns, validate — so the two call
+        sites (a Zeek ``#fields`` directive, a CSV first row) cannot perform it in
+        different orders. Returning the reason rather than taking a reject callback keeps
+        the decision here and the MalformedRecord construction at the loop, where the
+        original line is.
+        """
+        self.header_seen = True
         positions = {name.strip(): index for index, name in enumerate(headings)}
         self.index_of = {
             canonical: positions[column]
             for canonical, column in self.dialect.columns.items()
             if column in positions
         }
-
-    def missing_required(self) -> list[str]:
-        return [name for name in REQUIRED_FIELDS if name not in self.index_of]
+        missing = [name for name in REQUIRED_FIELDS if name not in self.index_of]
+        if missing:
+            # Unusable: clear it so following rows are rejected as orphans rather than
+            # parsed against a half-bound layout.
+            self.index_of = {}
+            return f"header is missing required column(s): {', '.join(missing)}"
+        return None
 
     def value(self, parts: Sequence[str], name: str) -> str | None:
         """The raw text of one canonical field, or None when absent/unset."""
         index = self.index_of.get(name)
         if index is None or index >= len(parts):
             return None
-        text = parts[index]
-        return None if self.dialect.is_missing(text) else text.strip()
+        # Strip once: this runs for all 13 canonical fields on every row, and stripping
+        # again for the missing-marker test measurably doubled the cost of reading a row.
+        text = parts[index].strip()
+        return None if text in MISSING else text
 
 
 def _number(reader: _Reader, parts: Sequence[str], name: str, *, default: int = 0) -> int:
@@ -240,7 +259,7 @@ def _required(reader: _Reader, parts: Sequence[str], name: str) -> str:
     return text
 
 
-def _parse_row(reader: _Reader, parts: Sequence[str], home: Sequence[Network]) -> dict[str, Any]:
+def _parse_row(reader: _Reader, parts: Sequence[str], locality: Locality) -> dict[str, Any]:
     """One data row -> the NormalizedEvent field mapping (all but ``raw``)."""
     dialect = reader.dialect
     stamp = _required(reader, parts, "ts")
@@ -271,7 +290,7 @@ def _parse_row(reader: _Reader, parts: Sequence[str], home: Sequence[Network]) -
             dst_packets=_number(reader, parts, "dst_packets"),
             state=reader.value(parts, "state"),
             service=reader.value(parts, "service"),
-            home_networks=home,
+            locality=locality,
         )
     except FlowOrientationError as exc:
         raise FlowParseError(str(exc)) from exc
@@ -300,7 +319,9 @@ class FlowNormalizer:
         """
         if isinstance(home_networks, str):
             home_networks = [part for part in home_networks.split(",") if part.strip()]
-        self._home = parse_networks(home_networks) if home_networks else DEFAULT_NETWORKS
+        # One Locality per normalizer, so its memo lives as long as the ingest does — the
+        # asset side of a device's flows repeats on every row (flow.Locality).
+        self._locality = Locality(parse_networks(home_networks)) if home_networks else Locality()
 
     def normalize(self, text: str, *, source_format: str, origin: str) -> NormalizeResult:
         # An unsupported format is a configuration error, not a data error (port rule 3).
@@ -333,15 +354,13 @@ class FlowNormalizer:
                     if value.strip():
                         delimiter = _unescape(value)
                 elif dialect.fields_directive and line.startswith(dialect.fields_directive):
-                    reader.header_seen = True
-                    reader.take_header(line.split(delimiter)[1:])
-                    _reject_if_incomplete(reader, line, reject)
+                    if error := reader.consume_header(line.split(delimiter)[1:]):
+                        reject(line, error)
                 continue
 
             if not reader.header_seen and dialect.header_is_first_row:
-                reader.header_seen = True
-                reader.take_header(line.split(delimiter))
-                _reject_if_incomplete(reader, line, reject)
+                if error := reader.consume_header(line.split(delimiter)):
+                    reject(line, error)
                 continue
 
             if not reader.ready:
@@ -349,7 +368,7 @@ class FlowNormalizer:
                 continue
 
             try:
-                fields = _parse_row(reader, line.split(delimiter), self._home)
+                fields = _parse_row(reader, line.split(delimiter), self._locality)
                 result.events.append(NormalizedEvent.model_validate({**fields, "raw": line}))
             except FlowParseError as exc:
                 reject(line, str(exc))
@@ -359,18 +378,6 @@ class FlowNormalizer:
                 reject(line, "; ".join(error["msg"] for error in exc.errors()))
 
         return result
-
-
-def _reject_if_incomplete(reader: _Reader, line: str, reject: Callable[[str, str], None]) -> None:
-    """A header that names no usable columns is itself the malformed record.
-
-    Otherwise a wrong-format file would reject every *data* line with a confusing
-    per-row message, hiding the single real problem: the header did not fit the dialect.
-    """
-    missing = reader.missing_required()
-    if missing:
-        reader.index_of.clear()  # unusable: subsequent rows must not be parsed against it
-        reject(line, f"header is missing required column(s): {', '.join(missing)}")
 
 
 def _unescape(value: str) -> str:

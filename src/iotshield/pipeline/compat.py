@@ -20,14 +20,13 @@ The single result feeds three consumers: the runner/CLI raise on any ERROR; the
 Pipeline API returns 422 on ERRORs and passes WARNINGs back; the UI shows both inline.
 """
 
-import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
 from iotshield.capabilities import Token, formats_in, lanes_in
 from iotshield.contracts import Lane
-from iotshield.pipeline.config import PipelineSpec
+from iotshield.pipeline.config import PipelineSpec, config_fingerprint
 from iotshield.pipeline.registry import (
     alert_engine_capability,
     detector_capability,
@@ -198,9 +197,7 @@ def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
     issues: list[CompatIssue] = []
     seen: dict[str, int] = {}
     for index, detector in enumerate(config.detectors):
-        # Params are compared by value, order-insensitively, so two entries that differ
-        # only in the order their params were written are still recognised as identical.
-        fingerprint = json.dumps([detector.name, detector.params], sort_keys=True, default=str)
+        fingerprint = config_fingerprint(detector.name, detector.params)
         first = seen.get(fingerprint)
         if first is None:
             seen[fingerprint] = index

@@ -10,10 +10,14 @@ adapter. Factory parameters come straight from the config's ``params`` mapping;
 unknown names and bad params fail loudly with the known alternatives.
 """
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import cache
 from typing import Any, Generic, Literal, TypeVar
+
+from pydantic import BaseModel
 
 from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
 from iotshield.alert.stub import CAPABILITY as _STUB_ALERT_CAPABILITY
@@ -27,12 +31,15 @@ from iotshield.detect import (
     StubThresholdDetector,
     Team3ZScoreDetector,
 )
+from iotshield.detect._fitted import resolve_params
 from iotshield.detect.flow_burst import CAPABILITY as _FLOW_BURST_CAPABILITY
 from iotshield.detect.flow_burst import DEFAULT_PRESET as _DEFAULT_FLOW_PRESET
 from iotshield.detect.log_burst import CAPABILITY as _LOG_BURST_CAPABILITY
 from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
 from iotshield.detect.stub import capability as _stub_threshold_capability
+from iotshield.detect.team3.artifact import load_artifact
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
+from iotshield.detect.team3.params import Team3Params
 from iotshield.normalize import FlowNormalizer, Normalizer, StubCsvNormalizer, SyslogNormalizer
 from iotshield.normalize.flow import CAPABILITY as _FLOW_NORMALIZER_CAPABILITY
 from iotshield.normalize.stub import CAPABILITY as _STUB_NORMALIZER_CAPABILITY
@@ -51,10 +58,30 @@ class AdapterSpec(Generic[T]):
 
     Pairing factory and capability in one record means the two can never drift out
     of each other's existence — you cannot add an adapter without declaring its shape.
+
+    The two optional fields are how an adapter that *learns* declares the ADR-0022 split,
+    so tooling can act on it without knowing the adapter. Both default to "not a learning
+    adapter", which is why ``stub_threshold`` and ``log_burst`` say nothing.
     """
 
     factory: Callable[..., T]
     capability: CapabilityProvider
+    params_type: type[BaseModel] | None = None
+    """The adapter's hyperparameter model, when it has one.
+
+    Its field defaults are the *real* defaults: a learning adapter's factory params must
+    default to ``None`` (the "not given" sentinel ``resolve_params`` needs), which would
+    otherwise make ``/modules`` report every knob as having no default and give the UI
+    nothing to prefill. Introspection reads the true value from here instead.
+    """
+
+    artifact_param: str | None = None
+    """Which factory param names a *cached fit*, when the adapter supports one.
+
+    Declared rather than name-sniffed so a UI can offer the real choice — "load trained
+    weights" or "fit from scratch with my own hyperparameters" — as two modes instead of
+    letting someone combine them and hit the atomicity error (``_fitted.resolve_params``).
+    """
 
 
 def _stub_threshold(
@@ -84,12 +111,43 @@ def _weighted_alert_engine(bucket_minutes: float = 5.0) -> WeightedAlertEngine:
 
 
 def _team3_zscore(
-    artifact: str = "skab_zscore", min_segment_length: int = 1
+    artifact: str | None = None,
+    window_size: int | None = None,
+    lag_steps: list[int] | None = None,
+    fft_enabled: bool | None = None,
+    fft_include_dc: bool | None = None,
+    percentile: float | None = None,
+    channels: list[str] | None = None,
+    min_segment_length: int | None = None,
 ) -> Team3ZScoreDetector:
-    # from_resource raises ValueError for an unknown artifact id; _build attributes it.
-    return Team3ZScoreDetector.from_resource(
-        str(artifact), min_segment_length=int(min_segment_length)
+    """Build the team3 detector from a cached fit, from hyperparameters, or from both.
+
+    Every param defaults to ``None`` meaning "not given" — the sentinel ``resolve_params``
+    needs to tell an override from an inherited value (ADR-0022). Naming an ``artifact``
+    supplies both its hyperparameters and its baseline; naming none yields an *untrained*
+    detector, which is legal to build and to fit but refuses to judge. Combining the two
+    is refused, because an artifact is atomic.
+
+    A plain pass-through: coercion and validation belong to ``Team3Params``, which
+    ``resolve_params`` constructs. Doing it here as well would duplicate what pydantic
+    does and would report a bare ``int()`` failure instead of naming the field.
+    """
+    # load_artifact raises ValueError for an unknown id; _construct attributes it.
+    loaded = load_artifact(str(artifact)) if artifact else None
+    params = resolve_params(
+        Team3Params,
+        {
+            "window_size": window_size,
+            "lag_steps": lag_steps,
+            "fft_enabled": fft_enabled,
+            "fft_include_dc": fft_include_dc,
+            "percentile": percentile,
+            "channels": channels,
+            "min_segment_length": min_segment_length,
+        },
+        loaded.params if loaded else None,
     )
+    return Team3ZScoreDetector(params, loaded.state if loaded else None)
 
 
 def _log_burst(
@@ -129,7 +187,7 @@ def _flow_burst(
 ) -> FlowBurstDetector:
     # window/threshold default to the preset's own values rather than to shared constants:
     # 20 distinct peers per minute and 50 MB per half hour are both right, and neither is
-    # right for the other preset (ADR-0024 D8).
+    # right for the other preset (ADR-0024 D3).
     return FlowBurstDetector(
         preset=str(preset),
         window_minutes=_optional_float(window_minutes),
@@ -145,7 +203,12 @@ NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
 
 DETECTORS: dict[str, AdapterSpec[Detector]] = {
     "stub_threshold": AdapterSpec(_stub_threshold, _stub_threshold_capability),
-    "team3_zscore": AdapterSpec(_team3_zscore, static(_TEAM3_CAPABILITY)),
+    "team3_zscore": AdapterSpec(
+        _team3_zscore,
+        static(_TEAM3_CAPABILITY),
+        params_type=Team3Params,
+        artifact_param="artifact",
+    ),
     "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
     "flow_burst": AdapterSpec(_flow_burst, static(_FLOW_BURST_CAPABILITY)),
 }
@@ -256,3 +319,40 @@ def detector_capability(name: str, params: Mapping[str, Any]) -> Capability:
 
 def alert_engine_capability(name: str, params: Mapping[str, Any]) -> Capability:
     return lookup("alert engine", ALERT_ENGINES, name).capability(params)
+
+
+def config_parameters(factory: Callable[..., Any]) -> list[inspect.Parameter]:
+    """The factory parameters an operator may set — the adapter's configuration surface.
+
+    One definition of "counts as a config param", shared by the two things that ask:
+    ``/modules`` and ``/eval/detectors`` describe them for a UI, and the harness's sweep
+    expansion checks membership before rewriting a spec (ADR-0022). Kept in one place
+    because the exclusions are policy — ``resources`` is the deployment bag injected into
+    sink factories, not something a config names — and two copies would eventually let a
+    knob be advertised that cannot be swept, or the reverse.
+    """
+    try:
+        signature = inspect.signature(factory)
+    except (TypeError, ValueError):
+        return []
+    return [
+        parameter
+        for name, parameter in signature.parameters.items()
+        if name not in ("self", "resources")
+        and parameter.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    ]
+
+
+@cache
+def detector_param_names(name: str) -> frozenset[str]:
+    """Which hyperparameters a registered detector accepts.
+
+    Cached because ``DETECTORS`` is a module-level constant with static factories, so the
+    answer cannot change in a process — the same invariant ``/modules`` relies on to build
+    its catalogue once. Sweep expansion asks this per detector per spec, so without the
+    cache a benchmark re-runs ``inspect.signature`` for an answer that is already known.
+    """
+    return frozenset(
+        parameter.name
+        for parameter in config_parameters(lookup("detector", DETECTORS, name).factory)
+    )

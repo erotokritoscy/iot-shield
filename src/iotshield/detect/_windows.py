@@ -108,8 +108,12 @@ class DistinctAggregate(Generic[T]):
         key = self._key(item)
         if key is None:
             return
-        self._counts[key] -= 1
-        if self._counts[key] <= 0:
+        # One lookup, one write: the obvious `-= 1` then re-read costs three dict
+        # operations on a path that runs once per event leaving the window.
+        remaining = self._counts[key] - 1
+        if remaining > 0:
+            self._counts[key] = remaining
+        else:
             del self._counts[key]
 
     def value(self) -> float:
@@ -170,7 +174,10 @@ def find_episodes(
     left = 0
     for right in range(len(items)):
         tally.add(items[right])
-        while timestamp(items[right]) - timestamp(items[left]) > window:
+        # Hoisted: the right edge is invariant across the trailing-edge advance, and this
+        # is the innermost loop of every volumetric detector.
+        right_ts = timestamp(items[right])
+        while right_ts - timestamp(items[left]) > window:
             tally.remove(items[left])
             left += 1
 

@@ -350,6 +350,102 @@ class TestEvaluateRun:
         assert "What actually happened" in headings  # the timeline
         assert at.dataframe
 
+    def test_a_learning_detector_offers_weights_mode_and_its_hyperparameters(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """The ADR-0022 split, as the page's central choice.
+
+        Two exclusive modes rather than one form: an artifact is atomic, so a page that
+        let someone edit a hyperparameter beside an artifact id would be building the one
+        request construction refuses.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
+        assert set(at.radio(key="eval_team3_zscore_mode").options) == {
+            dashboard_app._TRAINED,
+            dashboard_app._SCRATCH,
+        }
+        # Trained mode shows the artifact id and NOT the hyperparameters.
+        assert at.text_input(key="eval_team3_zscore_art").value
+        assert "eval_team3_zscore_window_size" not in {w.key for w in at.number_input}
+
+    def test_fit_from_scratch_exposes_hyperparameters_prefilled_with_real_defaults(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
+        at.radio(key="eval_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
+        # 60, not 0: the factory param defaults to None (the "not given" sentinel), so the
+        # real default has to come from the adapter's hyperparameter model via /eval/detectors.
+        assert at.number_input(key="eval_team3_zscore_window_size").value == 60
+
+    def test_a_blank_artifact_blocks_the_run_rather_than_silently_running_untrained(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        # An empty artifact box reaches the factory as "no artifact", which ADR-0022 means
+        # as *untrained* — so clearing it must be refused, not quietly reinterpreted.
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
+        at.text_input(key="eval_team3_zscore_art").set_value("").run()
+        assert any("no artifact is named" in str(e.value) for e in at.error)
+        assert at.button[0].disabled
+
+    def test_fitting_from_scratch_under_protocol_none_blocks_the_run_and_says_why(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        # An untrained model under `none` judges nothing; a row of zeros would read as
+        # "this detector is bad" when the truth is that it never ran.
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
+        at.radio(key="eval_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
+        assert at.radio(key="eval_protocol").value == "none"
+        assert any("prefix" in str(e.value) for e in at.error)
+        assert at.button[0].disabled
+
+    def test_a_sweep_is_offered_and_reports_how_many_runs_it_costs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
+        sweep = at.selectbox(key="eval_stub_threshold_sw")
+        assert "threshold" in sweep.options
+        sweep.set_value("threshold").run()
+        at.text_input(key="eval_stub_threshold_swv").set_value("40, 80, 120").run()
+        assert any("3 run(s)" in str(c.value) for c in at.caption)
+        assert not at.exception
+
+    def test_a_swept_benchmark_runs_and_renders_a_row_per_value(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
+        at.selectbox(key="eval_stub_threshold_sw").set_value("threshold").run()
+        at.text_input(key="eval_stub_threshold_swv").set_value("40, 80").run()
+        at.button[0].click().run()
+        assert not at.exception
+        rendered = str(at.dataframe[0].value)
+        assert "stub_threshold[threshold=40" in rendered
+        assert "stub_threshold[threshold=80" in rendered
+
     def test_the_fit_protocol_is_offered(
         self,
         monkeypatch: pytest.MonkeyPatch,
