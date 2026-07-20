@@ -13,13 +13,13 @@ it is why a benchmark can never write to an operator's store.
 """
 
 from iotshield.eval.corpus import (
-    FETCHABLE,
     Case,
     CaseInput,
     Corpus,
     CorpusInfo,
     CorpusUnavailable,
     corpus_root,
+    fetchable,
     list_corpora,
     load_bundle,
     load_corpus,
@@ -38,7 +38,6 @@ from iotshield.eval.score import AlertMetrics, DetectorMetrics, score_alerts, sc
 from iotshield.eval.truth import GroundTruth, Incident
 
 __all__ = [
-    "FETCHABLE",
     "AlertMetrics",
     "Case",
     "CaseInput",
@@ -57,6 +56,7 @@ __all__ = [
     "evaluate",
     "evaluate_case",
     "evaluate_spec",
+    "fetchable",
     "list_corpora",
     "load_bundle",
     "load_corpus",

@@ -51,12 +51,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CORPUS_ROOT = _REPO_ROOT / "data" / "eval"
 """Corpora ship *inside* the repository, so a clone of it can benchmark with no other setup."""
 
-# Datasets we cannot redistribute but can convert locally. Listed so `--list-corpora` can
-# advertise them: a researcher should learn that SKAB is one command away, not conclude the
-# harness only has toy data. See eval/fetch.py.
-FETCHABLE: dict[str, str] = {
-    "skab": "SKAB valve faults + anomaly-free (Skoltech, GPLv3) — run: iotshield.eval fetch skab"
-}
+
+def fetchable() -> dict[str, str]:
+    """Datasets convertible locally but not shipped: corpus name -> how to obtain it.
+
+    Derived from ``fetch.DATASETS`` rather than restated, so a dataset is described in one
+    place. Imported inside the function because ``fetch`` imports this module — and the
+    dependency genuinely runs that way, since a converter builds ``Corpus`` objects.
+    """
+    from iotshield.eval.fetch import DATASETS
+
+    return {
+        name: f"{dataset.describe} — run: python -m iotshield.eval fetch {key}"
+        for key, dataset in DATASETS.items()
+        for name in dataset.corpora
+    }
 
 
 class CorpusUnavailable(RuntimeError):
@@ -142,13 +151,18 @@ def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: s
 
     Values are materialized once via ``to_numpy``; the obvious per-cell ``frame[c].iloc[i]``
     costs a pandas column selection *and* a scalar lookup per cell, measured at 22x slower
-    over a SKAB recording (100ms vs 4.5ms) and dominating corpus load.
+    over a SKAB recording (100ms vs 4.5ms). This is the write path only — bundles are read
+    back as text — so it costs generation and conversion, not benchmarking.
     """
     channels = list(frame.columns)
     values = frame.to_numpy()
+    # isoformat() once per row, not once per cell — it sat in the inner clause and was 36%
+    # of generating a corpus. Measured 1.7-2.1x; a precomputed line prefix and zip(channels,
+    # row) were both tried and were slower, so the index loop stays.
+    stamps = [moment.isoformat() for moment in timestamps]
     lines = [
-        f"{moment.isoformat()},{asset_id},{channels[column]},{row[column]}"
-        for moment, row in zip(timestamps, values, strict=True)
+        f"{stamp},{asset_id},{channels[column]},{row[column]}"
+        for stamp, row in zip(stamps, values, strict=True)
         for column in range(len(channels))
     ]
     return CaseInput(STUB_CSV, "\n".join(lines) + "\n")
@@ -166,9 +180,8 @@ def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
     return Case(name=entry.name, inputs=inputs, truth=truth)
 
 
-def load_bundle(directory: Path) -> Corpus:
-    """Load one bundle directory into a Corpus."""
-    manifest = read_manifest(directory)
+def _corpus_from(directory: Path, manifest: CorpusManifest) -> Corpus:
+    """Build a Corpus from an already-parsed manifest, so callers never re-read it."""
     try:
         cases = [_case_from_manifest(directory, entry) for entry in manifest.cases]
     except (OSError, BundleError) as exc:
@@ -180,6 +193,11 @@ def load_bundle(directory: Path) -> Corpus:
         provenance=manifest.provenance,
         licence=manifest.licence,
     )
+
+
+def load_bundle(directory: Path) -> Corpus:
+    """Load one bundle directory into a Corpus."""
+    return _corpus_from(directory, read_manifest(directory))
 
 
 def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
@@ -210,26 +228,31 @@ def load_corpus(name: str, root: Path | None = None) -> Corpus:
     state on a fresh clone, not a broken invocation.
     """
     base = corpus_root(root)
-    # A bundle answers to its directory name or its manifest name; they normally agree, and
-    # accepting either means renaming a folder does not break a saved command line.
+    # One pass: parse each manifest once, keep the names seen for the error message, and
+    # reuse the matched manifest rather than reading it a second time. A broken sibling
+    # bundle is skipped here for the same reason list_corpora tolerates it — one bad
+    # directory must not make every other corpus unloadable.
+    seen: list[str] = []
     for directory_name, directory in discover(base):
-        if name == directory_name or name == read_manifest(directory).name:
-            return load_bundle(directory)
+        try:
+            manifest = read_manifest(directory)
+        except BundleError:
+            continue
+        # A bundle answers to its directory name or its manifest name; they normally agree,
+        # and accepting either means renaming a folder does not break a saved command line.
+        if name in (directory_name, manifest.name):
+            return _corpus_from(directory, manifest)
+        seen.append(manifest.name)
 
-    for prefix, hint in FETCHABLE.items():
-        if name.startswith(prefix):
-            raise CorpusUnavailable(f"corpus {name!r} is not in {base}. {hint}")
-    known = ", ".join(info.name for info in list_corpora(root)) or "none"
-    raise CorpusUnavailable(f"unknown corpus {name!r} in {base}; available: {known}")
+    hint = fetchable().get(name)
+    if hint is not None:
+        raise CorpusUnavailable(f"corpus {name!r} is not in {base}. {hint}")
+    raise CorpusUnavailable(
+        f"unknown corpus {name!r} in {base}; available: {', '.join(seen) or 'none'}"
+    )
 
 
-def write_bundle(
-    directory: Path,
-    corpus: Corpus,
-    *,
-    provenance: str | None = None,
-    licence: str | None = None,
-) -> CorpusManifest:
+def write_bundle(directory: Path, corpus: Corpus) -> CorpusManifest:
     """Write a Corpus out as a bundle — the one writer the generator and fetcher share.
 
     Round-trips with ``load_bundle``: everything a benchmark needs is recorded, so a corpus
@@ -257,8 +280,8 @@ def write_bundle(
     manifest = CorpusManifest(
         name=corpus.name,
         description=corpus.description,
-        provenance=provenance if provenance is not None else corpus.provenance,
-        licence=licence if licence is not None else corpus.licence,
+        provenance=corpus.provenance,
+        licence=corpus.licence,
         cases=cases,
     )
     directory.mkdir(parents=True, exist_ok=True)

@@ -135,8 +135,8 @@ def lookup(kind: str, registry: Mapping[str, V], name: str) -> V:
     """Resolve a registered spec by name, or raise naming the known alternatives.
 
     Generic over the spec type (``AdapterSpec``, ``SinkSpec``, and the evaluation
-    harness's ``CorpusSpec``): it only indexes and lists keys, so every by-name registry
-    in the project shares one lookup and one error convention.
+    harness's ``Dataset``): it only indexes and lists keys, so every by-name registry in
+    the project shares one lookup and one error convention.
     """
     try:
         return registry[name]

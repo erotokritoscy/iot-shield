@@ -142,7 +142,7 @@ tests/          mirrors src; port contract tests are parametrized over all adapt
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
 data/demo/      small demo inputs (keep tiny; big datasets stay in ../reference/)
-data/eval/      ground-truth labels for the committed micro-corpus
+data/eval/      corpus bundles (manifest + gzipped readings + interval labels)
 ```
 
 **The evaluation plane (ADR-0021).** `eval/` judges the pipeline rather than using it, so it

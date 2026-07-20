@@ -40,6 +40,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
+from iotshield.normalize.syslog import SOURCE_FORMAT as SYSLOG
+
 MANIFEST_NAME = "manifest.json"
 CASES_DIR = "cases"
 LABELS_SUFFIX = ".labels.json.gz"
@@ -54,7 +57,7 @@ one by hand with ``gzip -dc``.
 # Extension per source format, so a bundle's readings are recognisable on sight rather than
 # uniformly ".txt". Unknown formats fall back to .txt — the manifest is authoritative either
 # way, this only affects what a human sees in a file listing.
-_EXTENSIONS = {"stub-csv": "csv", "syslog": "log", "syslog-rfc3164": "log"}
+_EXTENSIONS = {STUB_CSV: "csv", SYSLOG: "log", "syslog-rfc3164": "log"}
 
 
 class BundleError(RuntimeError):
@@ -126,16 +129,24 @@ def read_labels(path: Path) -> Labels:
         raise BundleError(f"invalid labels {path}: {exc}") from exc
 
 
+def _stem(case_name: str) -> str:
+    """A case name as a filename. One rule, because readings and labels must agree.
+
+    They are paired by the manifest, but a human reading ``cases/`` expects
+    ``foo.csv.gz`` beside ``foo.labels.json.gz``; two copies of this could desynchronise
+    that silently.
+    """
+    return case_name.replace("/", "-").replace("\\", "-").replace(" ", "_")
+
+
 def payload_name(case_name: str, source_format: str, index: int) -> str:
     """The on-disk filename for one case input — slashes flattened, format-hinted."""
-    stem = case_name.replace("/", "-").replace("\\", "-").replace(" ", "_")
     suffix = f"-{index}" if index else ""
-    return f"{CASES_DIR}/{stem}{suffix}.{_EXTENSIONS.get(source_format, 'txt')}.gz"
+    return f"{CASES_DIR}/{_stem(case_name)}{suffix}.{_EXTENSIONS.get(source_format, 'txt')}.gz"
 
 
 def labels_name(case_name: str) -> str:
-    stem = case_name.replace("/", "-").replace("\\", "-").replace(" ", "_")
-    return f"{CASES_DIR}/{stem}{LABELS_SUFFIX}"
+    return f"{CASES_DIR}/{_stem(case_name)}{LABELS_SUFFIX}"
 
 
 def write_payload(directory: Path, relative: str, text: str) -> None:

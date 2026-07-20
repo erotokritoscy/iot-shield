@@ -22,13 +22,16 @@ Two constraints the design keeps:
   (ADR-0018 §9-A).
 """
 
+from functools import cache
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from iotshield.api._eval_gate import EVAL_API_ENV, eval_api_enabled
+from iotshield.capabilities import lanes_in
 from iotshield.detect import Fittable
 from iotshield.eval import CorpusUnavailable, EvaluationReport, FitProtocol, evaluate, load_corpus
-from iotshield.eval.corpus import FETCHABLE, corpus_root, list_corpora
+from iotshield.eval.corpus import corpus_root, fetchable, list_corpora
 from iotshield.pipeline import PipelineSpec
 from iotshield.pipeline.registry import DETECTORS, build_detector
 
@@ -55,10 +58,17 @@ class CorporaResponse(BaseModel):
 
 
 class DetectorSummary(BaseModel):
-    """A benchmarkable detector. ``fittable`` tells the UI whether fit protocols apply."""
+    """A benchmarkable detector. ``fittable`` tells the UI whether fit protocols apply.
+
+    ``lanes`` is *decoded* server-side into bare ``Lane`` values, mirroring
+    ``ModuleInfo.formats``: capability tokens render to wire form only at the API boundary,
+    so a client never has to know the ``lane:`` prefix scheme (``capabilities.py``). Plural
+    because ``consumes`` is a set — a detector may legitimately consume more than one lane,
+    and picking one arbitrarily would misreport it.
+    """
 
     name: str
-    lane: str
+    lanes: list[str]
     fittable: bool
 
 
@@ -76,13 +86,16 @@ class LabelledSpec(BaseModel):
     spec: PipelineSpec
 
 
+@cache
 def _is_fittable(name: str) -> bool:
     """Whether a registered detector implements the optional training capability.
 
     Constructing it is the only way to ask — ``Fittable`` is a structural protocol, not a
     registry declaration (ADR-0021 D3). Acceptable here because this endpoint is a catalogue
     call, not an inner loop; if it ever moves onto a hot path, the answer belongs in
-    ``AdapterSpec`` beside ``SinkSpec.requires_database``.
+    ``AdapterSpec`` beside ``SinkSpec.requires_database``. Cached because ``DETECTORS`` is a
+    module-level constant with static factories, so the answer cannot change in a process —
+    and constructing ``team3_zscore`` reads its artifact off disk.
     """
     try:
         return isinstance(build_detector(name, {}), Fittable)
@@ -110,22 +123,20 @@ def create_eval_router() -> APIRouter:
                 )
                 for info in list_corpora()
             ],
-            fetchable=dict(FETCHABLE),
+            fetchable=fetchable(),
         )
 
     @router.get("/detectors")
     def detectors() -> list[DetectorSummary]:
         """The detectors a benchmark can compare, with their training capability."""
-        summaries: list[DetectorSummary] = []
-        for name, spec in sorted(DETECTORS.items()):
-            capability = spec.capability({})
-            lanes = sorted(token.render() for token in capability.consumes)
-            summaries.append(
-                DetectorSummary(
-                    name=name, lane=lanes[0] if lanes else "", fittable=_is_fittable(name)
-                )
+        return [
+            DetectorSummary(
+                name=name,
+                lanes=sorted(lane.value for lane in lanes_in(spec.capability({}).consumes)),
+                fittable=_is_fittable(name),
             )
-        return summaries
+            for name, spec in sorted(DETECTORS.items())
+        ]
 
     @router.post("/run")
     def run(request: EvalRunRequest) -> EvaluationReport:

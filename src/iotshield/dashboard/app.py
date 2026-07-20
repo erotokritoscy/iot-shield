@@ -50,12 +50,27 @@ DEFAULT_EVAL_REPORT = "reports/evaluation.json"
 _API_ERRORS = (httpx.HTTPError, ValidationError, json.JSONDecodeError)
 
 
+# Streamlit re-executes the whole script on every widget interaction, so a client built in
+# the page body is rebuilt on every click — and `httpx.Client()` loads the CA bundle each
+# time, measured at ~155ms, dwarfing the requests it then makes. Cached on the URL rather
+# than on nothing, so the env var stays live while the construction happens once. This is
+# also what stops a connection pool leaking per rerun.
+@st.cache_resource(show_spinner=False)
+def _read_client(url: str) -> ApiClient:
+    return ApiClient.from_url(url)
+
+
+@st.cache_resource(show_spinner=False)
+def _control_client(url: str) -> ControlClient:
+    return ControlClient.from_url(url)
+
+
 def get_client() -> ApiClient:
-    return ApiClient.from_url(os.environ.get(API_URL_ENV, DEFAULT_API_URL))
+    return _read_client(os.environ.get(API_URL_ENV, DEFAULT_API_URL))
 
 
 def get_control_client() -> ControlClient:
-    return ControlClient.from_url(os.environ.get(PIPELINE_API_URL_ENV, DEFAULT_PIPELINE_API_URL))
+    return _control_client(os.environ.get(PIPELINE_API_URL_ENV, DEFAULT_PIPELINE_API_URL))
 
 
 def _asset_label(asset: Asset) -> str:
@@ -442,6 +457,23 @@ def _bench_spec(detector: str, engine: str) -> dict[str, Any]:
     }
 
 
+_EVAL_RUN_KEY = "eval_latched_run"
+
+
+@st.cache_data(show_spinner=False)
+def _parse_report(payload: str) -> "EvaluationReport":
+    """Parse a cached benchmark payload — cached too, since reruns re-read the same string.
+
+    The run itself is cached, but the *parse* sat outside it, so every widget interaction
+    re-parsed the report (measured 9ms on an 880KB report with timelines). Returning the
+    model straight from ``_run_benchmark`` would be worse: ``cache_data`` round-trips
+    through pickle, measured slower than the JSON parse.
+    """
+    from iotshield.eval import EvaluationReport
+
+    return EvaluationReport.model_validate_json(payload)
+
+
 @st.cache_data(show_spinner=False)
 def _run_benchmark(corpus: str, detectors: tuple[str, ...], engine: str, protocol: str) -> str:
     """Run a benchmark through the API and return its JSON.
@@ -459,20 +491,6 @@ def _run_benchmark(corpus: str, detectors: tuple[str, ...], engine: str, protoco
         include_timeline=True,
     )
     return report.model_dump_json()
-
-
-def _summary_frame(report: "EvaluationReport") -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "spec": spec.spec,
-                "detectors": ", ".join(spec.detectors),
-                **spec.summary(),
-                "fitted": f"{spec.cases_fitted}/{len(spec.cases)}",
-            }
-            for spec in report.specs
-        ]
-    )
 
 
 def _render_timeline(report: "EvaluationReport") -> None:
@@ -520,12 +538,24 @@ def _render_report(report: "EvaluationReport") -> None:
     )
 
     st.subheader("Head to head")
+    # One construction: spec.summary() is the whole row, and the chart is a slice of it.
+    summary = pd.DataFrame(
+        [
+            {
+                "spec": spec.spec,
+                "detectors": ", ".join(spec.detectors),
+                **spec.summary(),
+                "fitted": f"{spec.cases_fitted}/{len(spec.cases)}",
+            }
+            for spec in report.specs
+        ]
+    )
     chart = spec_scores(
-        [{"spec": spec.spec, "event_f1": spec.summary()["event_f1"]} for spec in report.specs]
+        [{"spec": row["spec"], "event_f1": row["event_f1"]} for _, row in summary.iterrows()]
     )
     if chart is not None:
         st.altair_chart(chart, width="stretch")
-    st.dataframe(_summary_frame(report), width="stretch", hide_index=True)
+    st.dataframe(summary, width="stretch", hide_index=True)
     st.caption(
         "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
         "what papers report (per-row coverage). `compression_ratio` is detections-per-incident "
@@ -552,16 +582,23 @@ def _render_report(report: "EvaluationReport") -> None:
 
     _render_timeline(report)
 
-    selected = report.specs[0]
-    st.subheader(f"{selected.spec} — per case")
+    # Every spec, not just the first: comparing them is the page's whole purpose, and a
+    # table pinned to `specs[0]` silently hid the second detector's cases and notes.
+    st.subheader("Per case")
     st.dataframe(
         pd.DataFrame(
-            [case.model_dump(exclude={"precision_at_k", "timeline"}) for case in selected.cases]
+            [
+                {"spec": spec.spec, **case.model_dump(exclude={"precision_at_k", "timeline"})}
+                for spec in report.specs
+                for case in spec.cases
+            ]
         ),
         width="stretch",
         hide_index=True,
     )
-    for note in sorted({note for case in selected.cases for note in case.notes}):
+    for note in sorted(
+        {note for spec in report.specs for case in spec.cases for note in case.notes}
+    ):
         st.warning(note)
 
 
@@ -627,8 +664,9 @@ def evaluate_page(report_path: Path) -> None:
         st.caption(f"Provenance: {corpus.provenance} · Licence: {corpus.licence}")
 
     # Only telemetry detectors can judge the telemetry corpora we ship; offering a log
-    # detector here would build a spec whose format the API rightly refuses.
-    choices = [item.name for item in detectors if item.lane == "lane:telemetry"]
+    # detector here would build a spec whose format the API rightly refuses. The lane comes
+    # back decoded, so this compares against the Lane enum rather than a wire prefix.
+    choices = [item.name for item in detectors if Lane.TELEMETRY.value in item.lanes]
     fittable = {item.name for item in detectors if item.fittable}
     chosen = st.multiselect(
         "Detectors to compare", choices, default=choices[:2], key="eval_detectors"
@@ -640,19 +678,26 @@ def evaluate_page(report_path: Path) -> None:
             "configured and the report will say so."
         )
 
-    if not st.button("Run benchmark", type="primary", disabled=not chosen):
+    # Latch the run into session state rather than rendering only on the click. A bare
+    # `if not st.button(): return` renders the report *only* on the click rerun — so the
+    # first touch of a selectbox inside it (the timeline's spec/case pickers) reruns with
+    # the button False and wipes the page. Latching is what lets the cache below pay off:
+    # exploring a finished report replays from cache instead of clearing it.
+    if st.button("Run benchmark", type="primary", disabled=not chosen):
+        st.session_state[_EVAL_RUN_KEY] = (corpus_name, tuple(chosen), engine, protocol)
+
+    latched = st.session_state.get(_EVAL_RUN_KEY)
+    if latched is None:
         st.caption("Pick detectors and run — results are cached, so exploring them is instant.")
         return
 
-    from iotshield.eval import EvaluationReport
-
-    with st.spinner(f"Benchmarking {len(chosen)} detector(s) over {corpus.cases} case(s)…"):
+    with st.spinner(f"Benchmarking {len(latched[1])} detector(s)…"):
         try:
-            payload = _run_benchmark(corpus_name, tuple(chosen), engine, protocol)
+            payload = _run_benchmark(*latched)
         except _API_ERRORS as exc:
             st.error(f"Benchmark failed: {exc}")
             return
-    _render_report(EvaluationReport.model_validate_json(payload))
+    _render_report(_parse_report(payload))
 
 
 def main() -> None:

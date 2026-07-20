@@ -91,3 +91,20 @@ def test_the_generated_corpus_round_trips_through_a_bundle(tmp_path: Path) -> No
     restored = load_bundle(tmp_path / "synthetic")
     assert len(restored.cases) == len(corpus.cases)
     assert restored.incidents == corpus.incidents
+
+
+def test_the_threshold_hint_matches_the_detector_it_calibrates() -> None:
+    """The corpus's scales assume `stub_threshold`'s default; pin the two together.
+
+    Without this the coupling is a comment. `THRESHOLD_HINT` is why spike and drift cross
+    and stuck does not — change the registered default and the corpus quietly stops
+    discriminating, with the whole suite still green, because the bench spec pins its own
+    threshold and cannot see the drift.
+    """
+    import inspect
+
+    from iotshield.eval.generate import THRESHOLD_HINT
+    from iotshield.pipeline.registry import DETECTORS
+
+    default = inspect.signature(DETECTORS["stub_threshold"].factory).parameters["threshold"].default
+    assert default == THRESHOLD_HINT

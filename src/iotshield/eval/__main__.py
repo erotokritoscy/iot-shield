@@ -21,24 +21,34 @@ import sys
 from pathlib import Path
 
 from iotshield.eval.corpus import (
-    FETCHABLE,
     CorpusUnavailable,
     corpus_root,
+    fetchable,
     list_corpora,
     load_corpus,
 )
 from iotshield.eval.fit import FitProtocol
+from iotshield.eval.generate import CORPUS_NAME
 from iotshield.eval.report import render
 from iotshield.eval.runner import evaluate
 from iotshield.pipeline import load_spec
 
 _DEFAULT_SPEC = Path("config/bench/team3.yaml")
-_SUBCOMMANDS = ("list", "fetch", "generate")
+
+
+def _common_parser() -> argparse.ArgumentParser:
+    """Flags every verb accepts, declared once and inherited via ``parents=``.
+
+    Declaring --corpus-path per subparser instead let the root-level flag be silently
+    overwritten by the subparser's own default, so `--corpus-path X list` ignored X.
+    """
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--corpus-path", type=Path, default=None, help="corpus root override")
+    return common
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--corpus", default="synthetic", help="corpus name (default: synthetic)")
-    parser.add_argument("--corpus-path", type=Path, default=None, help="corpus root override")
+    parser.add_argument("--corpus", default=CORPUS_NAME, help="corpus name (default: synthetic)")
     parser.add_argument(
         "--spec",
         type=Path,
@@ -62,36 +72,40 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    common = _common_parser()
     parser = argparse.ArgumentParser(
         prog="python -m iotshield.eval",
         description="Benchmark pipeline specs against labelled corpora.",
+        parents=[common],
     )
     subparsers = parser.add_subparsers(dest="command")
     _add_run_arguments(parser)
 
-    listing = subparsers.add_parser("list", help="list available corpora")
-    listing.add_argument("--corpus-path", type=Path, default=None)
+    subparsers.add_parser("list", parents=[common], help="list available corpora")
 
-    fetching = subparsers.add_parser("fetch", help="convert a third-party dataset into bundles")
+    fetching = subparsers.add_parser(
+        "fetch", parents=[common], help="convert a third-party dataset into bundles"
+    )
     fetching.add_argument("dataset", help="dataset name, e.g. skab")
     fetching.add_argument("--source", type=Path, default=None, help="local checkout to convert")
-    fetching.add_argument("--corpus-path", type=Path, default=None)
 
-    generating = subparsers.add_parser("generate", help="(re)build the synthetic corpus bundle")
-    generating.add_argument("--corpus-path", type=Path, default=None)
+    subparsers.add_parser("generate", parents=[common], help="(re)build the synthetic bundle")
     return parser
 
 
 def _list(args: argparse.Namespace) -> int:
     root = corpus_root(args.corpus_path)
     print(f"Corpora in {root}:")
-    for info in list_corpora(args.corpus_path):
+    infos = list_corpora(args.corpus_path)
+    for info in infos:
         print(f"  {info.name:<16} {info.cases:>3} case(s)  {info.description}")
-    if not list_corpora(args.corpus_path):
+    if not infos:
         print("  (none — run: python -m iotshield.eval generate)")
+    # fetchable() is keyed by corpus so load_corpus can match exactly; one dataset yields
+    # several, so print each distinct instruction once rather than once per corpus.
     print("\nAvailable to convert locally (not redistributed):")
-    for name, hint in sorted(FETCHABLE.items()):
-        print(f"  {name:<16} {hint}")
+    for hint in sorted(set(fetchable().values())):
+        print(f"  {hint}")
     return 0
 
 
@@ -101,10 +115,7 @@ def _fetch(args: argparse.Namespace) -> int:
     root = corpus_root(args.corpus_path)
     try:
         written = fetch(args.dataset, root, args.source)
-    except CorpusUnavailable as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except ValueError as exc:
+    except (CorpusUnavailable, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     for name, cases in written:
@@ -115,9 +126,9 @@ def _fetch(args: argparse.Namespace) -> int:
 def _generate(args: argparse.Namespace) -> int:
     from iotshield.eval.generate import write
 
-    root = corpus_root(args.corpus_path)
-    corpus = write(root / "synthetic")
-    print(f"wrote {root / 'synthetic'}  ({len(corpus.cases)} cases, {corpus.incidents} incidents)")
+    directory = corpus_root(args.corpus_path) / CORPUS_NAME
+    corpus = write(directory)
+    print(f"wrote {directory}  ({len(corpus.cases)} cases, {corpus.incidents} incidents)")
     return 0
 
 
@@ -150,15 +161,11 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    raw = list(sys.argv[1:] if argv is None else argv)
-    parser = build_parser()
-    # argparse cannot express "subcommand optional, else these flags"; deciding here keeps
-    # the common case (`--corpus X --spec Y`) free of a mandatory `run` verb.
-    if raw and raw[0] in _SUBCOMMANDS:
-        args = parser.parse_args(raw)
-        return {"list": _list, "fetch": _fetch, "generate": _generate}[args.command](args)
-    args = parser.parse_args(raw)
-    return _run(args)
+    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    # `command` is None when no verb was given, which is the benchmark case — so the command
+    # a researcher types most often stays the shortest, with no mandatory `run` verb.
+    handlers = {"list": _list, "fetch": _fetch, "generate": _generate}
+    return handlers.get(args.command, _run)(args)
 
 
 if __name__ == "__main__":

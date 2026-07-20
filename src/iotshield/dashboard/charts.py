@@ -133,6 +133,15 @@ def severity_bar(alerts: list[PrioritizedAlert]) -> alt.Chart | None:
 TRUTH = "#b8b6ac"  # ground-truth band: a reference element, deliberately not a series hue
 
 
+def _scored(rows: list[dict]) -> list[dict]:
+    """Drop rows whose score is undefined — never plot them as zero (ADR-0021 D2).
+
+    A bar at zero claims a detector scored nothing when the truth is that nothing was
+    measurable. Shared so the two charts cannot disagree about it.
+    """
+    return [row for row in rows if row.get("event_f1") is not None]
+
+
 def spec_scores(rows: list[dict]) -> alt.Chart | None:
     """Event F1 per spec: a magnitude comparison, so one hue and identity on the axis.
 
@@ -140,7 +149,7 @@ def spec_scores(rows: list[dict]) -> alt.Chart | None:
     rather than drawn as zero — a bar at zero would claim a detector scored nothing when
     the truth is that nothing was measurable (ADR-0021 D2).
     """
-    scored = [row for row in rows if row.get("event_f1") is not None]
+    scored = _scored(rows)
     if not scored:
         return None
     frame = pd.DataFrame(scored)
@@ -166,7 +175,7 @@ def case_variance(rows: list[dict]) -> alt.Chart | None:
     A mean cannot show that; a strip shows it instantly. Identity is on the y-axis, so this
     is a single-hue chart however many specs are compared.
     """
-    scored = [row for row in rows if row.get("event_f1") is not None]
+    scored = _scored(rows)
     if not scored:
         return None
     frame = pd.DataFrame(scored)

@@ -27,7 +27,8 @@ from pathlib import Path
 import pandas as pd
 
 from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, to_stub_csv, write_bundle
-from iotshield.eval.truth import GroundTruth, Incident
+from iotshield.eval.truth import GroundTruth
+from iotshield.pipeline.registry import lookup
 
 SKAB_URL = "https://github.com/waico/SKAB"
 SKAB_LICENCE = f"GPL-3.0 — (c) Skoltech (waico/SKAB). Not redistributed; see {SKAB_URL}"
@@ -48,20 +49,27 @@ _SKAB_SUBSETS = {
 
 @dataclass(frozen=True)
 class Dataset:
-    """A convertible third-party dataset: how to find it, and how to turn it into bundles."""
+    """A convertible third-party dataset: how to find it, and how to turn it into bundles.
+
+    ``corpora`` names what conversion produces, so ``load_corpus`` can recognise an
+    un-fetched corpus by *exact name* rather than a prefix guess — and so this registry is
+    the single description of a dataset rather than one of two.
+    """
 
     describe: str
     url: str
     licence: str
+    corpora: tuple[str, ...]
     default_source: Path | None
     convert: Callable[[Path], list[Corpus]]
 
 
-def _incidents_from_flags(timestamps: list, flags: list[bool]) -> list[Incident]:
-    """Collapse SKAB's per-row ``anomaly`` column into fault intervals."""
-    from iotshield.detect import merge_runs
-
-    return [Incident(timestamps[start], timestamps[end]) for start, end in merge_runs(flags)]
+def fetch_hint(corpus_name: str) -> str | None:
+    """How to obtain a corpus this machine does not have, or None if we cannot get it."""
+    for name, dataset in DATASETS.items():
+        if corpus_name in dataset.corpora:
+            return f"{dataset.describe} — run: python -m iotshield.eval fetch {name}"
+    return None
 
 
 def _skab_case(path: Path) -> Case:
@@ -78,7 +86,10 @@ def _skab_case(path: Path) -> Case:
     return Case(
         name=f"{path.parent.name}-{path.stem}",
         inputs=[to_stub_csv(channels, timestamps, _ASSET)],
-        truth=GroundTruth.from_incidents(timestamps, _incidents_from_flags(timestamps, flags)),
+        # from_timeline owns the collapse of per-row flags into incidents; re-deriving it
+        # here would give the answer key a second definition of "one incident", which is
+        # exactly what truth.py exists to prevent.
+        truth=GroundTruth.from_timeline(list(zip(timestamps, flags, strict=True))),
     )
 
 
@@ -123,6 +134,7 @@ DATASETS: dict[str, Dataset] = {
         describe="SKAB — Skoltech Anomaly Benchmark (valve faults + anomaly-free)",
         url=SKAB_URL,
         licence=SKAB_LICENCE,
+        corpora=tuple(_SKAB_SUBSETS),
         default_source=_WORKSPACE_SKAB,
         convert=_convert_skab,
     )
@@ -131,12 +143,7 @@ DATASETS: dict[str, Dataset] = {
 
 def fetch(name: str, root: Path, source: Path | None = None) -> list[tuple[str, int]]:
     """Convert a named dataset into bundles under ``root``; return (corpus, cases) pairs."""
-    try:
-        dataset = DATASETS[name]
-    except KeyError:
-        known = ", ".join(sorted(DATASETS))
-        raise ValueError(f"unknown dataset {name!r}; known: {known}") from None
-
+    dataset = lookup("dataset", DATASETS, name)
     chosen = source or dataset.default_source
     if chosen is None or not chosen.is_dir():
         raise CorpusUnavailable(

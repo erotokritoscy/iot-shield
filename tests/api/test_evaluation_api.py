@@ -74,9 +74,11 @@ class TestCatalogue:
     ) -> None:
         payload = client.get("/eval/corpora").json()
         assert "synthetic" in {item["name"] for item in payload["corpora"]}
-        # A researcher should learn SKAB is one command away, not conclude we only have
-        # toy data.
-        assert "skab" in payload["fetchable"]
+        # Keyed by *corpus* name, so an un-fetched corpus is recognised exactly rather
+        # than by a prefix guess — and a researcher learns SKAB is one command away rather
+        # than concluding the harness only has toy data.
+        assert "skab_valve1" in payload["fetchable"]
+        assert "fetch skab" in payload["fetchable"]["skab_valve1"]
         assert payload["root"]
 
     def test_each_corpus_reports_its_size_and_terms(self, client: TestClient) -> None:
@@ -89,8 +91,9 @@ class TestCatalogue:
         detectors = {item["name"]: item for item in client.get("/eval/detectors").json()}
         assert detectors["team3_zscore"]["fittable"] is True
         assert detectors["stub_threshold"]["fittable"] is False
-        assert detectors["stub_threshold"]["lane"] == "lane:telemetry"
-        assert detectors["log_burst"]["lane"] == "lane:log"
+        # Decoded, not wire tokens: a client never needs to know the "lane:" prefix.
+        assert detectors["stub_threshold"]["lanes"] == ["telemetry"]
+        assert detectors["log_burst"]["lanes"] == ["log"]
 
 
 class TestRun:
@@ -168,3 +171,24 @@ def test_the_eval_router_needs_no_database(monkeypatch: pytest.MonkeyPatch) -> N
         json={"corpus": "synthetic", "specs": [{"label": "stub", "spec": bench_spec()}]},
     )
     assert response.status_code == 200
+
+
+def test_importing_the_control_app_does_not_import_the_eval_plane() -> None:
+    """ADR-0021 D1's droppable-plane claim, for the harder of the two modules.
+
+    `create_control_app` genuinely does construct the eval router, so the deferred import
+    at its call site is load-bearing: hoisting it to module scope would make the Pipeline
+    API fail to import without `iotshield.eval` present, with a green suite. Checked in a
+    subprocess because the rest of this file has already imported the package.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import iotshield.api.control; "
+        "print(any(m == 'iotshield.eval' or m.startswith('iotshield.eval.') for m in sys.modules))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"
