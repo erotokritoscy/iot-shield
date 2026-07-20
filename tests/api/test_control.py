@@ -73,6 +73,16 @@ class TestHealthAndModules:
         assert sinks["postgres"]["params"] == []  # the injected 'resources' is not a param
         assert {p["name"] for p in sinks["file"]["params"]} == {"path"}
 
+    def test_modules_report_closed_vocabularies_as_choices(self, control: ControlHarness) -> None:
+        # A param the factory annotates Literal[...] carries its allowed values, so the UI
+        # can offer them instead of accepting free text (ADR-0023 D9).
+        body = control.client.get("/modules").json()
+        params = {
+            p["name"]: p for d in body["detectors"] if d["name"] == "log_burst" for p in d["params"]
+        }
+        assert params["preset"]["choices"] == ["severity_spike", "auth_failure"]
+        assert params["window_minutes"]["choices"] is None  # open-ended: no vocabulary
+
 
 class TestValidate:
     def test_matching_chain_is_ok_without_issues(self, control: ControlHarness) -> None:

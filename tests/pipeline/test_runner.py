@@ -298,6 +298,55 @@ class TestDemoArtifacts:
         # Both produced lanes are judged now, so the uncovered-lane warning is gone.
         assert not any("no detector that consumes it" in warning for warning in report.warnings)
 
+    def _demo(self, name: str, tmp_path: Path):
+        """Load a shipped demo config with repo-relative paths and a scratch database."""
+        from iotshield.pipeline import load_config
+
+        loaded = load_config(REPO_ROOT / "config" / name)
+        return loaded.model_copy(
+            update={
+                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
+                "sources": [
+                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
+                    for source in loaded.sources
+                ],
+            }
+        )
+
+    def test_flow_demo_detects_the_scan_and_quarantines_foreign_traffic(
+        self, tmp_path: Path
+    ) -> None:
+        # ADR-0023 + ADR-0024: a compromised camera sweeping the internet for telnet. The
+        # sweep merges into ONE collective detection, the busy-but-boring gateway (30 flows,
+        # one destination) stays silent, and the flow between two foreign hosts is captured
+        # as malformed rather than dropped.
+        report = run_pipeline(self._demo("demo_flow.yaml", tmp_path))
+        assert (report.events, report.malformed, report.detections, report.alerts) == (81, 1, 1, 1)
+        top = report.top_alerts[0]
+        assert top.asset_id == "10.0.0.24"
+        assert len(top.detection_ids) == 1  # one incident, one judgment
+        assert top.score_components["corroboration"] == 1.0  # single lane, on its own
+
+    def test_trimodal_demo_correlates_all_three_lanes_on_one_asset(self, tmp_path: Path) -> None:
+        # The payoff of the FLOW lane: telemetry + log + flow agreeing about one device.
+        # corroboration is 1 + 0.5*(lanes-1), so three lanes make it 2.0 — a factor no run
+        # could reach before, since the product had only ever had two judged lanes.
+        from iotshield.contracts import AlertSeverity
+
+        report = run_pipeline(self._demo("demo_trimodal.yaml", tmp_path))
+        assert (report.detections, report.alerts) == (4, 1)
+        top = report.top_alerts[0]
+        assert top.asset_id == "10.0.0.24"
+        # corroboration == 2.0 IS the three-lane assertion: the factor is derived from the
+        # number of distinct lanes in the bucket, so no separate lane check is needed.
+        assert top.score_components["corroboration"] == 2.0
+        assert top.severity is AlertSeverity.CRITICAL
+        assert len(top.detection_ids) == 4  # 2 telemetry points + 1 log burst + 1 flow sweep
+        # The same flow sweep alone scores MEDIUM (see the test above); corroboration is
+        # what moves it, so assert the ordering rather than a brittle exact score.
+        solo = run_pipeline(self._demo("demo_flow.yaml", tmp_path))
+        assert top.priority_score > solo.top_alerts[0].priority_score
+
     def test_log_demo_merges_the_brute_force_into_one_alert(self, tmp_path: Path) -> None:
         # ADR-0020: the LOG lane's first detector. Twelve sshd failures in ~60s on
         # gateway-01 merge into ONE collective detection (not twelve), while gateway-02's
@@ -475,7 +524,7 @@ class TestMultiSource:
     SYSLOG = "<35>1 2026-07-07T12:03:05Z pump-02 sensord - - - reading out of range\n"
 
     def multi_config(
-        self, tmp_path: Path, sources: list[dict[str, str]], **overrides: Any
+        self, tmp_path: Path, sources: list[dict[str, Any]], **overrides: Any
     ) -> PipelineConfig:
         base: dict[str, Any] = {
             "database_url": f"sqlite:///{(tmp_path / 'run.db').as_posix()}",
@@ -497,6 +546,34 @@ class TestMultiSource:
         assert len(result.events) == 3  # 2 telemetry + 1 log, pooled into one run
         assert len(result.detections) == 2  # only the telemetry detector fires
         assert any("no detector that consumes it" in w for w in result.warnings)
+
+    def test_two_sources_of_one_normalizer_with_different_params_stay_distinct(
+        self, tmp_path: Path
+    ) -> None:
+        """Normalizers dedupe by name AND params (ADR-0023 D8).
+
+        Two flow sources watching different home networks are genuinely two normalizers.
+        Deduping on the name alone would build one and reuse it for both, silently
+        attributing the second source's flows using the first's networks — here that would
+        reject every row of source 2 as "neither endpoint is local".
+        """
+        header = "start,src_ip,src_port,dst_ip,dst_port,proto\n"
+        site_a = header + "2026-07-07T12:00:00+00:00,10.0.0.7,51514,203.0.113.9,23,tcp\n"
+        site_b = header + "2026-07-07T12:00:01+00:00,198.51.100.4,51515,203.0.113.9,23,tcp\n"
+        config = self.multi_config(
+            tmp_path,
+            [
+                {"normalizer": "flow", "source_format": "flow-csv"},
+                {
+                    "normalizer": "flow",
+                    "source_format": "flow-csv",
+                    "params": {"home_networks": ["198.51.100.0/24"]},
+                },
+            ],
+        )
+        result = compute_run(config, [site_a, site_b])
+        assert result.malformed == []
+        assert sorted(event.asset_id for event in result.events) == ["10.0.0.7", "198.51.100.4"]
 
     def test_pooled_lane_events_reach_the_detector_in_time_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

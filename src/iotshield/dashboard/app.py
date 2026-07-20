@@ -215,7 +215,14 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for param in params:
         key = f"{prefix}_{param.name}"
-        if param.type == "float":
+        if param.choices:
+            # A closed vocabulary the factory declared (a preset, a lane): offer it rather
+            # than making the operator type it from memory into a free-text box, where a
+            # typo surfaces only as a guard error after the fact (ADR-0023 D9).
+            default = str(param.default) if param.default is not None else None
+            index = param.choices.index(default) if default in param.choices else 0
+            values[param.name] = st.selectbox(param.name, param.choices, index=index, key=key)
+        elif param.type == "float":
             values[param.name] = st.number_input(
                 param.name, value=float(param.default or 0.0), key=key
             )
@@ -229,6 +236,22 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     return values
 
 
+def _default_normalizer_index(names: list[str], normalizers: dict[str, Any]) -> int:
+    """Open the page on the reference telemetry normalizer, not on an alphabetical accident.
+
+    The detector picker learned this lesson in ADR-0020 ("whichever name sorts first"
+    silently became wrong when a second lane arrived); the source picker had the same latent
+    bug and ADR-0023 tripped it — ``flow`` sorts before ``stub``, so registering it would
+    have opened every fresh session on a flow chain fed telemetry CSV. Identified by the
+    format the reference normalizer accepts rather than by its name, so this follows the
+    registry instead of restating it.
+    """
+    for index, name in enumerate(names):
+        if STUB_CSV_FORMAT in normalizers[name].formats:
+            return index
+    return 0
+
+
 def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, str], str, str]:
     """One input source: normalizer + format picker, and its content (upload or paste).
 
@@ -237,7 +260,13 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
     telemetry CSV alongside syslog) that pool into the detector lanes (ADR-0019).
     """
     st.markdown(f"**Source {index + 1}**")
-    normalizer_name = st.selectbox("Normalizer", sorted(normalizers), key=f"src_{index}_norm")
+    names = sorted(normalizers)
+    normalizer_name = st.selectbox(
+        "Normalizer",
+        names,
+        index=_default_normalizer_index(names, normalizers),
+        key=f"src_{index}_norm",
+    )
     formats = normalizers[normalizer_name].formats
     source_format = (
         st.selectbox("Input format", formats, key=f"src_{index}_fmt")
@@ -259,24 +288,51 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
     return {"normalizer": normalizer_name, "source_format": source_format}, content, origin
 
 
-def _default_detectors(detectors: dict[str, Any], produced: set[str]) -> list[str]:
-    """The detector to preselect: one the page's sources can actually feed.
+def _default_detector_index(names: list[str], detectors: dict[str, Any], produced: set[str]) -> int:
+    """Which detector to preselect: one the page's sources can actually feed.
 
     Registry-driven rather than hardcoded, which is the whole point: "whichever name sorts
     first" silently became wrong the moment the registry held a detector for a second lane
     (ADR-0020), preselecting a *log* detector beside the default telemetry source — a chain
-    the guard immediately warns about. Streamlit honours ``default=`` only on a widget's
+    the guard immediately warns about. Streamlit honours ``index=`` only on a widget's
     first render, so this reads the sources at their defaults too; switching the source
     afterwards leaves the operator's own selection alone (and the guard speaks up if it no
-    longer fits). Returning nothing when nothing fits is deliberate — the caller turns that
-    into "pick a detector", which beats preselecting one the guard would flag.
+    longer fits). Falling back to 0 when nothing fits is deliberate — the guard will say so,
+    which beats an empty row that silently contributes no detector at all.
 
     Matching rendered tokens is safe only because normalizers produce lane tokens and
     detectors consume them; the typed version of this joint is ``compat.lanes_in``. If the
     UI ever needs another axis, decode lanes server-side beside ``ModuleInfo.formats``
     rather than growing a string scheme here.
     """
-    return [name for name in sorted(detectors) if set(detectors[name].consumes) & produced][:1]
+    fitting = [name for name in names if set(detectors[name].consumes) & produced]
+    return names.index(fitting[0]) if fitting else 0
+
+
+def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str]) -> dict[str, Any]:
+    """One detector instance: which adapter, and its params (ADR-0023).
+
+    The mirror of ``_source_widgets``, and for the same reason. ``PipelineSpec.detectors``
+    is a *list* of instances, but this page used to render it as a multiselect over
+    *names* — a set. That was lossy in one specific, costly way: names are unique, and the
+    parameter widgets were keyed by name, so an operator could never configure the same
+    adapter twice with different params. Every preset-bearing detector (``log_burst``, and
+    now the flow detectors) was therefore limited to exactly one preset per run from the
+    UI, while the YAML and API paths had always allowed several.
+
+    Keying by *index* instead of by name is the whole fix; everything else here is the
+    shape ``_source_widgets`` already established.
+    """
+    names = sorted(detectors)
+    name = st.selectbox(
+        f"Detector {index + 1}",
+        names,
+        index=_default_detector_index(names, detectors, produced) if index == 0 else 0,
+        key=f"det_{index}_name",
+    )
+    with st.expander(f"{name} parameters"):
+        params = _param_widgets(f"det_{index}", detectors[name].params)
+    return {"name": name, "params": params}
 
 
 def compose_page(client: ControlClient) -> None:
@@ -317,20 +373,21 @@ def compose_page(client: ControlClient) -> None:
         inputs.append({"content": content, "origin": origin})
 
     st.subheader("2 · Detectors")
+    st.caption(
+        "Add one row per detector instance. The same adapter may appear more than once — "
+        "that is how you run two presets (e.g. a fan-out and an exfiltration rule) at once."
+    )
     produced_lanes = {
         token for source in sources for token in normalizers[source["normalizer"]].produces
     }
-    selected = st.multiselect(
-        "Detectors",
-        sorted(detectors),
-        default=_default_detectors(detectors, produced_lanes),
-        key="compose_detectors",
+    detector_count = int(
+        st.number_input(
+            "How many detectors?", min_value=1, max_value=10, value=1, step=1, key="compose_det_n"
+        )
     )
-    detector_specs: list[dict[str, Any]] = []
-    for name in selected:
-        with st.expander(f"{name} parameters"):
-            params = _param_widgets(f"det_{name}", detectors[name].params)
-        detector_specs.append({"name": name, "params": params})
+    detector_specs: list[dict[str, Any]] = [
+        _detector_widgets(index, detectors, produced_lanes) for index in range(detector_count)
+    ]
 
     st.subheader("3 · Alert engine")
     engine_name = st.selectbox("Alert engine", sorted(engines), key="compose_engine")

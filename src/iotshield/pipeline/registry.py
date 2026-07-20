@@ -13,7 +13,7 @@ unknown names and bad params fail loudly with the known alternatives.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
 from iotshield.alert.stub import CAPABILITY as _STUB_ALERT_CAPABILITY
@@ -22,15 +22,19 @@ from iotshield.capabilities import Capability, CapabilityProvider, static
 from iotshield.contracts import Lane
 from iotshield.detect import (
     Detector,
+    FlowBurstDetector,
     LogBurstDetector,
     StubThresholdDetector,
     Team3ZScoreDetector,
 )
+from iotshield.detect.flow_burst import CAPABILITY as _FLOW_BURST_CAPABILITY
+from iotshield.detect.flow_burst import DEFAULT_PRESET as _DEFAULT_FLOW_PRESET
 from iotshield.detect.log_burst import CAPABILITY as _LOG_BURST_CAPABILITY
 from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
 from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
-from iotshield.normalize import Normalizer, StubCsvNormalizer, SyslogNormalizer
+from iotshield.normalize import FlowNormalizer, Normalizer, StubCsvNormalizer, SyslogNormalizer
+from iotshield.normalize.flow import CAPABILITY as _FLOW_NORMALIZER_CAPABILITY
 from iotshield.normalize.stub import CAPABILITY as _STUB_NORMALIZER_CAPABILITY
 from iotshield.normalize.syslog import CAPABILITY as _SYSLOG_NORMALIZER_CAPABILITY
 from iotshield.sink import ResultSink, SinkResources
@@ -53,9 +57,14 @@ class AdapterSpec(Generic[T]):
     capability: CapabilityProvider
 
 
-def _stub_threshold(threshold: float = 80.0, lane: str = "telemetry") -> StubThresholdDetector:
+def _stub_threshold(
+    threshold: float = 80.0, lane: Literal["telemetry", "log", "flow"] = "telemetry"
+) -> StubThresholdDetector:
     # float() coerces YAML scalars that arrive quoted (e.g. "90"); a non-numeric
     # value raises ValueError, caught and attributed by _build.
+    # The Literal is not enforcement (params arrive untyped from YAML — Lane() is what
+    # rejects a bad value); it is *declaration*, so /modules can report the closed
+    # vocabulary and the UI can offer it as a choice instead of a free-text box.
     return StubThresholdDetector(threshold=float(threshold), lane=Lane(lane))
 
 
@@ -84,7 +93,9 @@ def _team3_zscore(
 
 
 def _log_burst(
-    preset: str = _DEFAULT_LOG_PRESET, window_minutes: float = 5.0, min_count: int = 5
+    preset: Literal["severity_spike", "auth_failure"] = _DEFAULT_LOG_PRESET,
+    window_minutes: float = 5.0,
+    min_count: int = 5,
 ) -> LogBurstDetector:
     # Coercion mirrors _stub_threshold: YAML scalars may arrive quoted; an unknown preset
     # or a non-numeric window/count raises ValueError, caught and attributed by _construct.
@@ -93,15 +104,50 @@ def _log_burst(
     )
 
 
+def _flow_normalizer(home_networks: str | list[str] | None = None) -> FlowNormalizer:
+    # The first parameterized normalizer (ADR-0023 D8). A bad CIDR raises ValueError,
+    # caught and attributed by _construct — so a typo fails at construction, named, rather
+    # than silently attributing every flow to the wrong endpoint.
+    return FlowNormalizer(home_networks=home_networks)
+
+
+def _optional_float(value: Any) -> float | None:
+    """A tunable left blank means "use the preset's default".
+
+    Blank matters as much as absent: the orchestration UI renders an optional numeric as a
+    text box, so an untouched field arrives as an empty string rather than as None.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return float(value)
+
+
+def _flow_burst(
+    preset: Literal["fan_out", "port_scan", "exfiltration"] = _DEFAULT_FLOW_PRESET,
+    window_minutes: float | None = None,
+    threshold: float | None = None,
+) -> FlowBurstDetector:
+    # window/threshold default to the preset's own values rather than to shared constants:
+    # 20 distinct peers per minute and 50 MB per half hour are both right, and neither is
+    # right for the other preset (ADR-0024 D8).
+    return FlowBurstDetector(
+        preset=str(preset),
+        window_minutes=_optional_float(window_minutes),
+        threshold=_optional_float(threshold),
+    )
+
+
 NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
     "stub": AdapterSpec(StubCsvNormalizer, static(_STUB_NORMALIZER_CAPABILITY)),
     "syslog": AdapterSpec(SyslogNormalizer, static(_SYSLOG_NORMALIZER_CAPABILITY)),
+    "flow": AdapterSpec(_flow_normalizer, static(_FLOW_NORMALIZER_CAPABILITY)),
 }
 
 DETECTORS: dict[str, AdapterSpec[Detector]] = {
     "stub_threshold": AdapterSpec(_stub_threshold, _stub_threshold_capability),
     "team3_zscore": AdapterSpec(_team3_zscore, static(_TEAM3_CAPABILITY)),
     "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
+    "flow_burst": AdapterSpec(_flow_burst, static(_FLOW_BURST_CAPABILITY)),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {
@@ -166,8 +212,14 @@ def _build(
     return _construct(kind, name, lambda: spec.factory(**params))
 
 
-def build_normalizer(name: str) -> Normalizer:
-    return _build("normalizer", NORMALIZERS, name, {})
+def build_normalizer(name: str, params: Mapping[str, Any] | None = None) -> Normalizer:
+    """Construct a normalizer by name, with its config params (ADR-0023 D8).
+
+    ``params`` defaults to none for the many call sites that build a parameterless
+    normalizer; passing params a normalizer does not accept raises a named config error
+    through ``_construct``, exactly as it does for a detector.
+    """
+    return _build("normalizer", NORMALIZERS, name, params or {})
 
 
 def build_detector(name: str, params: Mapping[str, Any]) -> Detector:
@@ -194,8 +246,8 @@ def sink_requires_database(name: str) -> bool:
 # invalid lane); the guard catches that and reports it as a structured issue.
 
 
-def normalizer_capability(name: str) -> Capability:
-    return lookup("normalizer", NORMALIZERS, name).capability({})
+def normalizer_capability(name: str, params: Mapping[str, Any] | None = None) -> Capability:
+    return lookup("normalizer", NORMALIZERS, name).capability(params or {})
 
 
 def detector_capability(name: str, params: Mapping[str, Any]) -> Capability:

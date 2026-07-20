@@ -16,6 +16,7 @@ run's detections only; cross-run correlation is future work (ADR-0006), as is en
 assets from a persistent store across runs.
 """
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -31,7 +32,7 @@ from iotshield.contracts import (
 )
 from iotshield.detect import Detector
 from iotshield.pipeline.compat import CompatLevel, ensure_compatible
-from iotshield.pipeline.config import PipelineConfig, PipelineSpec, SinkConfig
+from iotshield.pipeline.config import PipelineConfig, PipelineSpec, SinkConfig, SourceSpec
 from iotshield.pipeline.registry import (
     build_alert_engine,
     build_detector,
@@ -143,6 +144,16 @@ def _resolve_origins(spec: PipelineSpec, origins: Sequence[str] | None) -> list[
     return [source.path or f"source[{index}]" for index, source in enumerate(spec.sources)]
 
 
+def _normalizer_key(source: SourceSpec) -> str:
+    """Identity of the normalizer a source needs: its name plus its construction params.
+
+    A string rather than a tuple because param *values* may be lists (``home_networks``),
+    which are unhashable; JSON with sorted keys makes two equal param mappings compare
+    equal regardless of the order they were written in the config.
+    """
+    return json.dumps([source.normalizer, source.params], sort_keys=True, default=str)
+
+
 @dataclass(frozen=True)
 class NormalizedInputs:
     """What the ingest phase produced: the pooled events plus everything to carry forward.
@@ -185,9 +196,12 @@ def normalize_sources(
     ]
 
     # Build normalizers before reading anything: a bad name/param fails fast, before any
-    # work. They dedupe by name — a run with three syslog sources builds one.
+    # work. They dedupe by name *and params* — a run with three syslog sources still builds
+    # one, but two flow sources watching different home networks are genuinely two
+    # normalizers and must not collapse into whichever was built first (ADR-0023 D8).
     normalizers = {
-        source.normalizer: build_normalizer(source.normalizer) for source in spec.sources
+        _normalizer_key(source): build_normalizer(source.normalizer, source.params)
+        for source in spec.sources
     }
 
     events: list[NormalizedEvent] = []
@@ -195,7 +209,7 @@ def normalize_sources(
     provenance: list[SourceProvenance] = []
     for index, source in enumerate(spec.sources):
         origin = resolved_origins[index]
-        result = normalizers[source.normalizer].normalize(
+        result = normalizers[_normalizer_key(source)].normalize(
             inputs[index], source_format=source.source_format, origin=origin
         )
         quality = _high_malformed_warning(

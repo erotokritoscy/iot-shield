@@ -16,11 +16,13 @@ from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect import (
     Detector,
     Fittable,
+    FlowBurstDetector,
     LogBurstDetector,
     StubThresholdDetector,
     Team3ZScoreDetector,
 )
 from iotshield.detect.team3.train import train_artifact
+from iotshield.flow import METADATA_KEY, Direction, FlowRecord
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -81,6 +83,32 @@ _LOG_BURST_EVENTS = [
     for index in range(6)
 ]
 
+
+def flow_event(offset_s: int, peer: str, port: int = 23, bytes_out: int = 44) -> NormalizedEvent:
+    record = FlowRecord(
+        asset_ip="pump-02",
+        peer_ip=peer,
+        protocol="tcp",
+        direction=Direction.OUTBOUND,
+        peer_port=port,
+        bytes_out=bytes_out,
+    )
+    return NormalizedEvent(
+        timestamp=T0 + timedelta(seconds=offset_s),
+        asset_id="pump-02",
+        source_type=Lane.FLOW,
+        source_format="flow-csv",
+        metric="bytes_out",
+        value=float(bytes_out),
+        message=record.summary(),
+        raw=f"flow to {peer}",
+        metadata={METADATA_KEY: record.to_metadata()},
+    )
+
+
+# 25 distinct destinations in 25s: one fan-out episode, well past the boundary of 20.
+_FLOW_FANOUT_EVENTS = [flow_event(index, f"203.0.113.{index}") for index in range(25)]
+
 CASES = [
     pytest.param(
         DetectorCase(
@@ -112,6 +140,13 @@ CASES = [
             triggering_events=_LOG_BURST_EVENTS,
         ),
         id="log-burst",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: FlowBurstDetector(preset="fan_out"),
+            triggering_events=_FLOW_FANOUT_EVENTS,
+        ),
+        id="flow-burst",
     ),
 ]
 

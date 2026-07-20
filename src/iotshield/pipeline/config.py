@@ -60,11 +60,20 @@ class SourceSpec(_ConfigModel):
     config error). ``path`` is a loading hint used only by the file-reading CLI to locate a
     source's content; the Pipeline API ignores it (content arrives in the request) and the
     compatibility guard ignores it (it is not part of the chain's shape).
+
+    ``params`` configures the normalizer itself, exactly as ``DetectorConfig.params``
+    configures a detector (ADR-0023 D8). Normalizers were the only one of the four ports
+    that could not be parameterized — an asymmetry rather than a decision: the builder
+    hardcoded an empty mapping, while the ``/modules`` catalogue already introspected
+    normalizer factory signatures for parameters that could never arrive. The flow
+    normalizer's ``home_networks`` is the first real need. Additive with a default, so
+    every config file and API request written before this stays valid.
     """
 
     normalizer: str = "stub"
     source_format: str = Field(min_length=1)
     path: str | None = Field(default=None, description="CLI/config: where to read this source")
+    params: dict[str, Any] = Field(default_factory=dict, description="Normalizer construction")
 
 
 class PipelineSpec(_ConfigModel):

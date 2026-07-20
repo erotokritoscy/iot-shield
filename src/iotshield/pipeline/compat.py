@@ -20,6 +20,7 @@ The single result feeds three consumers: the runner/CLI raise on any ERROR; the
 Pipeline API returns 422 on ERRORs and passes WARNINGs back; the UI shows both inline.
 """
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -64,7 +65,7 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
     for index, source in enumerate(config.sources):
         stage = f"sources[{index}]"
         try:
-            normalizer_cap = normalizer_capability(source.normalizer)
+            normalizer_cap = normalizer_capability(source.normalizer, source.params)
         except ValueError as exc:
             issues.append(CompatIssue(CompatLevel.ERROR, stage, str(exc)))
             ingest_ok = False
@@ -82,6 +83,14 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
             ingest_ok = False
             continue
         produced_lanes |= lanes_in(normalizer_cap.produces)
+
+    # Duplicate joint: the same adapter configured twice with the SAME params is always a
+    # mistake, and an expensive one. Both instances judge the same events identically, so
+    # every finding lands in its correlation bucket twice — and the alert engine's `volume`
+    # factor counts detections as *independent corroboration*, which measurably inflates
+    # priority for evidence that was only ever gathered once (ADR-0020 D4). Configuring one
+    # adapter twice with *different* params is the legitimate case and stays silent.
+    issues.extend(_duplicate_detector_issues(config))
 
     # Lane joint: each detector's lane must be one some source produces, else the detector
     # idles (legal, sometimes intentional) -> WARNING.
@@ -176,6 +185,35 @@ def ensure_compatible(config: PipelineSpec) -> list[CompatIssue]:
     errors = [issue for issue in issues if issue.level is CompatLevel.ERROR]
     if errors:
         raise IncompatiblePipelineError(errors)
+    return issues
+
+
+def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
+    """Warn once per detector entry that exactly repeats an earlier one.
+
+    Became reachable when the orchestration UI started rendering ``detectors`` as the list
+    it always was (ADR-0023): a multiselect over names could not express a duplicate, so
+    this footgun did not previously exist on that path. YAML and the API always could.
+    """
+    issues: list[CompatIssue] = []
+    seen: dict[str, int] = {}
+    for index, detector in enumerate(config.detectors):
+        # Params are compared by value, order-insensitively, so two entries that differ
+        # only in the order their params were written are still recognised as identical.
+        fingerprint = json.dumps([detector.name, detector.params], sort_keys=True, default=str)
+        first = seen.get(fingerprint)
+        if first is None:
+            seen[fingerprint] = index
+            continue
+        issues.append(
+            CompatIssue(
+                CompatLevel.WARNING,
+                f"detectors[{index}]",
+                f"detector {detector.name!r} is configured identically to detectors[{first}]; "
+                f"it will judge the same events twice and its findings will be double-counted "
+                f"as corroborating evidence. Vary its params, or remove one.",
+            )
+        )
     return issues
 
 

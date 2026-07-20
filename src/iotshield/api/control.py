@@ -19,7 +19,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -64,6 +64,14 @@ class ParamInfo(BaseModel):
     type: str | None = None
     default: Any = None
     required: bool
+    choices: list[str] | None = None
+    """The allowed values, when the factory annotates the param ``Literal[...]``.
+
+    A closed vocabulary is a fact the factory already knows (a detector preset, a lane), so
+    the catalogue reports it rather than making the operator recall it. Without this the UI
+    renders any non-numeric param as free text — which is how a mistyped preset became a
+    guard error instead of an impossible input (ADR-0023 D9).
+    """
 
 
 class ModuleInfo(BaseModel):
@@ -156,7 +164,14 @@ def _describe_params(factory: Any) -> list[ParamInfo]:
             continue
         annotation = parameter.annotation
         empty = inspect.Parameter.empty
-        type_name = None if annotation is empty else getattr(annotation, "__name__", None)
+        choices = _literal_choices(annotation)
+        # A Literal has no ``__name__``; its members are strings by construction here, so
+        # report it as one rather than leaving the type unknown.
+        type_name = (
+            "str"
+            if choices is not None
+            else (None if annotation is empty else getattr(annotation, "__name__", None))
+        )
         has_default = parameter.default is not empty
         params.append(
             ParamInfo(
@@ -164,9 +179,22 @@ def _describe_params(factory: Any) -> list[ParamInfo]:
                 type=type_name,
                 default=parameter.default if has_default else None,
                 required=not has_default,
+                choices=choices,
             )
         )
     return params
+
+
+def _literal_choices(annotation: Any) -> list[str] | None:
+    """The allowed values of a ``Literal[...]`` annotation, else None.
+
+    Read off the factory signature so a closed vocabulary is declared exactly once — in the
+    factory that already validates it — instead of being restated in a UI list that can
+    drift. Meta-tests pin each Literal against the vocabulary it mirrors.
+    """
+    if get_origin(annotation) is not Literal:
+        return None
+    return [str(value) for value in get_args(annotation)]
 
 
 def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:

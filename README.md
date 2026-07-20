@@ -95,6 +95,41 @@ across the HIGH/MEDIUM line purely by asset criticality, and a fourth is escalat
 by repeated (volume) detections — the three single-lane priority factors, each
 visible in the ordering.
 
+### Network flows: the third lane
+
+`config/demo_flow.yaml` reads a real-shaped Zeek `conn.log` (ADR-0023 / ADR-0024):
+
+```
+uv run python -m iotshield.pipeline --config config/demo_flow.yaml
+```
+
+A *flow record* is the summary of one network conversation — who talked to whom, on
+which port, how much — which is what routers and network sensors actually export.
+Here an IP camera whose normal world is an MQTT broker and an NTP server suddenly
+contacts 41 distinct hosts on port 23, unanswered: the Mirai propagation signature.
+The `fan_out` preset counts *distinct destinations* per sliding minute, so the sweep
+becomes one detection rather than 41. A gateway sending 30 flows to a *single*
+destination in the same window stays silent — cardinality is the signal, not volume.
+
+This lane earns its place by seeing what the others cannot: the camera's telemetry is
+normal throughout and it writes no log lines about being compromised.
+
+### All three lanes at once
+
+```
+uv run python -m iotshield.pipeline --config config/demo_trimodal.yaml
+```
+
+Telemetry, syslog and flow for the same camera in one run. The alert engine raises an
+alert's priority when independent lanes agree (`corroboration = 1 + 0.5 x (lanes - 1)`),
+so three judged lanes reach 2.0 — the highest the factor can express. The identical
+flow sweep scores **44.1 / MEDIUM on its own** and **76.4 / CRITICAL corroborated**:
+same evidence, different confidence.
+
+Note that flows identify a device by IP (that is the only identity a flow carries), so
+this demo keys all three sources on the camera's IP address. Reconciling hostname-keyed
+and IP-keyed identities in general needs an asset-aliasing layer that does not exist yet.
+
 ## Serve the API
 
 ```

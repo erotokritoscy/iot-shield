@@ -27,6 +27,18 @@ def test_detector_params_are_applied() -> None:
     assert detector.lane == Lane.LOG
 
 
+def test_normalizer_params_reach_the_factory_and_bad_ones_name_the_adapter() -> None:
+    # Normalizers are parameterizable like every other port (ADR-0023 D8). The stub takes
+    # none, so passing one must fail loudly and named rather than being silently ignored.
+    with pytest.raises(ValueError, match=r"invalid params for normalizer 'stub'"):
+        build_normalizer("stub", {"nonsense": 1})
+
+
+def test_unknown_normalizer_lists_known_alternatives() -> None:
+    with pytest.raises(ValueError, match=r"unknown normalizer 'nope'.*syslog"):
+        build_normalizer("nope")
+
+
 def test_unknown_name_lists_known_alternatives() -> None:
     with pytest.raises(ValueError, match=r"unknown detector 'nope'.*stub_threshold"):
         build_detector("nope", {})
@@ -87,6 +99,33 @@ def test_log_burst_quoted_numeric_params_are_coerced() -> None:
     # YAML scalars can arrive quoted; the factory coerces them as _stub_threshold does.
     detector = build_detector("log_burst", {"window_minutes": "2", "min_count": "5"})
     assert detector.method == "log_burst:severity_spike"  # the format-agnostic default
+
+
+def test_flow_burst_builds_with_its_preset_and_that_presets_defaults() -> None:
+    detector = build_detector("flow_burst", {"preset": "exfiltration"})
+    assert detector.lane == Lane.FLOW
+    assert detector.method == "flow_burst:exfiltration"
+
+
+def test_flow_burst_blank_params_fall_back_to_the_preset_default() -> None:
+    # The orchestration UI renders an optional numeric as a text box, so an untouched
+    # field arrives as "" rather than as absent; it must mean "use the preset's default".
+    detector = build_detector(
+        "flow_burst", {"preset": "fan_out", "threshold": "", "window_minutes": ""}
+    )
+    assert detector.method == "flow_burst:fan_out"
+
+
+def test_flow_burst_unknown_preset_fails_fast_and_names_adapter() -> None:
+    with pytest.raises(
+        ValueError, match=r"invalid params for detector 'flow_burst'.*unknown flow_burst preset"
+    ):
+        build_detector("flow_burst", {"preset": "nope"})
+
+
+def test_flow_normalizer_bad_home_network_fails_fast_and_names_adapter() -> None:
+    with pytest.raises(ValueError, match=r"invalid params for normalizer 'flow'.*invalid network"):
+        build_normalizer("flow", {"home_networks": ["not-a-cidr"]})
 
 
 def test_build_file_sink_satisfies_the_port() -> None:

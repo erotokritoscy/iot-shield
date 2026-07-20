@@ -35,6 +35,7 @@ from typing import Any
 from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent, Severity
 from iotshield.detect._group import group_by_asset
+from iotshield.detect._windows import CountAggregate, Episode, find_episodes
 
 # Fixed log-lane detector; declared for the compatibility guard.
 CAPABILITY = Capability.of(consumes={LaneToken(Lane.LOG)}, produces={DETECTIONS})
@@ -106,15 +107,6 @@ DEFAULT_PRESET = "severity_spike"
 useful about any log source the normalizers can parse."""
 
 
-@dataclass
-class _Burst:
-    """A merged run of overlapping qualifying windows: one episode, one detection."""
-
-    start: int
-    end: int
-    peak: int
-
-
 class LogBurstDetector:
     def __init__(
         self,
@@ -181,36 +173,32 @@ class LogBurstDetector:
                     # min_count >= 2, so an episode is several events by construction: a burst
                     # is always collective, never a point anomaly.
                     event_kind=EventKind.COLLECTIVE,
-                    evidence=self._evidence(span, burst.peak),
+                    # The shared skeleton reports a float peak (it also serves byte sums);
+                    # a count is integral, so int() is exact and keeps the evidence readable.
+                    evidence=self._evidence(span, int(burst.peak)),
                 )
             )
         return detections
 
-    def _find_bursts(self, matched: Sequence[NormalizedEvent]) -> list[_Burst]:
+    def _find_bursts(self, matched: Sequence[NormalizedEvent]) -> list[Episode]:
         """Merge every window holding >= ``min_count`` matches into maximal episodes.
 
-        Two pointers walk the time-ordered matches: ``left`` trails ``right`` by at most
-        ``window``, so ``right - left + 1`` is the count in the widest window ending at
-        ``right``. Qualifying windows that *overlap* describe the same incident and merge;
-        one whose left edge has jumped past the previous episode's end means a real quiet
-        gap, so it opens a new episode. That merge is what keeps a 90-attempt brute force a
-        single alert instead of 90 — the fragmentation that made team3's IsolationForest a
-        poor alert citizen (ADR-0020 D4).
+        The window walk and the overlap-merge are shared with every other "too much of
+        something, too fast" detector (``detect/_windows.py``); all this adapter supplies is
+        *what to measure* — here simply how many events are in the window.
+
+        The threshold handed over is ``min_count - 1``, because the shared skeleton uses the
+        strict ``>`` the Detector port mandates: ``count > min_count - 1`` is exactly
+        ``count >= min_count`` for integer counts, and it is the same exceedance boundary
+        this detector already reports on its detections.
         """
-        bursts: list[_Burst] = []
-        left = 0
-        for right in range(len(matched)):
-            while matched[right].timestamp - matched[left].timestamp > self._window:
-                left += 1
-            count = right - left + 1
-            if count < self._min_count:
-                continue
-            if bursts and left <= bursts[-1].end:
-                bursts[-1].end = right  # `right` only grows, so end stays the episode's last
-                bursts[-1].peak = max(bursts[-1].peak, count)
-            else:
-                bursts.append(_Burst(start=left, end=right, peak=count))
-        return bursts
+        return find_episodes(
+            matched,
+            timestamp=lambda event: event.timestamp,
+            window=self._window,
+            threshold=self._min_count - 1,
+            aggregate=CountAggregate,
+        )
 
     def _evidence(self, span: Sequence[NormalizedEvent], peak: int) -> dict[str, Any]:
         # `category` is the preset name — the semantic label of what was detected. It rides

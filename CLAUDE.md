@@ -91,13 +91,28 @@ ADR-0012) settled the runtime dependency surface as **numpy-only** (sklearn/torc
 deferred to future per-model ADRs); image hardening is now unblocked but not yet done.
 
 A run ingests **one or more sources** (ADR-0019): `PipelineSpec.sources` is a list of
-`{normalizer, source_format, path?}`, each routed to its normalizer by its declared format
-(explicit tagging, never sniffing) and pooled into the detector lanes — so one run can mix
-modalities. The legacy top-level `source_format`/`normalizer` desugars to a one-element
+`{normalizer, source_format, path?, params?}`, each routed to its normalizer by its declared
+format (explicit tagging, never sniffing) and pooled into the detector lanes — so one run can
+mix modalities. The legacy top-level `source_format`/`normalizer` desugars to a one-element
 `sources` list, so old configs still work. Detectors are handed their lane's events sorted
 by `(asset_id, timestamp)` — a port guarantee windowed models rely on.
 
-Seven demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
+Normalizers take `params` like every other port (ADR-0023 D8); the runner caches them by
+name **and** params, so two sources of one normalizer with different settings stay distinct.
+`detectors` is a list of *instances*, so the same adapter may appear more than once with
+different params — that is how two presets run together, and the compose page renders it as
+a list of rows (ADR-0023 D9). Two *identical* entries earn a guard WARNING: they judge the
+same events twice, which the alert engine's `volume` factor miscounts as corroboration.
+
+**All three lanes are now judged.** Flow events are one event per flow record (not a
+per-metric fan-out): the tuple is the signal, so it rides in `metadata` behind the typed
+`FlowRecord` in `src/iotshield/flow.py` — the FLOW lane's vocabulary module, which exists
+because flow is the first modality whose payload outgrows the contract's own fields
+(ADR-0023 D5). Flows identify a device by **IP**; telemetry and logs identify by name, so
+cross-lane correlation involving flows currently requires the sources to agree on an
+identifier (asset aliasing is an open item — ADR-0023 Consequences).
+
+Nine demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
 normalizer, re-implemented from team4 → LOG-lane events across three hosts, both
@@ -118,7 +133,16 @@ into ONE collective detection → one HIGH alert; every line is severity INFO, s
 `data/demo/demo_multimodal.log` syslog on the same asset — routed, pooled into two lanes,
 and **both judged**: the telemetry spike plus a log burst correlate into one alert whose
 `corroboration` factor is 1.5, the first time cross-lane agreement has ever fired — the
-same spike scores ~27/LOW on telemetry alone vs ~56/HIGH corroborated — ADR-0019 + ADR-0020).
+same spike scores ~27/LOW on telemetry alone vs ~56/HIGH corroborated — ADR-0019 + ADR-0020);
+`config/demo_flow.yaml` + `data/demo/demo_flow.log` (a real-shaped Zeek `conn.log` → the
+`flow` normalizer → the `flow_burst` detector's `fan_out` preset → a compromised IP camera
+sweeping 41 hosts for telnet merges into ONE collective detection, score 43 vs boundary 20
+→ 44.1/MEDIUM; a gateway sending 30 flows to *one* destination correctly stays silent, an
+inbound SSH session does not count as fan-out, and a flow between two foreign hosts is
+quarantined not dropped — ADR-0023 + ADR-0024); and `config/demo_trimodal.yaml`
+(**all three lanes judging one asset in one run** — telemetry + syslog + flow on the camera
+→ 4 detections across 3 lanes → `corroboration` 2.0, the ceiling the factor can express;
+the identical flow sweep scores 44.1/MEDIUM alone vs **76.4/CRITICAL** corroborated).
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
@@ -129,8 +153,9 @@ regenerate it only when the model/data change: `uv run python -m iotshield.detec
 src/iotshield/
   contracts/       frozen data contracts (pydantic v2) — the product's core
   capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
-  normalize/    Normalizer port + adapters (stub, syslog, ...); a run routes each of its sources here by format (ADR-0019)
-  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, ...)
+  flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
+  normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, ...); a run routes each of its sources here by format (ADR-0019)
+  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, ...)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
@@ -165,6 +190,13 @@ learn "normal" from an asset's own clean history instead of measuring domain shi
 implementing it is not a defect — the harness reports "not fittable" and evaluates as
 configured. A detector that scores rows should form judgments with `detect/_runs.py:
 merge_runs`; see the port docstring for why the alert engine's `volume` factor depends on it.
+
+`detect/` has three shared skeletons a new adapter inherits rather than re-derives:
+`_group.py` (the port's routing laws — foreign-lane isolation, deterministic per-asset
+order), `_runs.py` (a per-row verdict mask → spans), and `_windows.py` (a sliding time
+window + incremental `Aggregate` → merged episodes, ADR-0024 D4). A volumetric detector
+("too much of something, too fast") supplies an aggregate and gets the rest for free;
+`log_burst` counts events, `flow_burst` counts distinct peers/ports or sums bytes.
 
 ## Conventions
 

@@ -30,6 +30,36 @@ def test_matching_telemetry_chain_has_no_issues() -> None:
     assert check_compatibility(cfg()) == []
 
 
+def test_identically_configured_detector_twice_warns_about_double_counting() -> None:
+    """Two identical entries judge the same events twice, and the alert engine's `volume`
+    factor reads the repeats as independent corroboration (ADR-0020 D4)."""
+    entry = {"name": "stub_threshold", "params": {"lane": "telemetry"}}
+    issues = check_compatibility(cfg(detectors=[entry, dict(entry)]))
+    assert [i.level for i in issues] == [CompatLevel.WARNING]
+    assert issues[0].stage == "detectors[1]"
+    assert "detectors[0]" in issues[0].message and "double-counted" in issues[0].message
+
+
+def test_duplicate_detection_ignores_the_order_params_were_written_in() -> None:
+    entries = [
+        {"name": "stub_threshold", "params": {"lane": "telemetry", "threshold": 80.0}},
+        {"name": "stub_threshold", "params": {"threshold": 80.0, "lane": "telemetry"}},
+    ]
+    assert levels(cfg(detectors=entries)) == [CompatLevel.WARNING]
+
+
+def test_the_same_detector_with_different_params_is_not_a_duplicate() -> None:
+    # The legitimate case the list form exists to enable: one adapter, two configurations.
+    entries = [
+        {"name": "log_burst", "params": {"preset": "severity_spike"}},
+        {"name": "log_burst", "params": {"preset": "auth_failure"}},
+    ]
+    issues = check_compatibility(
+        cfg(source_format="syslog", normalizer="syslog", detectors=entries)
+    )
+    assert not [i for i in issues if "double-counted" in i.message]
+
+
 def test_unsupported_source_format_is_an_error() -> None:
     issues = check_compatibility(cfg(source_format="sislog"))
     assert [i.level for i in issues] == [CompatLevel.ERROR]

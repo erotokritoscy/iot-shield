@@ -7,9 +7,12 @@ with what the built adapter actually does — so the guard never reads a stale l
 
 import pytest
 
+from iotshield.api.control import _describe_params
 from iotshield.capabilities import Capability, formats_in, lanes_in
 from iotshield.contracts import Lane
-from iotshield.normalize import STUB_SOURCE_FORMAT, SYSLOG_SOURCE_FORMAT
+from iotshield.detect.flow_burst import PRESETS as _FLOW_PRESETS
+from iotshield.detect.log_burst import PRESETS as _LOG_PRESETS
+from iotshield.normalize import FLOW_DIALECTS, STUB_SOURCE_FORMAT, SYSLOG_SOURCE_FORMAT
 from iotshield.pipeline.registry import (
     ALERT_ENGINES,
     DETECTORS,
@@ -37,6 +40,23 @@ def test_every_adapter_declares_a_nonempty_capability(label: str, spec: AdapterS
 def test_normalizer_declared_format_matches_source_format_constant() -> None:
     assert formats_in(NORMALIZERS["stub"].capability({}).consumes) == {STUB_SOURCE_FORMAT}
     assert formats_in(NORMALIZERS["syslog"].capability({}).consumes) == {SYSLOG_SOURCE_FORMAT}
+
+
+def test_flow_normalizer_declares_every_dialect_it_can_parse() -> None:
+    # The first normalizer accepting more than one format: the declaration must list every
+    # dialect, or the guard would reject a source the adapter handles perfectly well.
+    assert formats_in(NORMALIZERS["flow"].capability({}).consumes) == set(FLOW_DIALECTS)
+
+
+def test_flow_normalizer_actually_emits_its_declared_lane() -> None:
+    declared = lanes_in(NORMALIZERS["flow"].capability({}).produces)
+    text = (
+        "start,src_ip,src_port,dst_ip,dst_port,proto\n"
+        "2026-07-07T12:00:00+00:00,10.0.0.7,51514,203.0.113.9,23,tcp\n"
+    )
+    result = build_normalizer("flow").normalize(text, source_format="flow-csv", origin="test")
+    assert result.events  # the sample parsed
+    assert {event.source_type for event in result.events} <= declared
 
 
 def test_stub_normalizer_actually_emits_its_declared_lane() -> None:
@@ -78,6 +98,35 @@ def test_team3_detector_declared_lane_matches_built_instance() -> None:
     declared = lanes_in(DETECTORS["team3_zscore"].capability({}).consumes)
     assert declared == {Lane.TELEMETRY}
     assert build_detector("team3_zscore", {}).lane == Lane.TELEMETRY
+
+
+def _choices_of(spec: AdapterSpec, param: str) -> list[str] | None:
+    return next(p.choices for p in _describe_params(spec.factory) if p.name == param)
+
+
+def test_declared_lane_choices_match_the_lane_vocabulary() -> None:
+    # The Literal on the factory is a hand-written mirror of an enum, so pin it: a new Lane
+    # member that never reaches the catalogue would be invisible in the operator UI.
+    assert _choices_of(DETECTORS["stub_threshold"], "lane") == [lane.value for lane in Lane]
+
+
+def test_declared_preset_choices_match_the_shipped_presets() -> None:
+    # Same guard on the other side: a new PRESETS entry the Literal does not list would be
+    # unreachable from the UI even though the adapter supports it.
+    assert set(_choices_of(DETECTORS["log_burst"], "preset") or []) == set(_LOG_PRESETS)
+    assert set(_choices_of(DETECTORS["flow_burst"], "preset") or []) == set(_FLOW_PRESETS)
+
+
+def test_flow_burst_declared_lane_matches_built_instance() -> None:
+    # Fixed-lane detector: the declaration must hold for every preset, since a preset
+    # changes *what* it measures but never *which* lane it reads.
+    assert lanes_in(DETECTORS["flow_burst"].capability({}).consumes) == {Lane.FLOW}
+    for preset in _FLOW_PRESETS:
+        assert build_detector("flow_burst", {"preset": preset}).lane == Lane.FLOW
+
+
+def test_a_param_with_no_closed_vocabulary_reports_no_choices() -> None:
+    assert _choices_of(DETECTORS["stub_threshold"], "threshold") is None
 
 
 def test_log_burst_detector_declared_lane_matches_built_instance() -> None:

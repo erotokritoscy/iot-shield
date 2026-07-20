@@ -162,8 +162,44 @@ class TestCompose:
         # must be a telemetry one — not merely whichever adapter name sorts first, which
         # would open the page on a lane-mismatched chain now that log detectors exist.
         at = self._open(monkeypatch, empty_client, control_client)
-        (picked,) = at.multiselect(key="compose_detectors").value
-        assert picked == "stub_threshold"
+        assert at.selectbox(key="det_0_name").value == "stub_threshold"
+
+    def test_the_same_adapter_can_be_configured_twice_with_different_params(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        """The point of rendering detectors as a list (ADR-0023).
+
+        The old multiselect was over *names*, so this was structurally impossible from the
+        UI: one adapter meant one instance, hence one preset per run. Two rows of the same
+        adapter with different params is exactly how two presets run together.
+        """
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.number_input(key="compose_det_n").set_value(2).run()
+
+        at.selectbox(key="det_0_name").set_value("log_burst").run()
+        at.selectbox(key="det_1_name").set_value("log_burst").run()
+        at.selectbox(key="det_0_preset").set_value("severity_spike").run()
+        at.selectbox(key="det_1_preset").set_value("auth_failure").run()
+        assert not at.exception
+
+        # Both rows exist, name the same adapter, and carry different presets — the widget
+        # keys no longer collide, which is the whole fix.
+        assert at.selectbox(key="det_0_name").value == at.selectbox(key="det_1_name").value
+        assert at.selectbox(key="det_0_preset").value != at.selectbox(key="det_1_preset").value
+
+    def test_preset_is_offered_as_a_choice_not_a_free_text_box(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        # A closed vocabulary declared on the factory reaches the operator as options.
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.selectbox(key="det_0_name").set_value("log_burst").run()
+        assert set(at.selectbox(key="det_0_preset").options) == {"severity_spike", "auth_failure"}
 
     def test_run_button_triggers_a_pipeline_run(
         self,

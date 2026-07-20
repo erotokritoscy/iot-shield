@@ -42,6 +42,26 @@ def test_multi_source_form_parses() -> None:
     assert [s.normalizer for s in config.sources] == ["stub", "syslog"]
 
 
+def test_source_params_default_to_empty_and_parse_when_given() -> None:
+    # ADR-0023 D8: additive with a default, so every config written before it stays valid.
+    config = PipelineConfig.model_validate(
+        {
+            "database_url": "sqlite:///x.db",
+            "sources": [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {
+                    "normalizer": "flow",
+                    "source_format": "flow-csv",
+                    "params": {"home_networks": ["10.0.0.0/8"]},
+                },
+            ],
+            "detectors": [{"name": "stub_threshold"}],
+        }
+    )
+    assert config.sources[0].params == {}
+    assert config.sources[1].params == {"home_networks": ["10.0.0.0/8"]}
+
+
 def test_naming_both_legacy_and_sources_is_refused() -> None:
     # A contradiction (which one wins?) — refuse it loudly rather than resolve silently.
     with pytest.raises(ValidationError, match="not both"):
