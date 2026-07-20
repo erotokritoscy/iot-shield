@@ -89,9 +89,12 @@ class TestCli:
         assert "skipped" in err and "fetch skab" in err
 
     def test_list_corpora(self, capsys) -> None:
+        # Only `synthetic` is committed; the SKAB bundles are gitignored (GPL-3.0, ADR-0021
+        # D5a), so asserting on them passes for whoever has fetched them locally and fails
+        # on every fresh clone and on CI. The listing is checked against what the repo
+        # actually ships.
         assert main(["list"]) == 0
-        out = capsys.readouterr().out
-        assert "synthetic" in out and "skab_valve1" in out
+        assert "synthetic" in capsys.readouterr().out
 
 
 class TestBoundaries:
