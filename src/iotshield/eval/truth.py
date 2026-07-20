@@ -73,6 +73,26 @@ class GroundTruth:
         )
         return cls(timeline=ordered, incidents=incidents)
 
+    @classmethod
+    def from_incidents(
+        cls, timestamps: Sequence[datetime], incidents: Sequence[Incident]
+    ) -> "GroundTruth":
+        """Build truth from *intervals* plus the row clock — the storage form (ADR-0021 D5).
+
+        The inverse of ``from_timeline``, and the form a corpus bundle records, for two
+        reasons. It is far smaller: per-row booleans spend ~50 bytes to say "normal" about
+        a row the readings already list. And it is strictly *more* expressive — two
+        incidents that touch with no quiet row between them are one run of flags but two
+        intervals, a distinction per-row labels cannot represent and a synthetic corpus can
+        legitimately produce.
+        """
+        ordered = sorted(timestamps)
+        rows = [
+            (moment, any(incident.start <= moment <= incident.end for incident in incidents))
+            for moment in ordered
+        ]
+        return cls(timeline=tuple(rows), incidents=tuple(incidents))
+
     @property
     def anomalous_rows(self) -> int:
         return sum(1 for _, flagged in self.timeline if flagged)

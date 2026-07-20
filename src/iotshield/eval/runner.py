@@ -16,7 +16,13 @@ from collections.abc import Sequence
 
 from iotshield.eval.corpus import Case, Corpus
 from iotshield.eval.fit import FitProtocol, prepare_detector
-from iotshield.eval.report import CaseReport, EvaluationReport, SpecReport
+from iotshield.eval.report import (
+    TIMELINE_SPAN_CAP,
+    CaseReport,
+    CaseTimeline,
+    EvaluationReport,
+    SpecReport,
+)
 from iotshield.eval.score import score_alerts, score_detections
 from iotshield.pipeline import (
     PipelineSpec,
@@ -24,6 +30,7 @@ from iotshield.pipeline import (
     compute_result,
     normalize_sources,
 )
+from iotshield.sink import RunResult
 
 
 def _check_alignment(spec: PipelineSpec, case: Case) -> None:
@@ -48,7 +55,21 @@ def _check_alignment(spec: PipelineSpec, case: Case) -> None:
             )
 
 
-def evaluate_case(spec: PipelineSpec, case: Case, *, protocol: FitProtocol) -> CaseReport:
+def _timeline(case: Case, result: RunResult) -> CaseTimeline:
+    """Capture where truth, detections and alerts fell — capped, and honest about it."""
+    detections = [(d.window_start, d.window_end) for d in result.detections]
+    alerts = [(a.window_start, a.window_end) for a in result.alerts]
+    return CaseTimeline(
+        truth=[(incident.start, incident.end) for incident in case.truth.incidents],
+        detections=detections[:TIMELINE_SPAN_CAP],
+        alerts=alerts[:TIMELINE_SPAN_CAP],
+        truncated=max(len(detections), len(alerts)) > TIMELINE_SPAN_CAP,
+    )
+
+
+def evaluate_case(
+    spec: PipelineSpec, case: Case, *, protocol: FitProtocol, include_timeline: bool = False
+) -> CaseReport:
     """Run one spec over one labelled case and score both levels."""
     _check_alignment(spec, case)
     texts = [given.text for given in case.inputs]
@@ -83,17 +104,26 @@ def evaluate_case(spec: PipelineSpec, case: Case, *, protocol: FitProtocol) -> C
         # fitted chain must not read as a clean fitted run.
         fitted=all(o.fitted for o in outcomes) and protocol is not FitProtocol.NONE,
         notes=sorted({o.note for o in outcomes if o.note}),
+        timeline=_timeline(case, result) if include_timeline else None,
     )
 
 
 def evaluate_spec(
-    spec: PipelineSpec, corpus: Corpus, *, label: str, protocol: FitProtocol
+    spec: PipelineSpec,
+    corpus: Corpus,
+    *,
+    label: str,
+    protocol: FitProtocol,
+    include_timeline: bool = False,
 ) -> SpecReport:
     return SpecReport(
         spec=label,
         detectors=[entry.name for entry in spec.detectors],
         alert_engine=spec.alert_engine.name,
-        cases=[evaluate_case(spec, case, protocol=protocol) for case in corpus.cases],
+        cases=[
+            evaluate_case(spec, case, protocol=protocol, include_timeline=include_timeline)
+            for case in corpus.cases
+        ],
     )
 
 
@@ -102,6 +132,7 @@ def evaluate(
     specs: Sequence[tuple[str, PipelineSpec]],
     *,
     protocol: FitProtocol = FitProtocol.NONE,
+    include_timeline: bool = False,
 ) -> EvaluationReport:
     """Benchmark every spec over every case in the corpus, head to head."""
     return EvaluationReport(
@@ -111,6 +142,9 @@ def evaluate(
         cases=len(corpus.cases),
         incidents=corpus.incidents,
         specs=[
-            evaluate_spec(spec, corpus, label=label, protocol=protocol) for label, spec in specs
+            evaluate_spec(
+                spec, corpus, label=label, protocol=protocol, include_timeline=include_timeline
+            )
+            for label, spec in specs
         ],
     )

@@ -141,29 +141,50 @@ whether it is **good** (ADR-0021):
 
 ```
 uv run pytest                                          # does my adapter FIT?
-uv run python -m iotshield.eval --corpus demo_micro \
-    --spec config/bench/team3.yaml --spec config/bench/stub.yaml
+uv run python -m iotshield.eval --corpus synthetic --spec config/bench/stub.yaml
 ```
 
 ```
-corpus: demo_micro - SKAB valve1/13, the 300-row slice used by config/demo_team3.yaml
-  1 case(s), 1 labelled incident(s)   fit protocol: none
+corpus: synthetic - Synthetic rig telemetry: 11 recordings, 9 injected faults
+  11 case(s), 9 labelled incident(s)   fit protocol: none
 
-spec        detectors           evF1     evP     evR    ptF1  det/inc  alt/inc   cover
-team3       team3_zscore        1.00    1.00    1.00    0.93     1.00     1.00    1.00
-stub        stub_threshold      0.87    0.77    1.00    0.87   300.00     2.00    1.00
+case                      inc   det  alerts    evF1  det/inc  alt/inc   latency
+spike-0                     1    60       1    1.00    60.00     1.00       31s
+drift-0                     1    56       1    1.00    56.00     1.00       47s
+stuck-0                     1     0       0    0.00     0.00     0.00         -
+clean-0                     0     0       0       -        -        -         -
 ```
 
-`event` metrics count *incidents* (one finding per fault — what an analyst experiences);
-`point` metrics count rows (what papers report). The gap between them in the `stub` row is
-fragmentation: it flags rows and never merges them, so one fault becomes 300 detections.
+Three things that table is showing. **`stuck` is invisible** to a fixed threshold — the
+sensor freezes at an in-range value, so only a detector that models *normal* can see it;
+that is the shape the corpus exists to discriminate on. **`det/inc 60`** is fragmentation:
+one fault became 60 detections, which the alert layer compressed to 1. And **`-` means
+undefined, not zero** — a clean recording has no fault to recall.
 
-`--list-corpora` shows what is registered. `demo_micro` is committed and always works;
-the SKAB corpora need `../reference/` and skip cleanly when it is absent. Add
-`--fit-protocol prefix` to let detectors that implement the optional `Fittable` capability
-relearn their baseline from each case's own clean history, and `--out report.json` for a
-diffable artifact — which the dashboard's `Evaluate` mode renders when
-`IOTSHIELD_EVAL_UI=1` (off by default; it is a research instrument, not a product feature).
+### Corpora
+
+```
+uv run python -m iotshield.eval list        # what is here
+uv run python -m iotshield.eval generate    # rebuild the committed corpus
+uv run python -m iotshield.eval fetch skab  # convert a SKAB checkout into local bundles
+```
+
+A corpus is a **bundle** in `data/eval/` — a manifest, gzipped readings, interval labels —
+and they are *discovered*, so **adding your own is dropping in a directory, not writing
+code**. `synthetic` ships in this repository, so a fresh clone can benchmark immediately.
+SKAB is GPLv3 and therefore converted locally rather than redistributed.
+
+Add `--fit-protocol prefix` to let detectors implementing the optional `Fittable` capability
+relearn their baseline from each case's own clean history; ones that cannot are evaluated as
+configured and the report says so. `--out report.json` writes a diffable artifact.
+
+### In the dashboard
+
+Set `IOTSHIELD_EVAL_API=1` on the Pipeline API and `IOTSHIELD_EVAL_UI=1` on the dashboard
+(compose sets both) and an **Evaluate** mode appears: pick a corpus and detectors, run a
+benchmark, and read it as charts — a head-to-head bar, a per-case strip showing consistency,
+and a timeline drawing truth against detections and alerts on one clock. Both flags are off
+by default; it is a research instrument, not a product feature.
 
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).

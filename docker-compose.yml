@@ -79,6 +79,13 @@ services:
       # run's JSONL is visible on the host and survives container recreation. A
       # caller-supplied filename is confined to this dir (sink/file.py).
       IOTSHIELD_OUTPUT_DIR: "/app/results"
+      # The evaluation plane (ADR-0021). This compose stack IS the research/dev stack, so
+      # it opts in; the default when unset stays off, which is what a product image gets.
+      # Without it the /eval routes are never registered — absent, not merely guarded.
+      IOTSHIELD_EVAL_API: "1"
+      # Corpora ship inside the image under data/eval (the committed synthetic one); this
+      # names the root explicitly so a deployment can mount a bigger one instead.
+      IOTSHIELD_CORPUS_PATH: "/app/data/eval"
     ports:
       - "8100:8100"
     volumes:
@@ -103,6 +110,9 @@ services:
     environment:
       IOTSHIELD_API_URL: http://api:8000
       IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
+      # Shows the Evaluate mode. Paired with IOTSHIELD_EVAL_API above: this flag only
+      # surfaces the UI, the API flag is what actually serves benchmarks.
+      IOTSHIELD_EVAL_UI: "1"
     ports:
       - "8501:8501"
     depends_on:

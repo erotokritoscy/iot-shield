@@ -31,6 +31,11 @@ results/
 # corpora under data/eval/ ARE source and stay committed; what a run scores is not.
 reports/
 
+# Fetched corpora: datasets we may USE but not REDISTRIBUTE (SKAB is GPLv3, and this repo
+# declares no licence). `iotshield.eval fetch skab` rebuilds them locally in seconds; the
+# corpora we own — data/eval/synthetic — are committed and stay that way (ADR-0021 D5).
+data/eval/skab_*/
+
 # OS noise
 .DS_Store
 Thumbs.db

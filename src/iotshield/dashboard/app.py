@@ -16,11 +16,18 @@ from pydantic import ValidationError
 
 from iotshield.api.control import ParamInfo
 from iotshield.contracts import Asset, Lane, PrioritizedAlert
-from iotshield.dashboard.charts import severity_bar, telemetry_timeline
+from iotshield.dashboard.charts import (
+    case_timeline,
+    case_variance,
+    severity_bar,
+    spec_scores,
+    telemetry_timeline,
+)
 from iotshield.dashboard.client import ApiClient
 from iotshield.dashboard.control_client import ControlClient
+from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV_FORMAT
 
-if TYPE_CHECKING:  # type-only: the runtime import is deferred, see load_eval_report
+if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see load_eval_report
     from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
@@ -411,37 +418,51 @@ def load_eval_report(path: Path) -> "EvaluationReport | None":
         return None
 
 
-def evaluate_page(report_path: Path) -> None:
-    """Render a saved benchmark report. Deliberately never launches one.
+PROTOCOL_HELP = {
+    "none": "Judge with each detector exactly as configured (its shipped artifact).",
+    "prefix": (
+        "Relearn 'normal' from each case's own data before its first fault — what a real "
+        "deployment does. Detectors that cannot train are used as configured and say so."
+    ),
+    "holdout": "Relearn from a separate clean recording the corpus supplies.",
+}
 
-    Benchmarks take minutes over a full corpus, and Streamlit re-executes the whole script
-    on every interaction — running one here would be a spinner of death. The split is the
-    familiar one: ``pytest`` runs, the coverage report displays (ADR-0021).
+
+def _bench_spec(detector: str, engine: str) -> dict[str, Any]:
+    """One spec per detector — because several detectors in ONE spec run *together*.
+
+    The researcher's mental model is "compare these detectors", but head-to-head comparison
+    needs N specs of one detector each. Building them here is the difference between ticking
+    two boxes and hand-writing two YAML files (ADR-0021 D6).
     """
-    st.title("Evaluate — detector benchmarks")
-    st.caption(
-        "How the configured pipelines score against labelled corpora. Research instrument: "
-        "it needs ground truth, which production data never has."
+    return {
+        "sources": [{"normalizer": "stub", "source_format": STUB_CSV_FORMAT}],
+        "detectors": [{"name": detector}],
+        "alert_engine": {"name": engine},
+    }
+
+
+@st.cache_data(show_spinner=False)
+def _run_benchmark(corpus: str, detectors: tuple[str, ...], engine: str, protocol: str) -> str:
+    """Run a benchmark through the API and return its JSON.
+
+    Cached on the arguments, which is what makes running one from a Streamlit page safe:
+    the script re-executes on *every* interaction, so uncached work here would re-run the
+    benchmark on each click. With the cache, it runs on the button press and every later
+    interaction (switch spec, switch case) replays instantly. Returns JSON rather than a
+    model because the cache wants a serializable value.
+    """
+    report = get_control_client().evaluate(
+        corpus=corpus,
+        specs=[{"label": name, "spec": _bench_spec(name, engine)} for name in detectors],
+        fit_protocol=protocol,
+        include_timeline=True,
     )
+    return report.model_dump_json()
 
-    report = load_eval_report(report_path)
-    if report is None:
-        st.info(f"No evaluation report at `{report_path}`. Generate one with:")
-        st.code(
-            "uv run python -m iotshield.eval --corpus demo_micro \\\n"
-            "    --spec config/bench/team3.yaml --spec config/bench/stub.yaml \\\n"
-            f"    --out {report_path}",
-            language="bash",
-        )
-        return
 
-    st.caption(
-        f"`{report.corpus}` — {report.corpus_description} · {report.cases} case(s), "
-        f"{report.incidents} incident(s) · fit protocol **{report.fit_protocol}** · "
-        f"generated {report.generated_at:%Y-%m-%d %H:%M} UTC"
-    )
-
-    summary = pd.DataFrame(
+def _summary_frame(report: "EvaluationReport") -> pd.DataFrame:
+    return pd.DataFrame(
         [
             {
                 "spec": spec.spec,
@@ -452,8 +473,59 @@ def evaluate_page(report_path: Path) -> None:
             for spec in report.specs
         ]
     )
+
+
+def _render_timeline(report: "EvaluationReport") -> None:
+    """One case's truth / detections / alerts against a shared clock."""
+    st.subheader("What actually happened")
+    columns = st.columns(2)
+    chosen_spec = columns[0].selectbox(
+        "Spec", [spec.spec for spec in report.specs], key="eval_timeline_spec"
+    )
+    selected = next(spec for spec in report.specs if spec.spec == chosen_spec)
+    chosen_case = columns[1].selectbox(
+        "Case", [case.case for case in selected.cases], key="eval_timeline_case"
+    )
+    case = next(item for item in selected.cases if item.case == chosen_case)
+
+    if case.timeline is None:
+        st.info("This report carries no timelines — re-run with them enabled.")
+        return
+
+    from iotshield.eval.report import TIMELINE_SPAN_CAP
+
+    chart = case_timeline(case.timeline.truth, case.timeline.detections, case.timeline.alerts)
+    if chart is None:
+        st.info("Nothing to draw: no faults, no detections and no alerts on this case.")
+    else:
+        st.altair_chart(chart, width="stretch")
+    if case.timeline.truncated:
+        st.warning(
+            f"Truncated at {TIMELINE_SPAN_CAP} spans per lane — this detector emits more "
+            "detections than a chart can show, which is itself the finding."
+        )
+    st.caption(
+        "**truth** is where the fault really was; **detections** are what the detector "
+        "emitted; **alerts** are what the correlation stage compressed them into. The gap "
+        "between the truth band's left edge and the first detection is the latency."
+    )
+
+
+def _render_report(report: "EvaluationReport") -> None:
+    """Draw a report: head-to-head, per-case variance, one case's timeline, the table."""
+    st.caption(
+        f"`{report.corpus}` — {report.corpus_description} · {report.cases} case(s), "
+        f"{report.incidents} incident(s) · fit protocol **{report.fit_protocol}** · "
+        f"generated {report.generated_at:%Y-%m-%d %H:%M} UTC"
+    )
+
     st.subheader("Head to head")
-    st.dataframe(summary, width="stretch", hide_index=True)
+    chart = spec_scores(
+        [{"spec": spec.spec, "event_f1": spec.summary()["event_f1"]} for spec in report.specs]
+    )
+    if chart is not None:
+        st.altair_chart(chart, width="stretch")
+    st.dataframe(_summary_frame(report), width="stretch", hide_index=True)
     st.caption(
         "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
         "what papers report (per-row coverage). `compression_ratio` is detections-per-incident "
@@ -461,17 +533,126 @@ def evaluate_page(report_path: Path) -> None:
         "*undefined*, not zero — a clean recording has no faults to recall."
     )
 
-    selected = st.selectbox("Inspect spec", report.specs, format_func=lambda spec: spec.spec)
-    if selected is None:
-        return
+    if report.cases > 1:
+        st.subheader("Consistency across cases")
+        variance = case_variance(
+            [
+                {"spec": spec.spec, "case": case.case, "event_f1": case.event_f1}
+                for spec in report.specs
+                for case in spec.cases
+            ]
+        )
+        if variance is not None:
+            st.altair_chart(variance, width="stretch")
+        st.caption(
+            "One dot per recording. A mean hides the shape: a detector scoring 1.0 on most "
+            "cases and 0 on a few is a different problem from one that is mediocre "
+            "everywhere, and only this view tells them apart."
+        )
+
+    _render_timeline(report)
+
+    selected = report.specs[0]
     st.subheader(f"{selected.spec} — per case")
     st.dataframe(
-        pd.DataFrame([case.model_dump(exclude={"precision_at_k"}) for case in selected.cases]),
+        pd.DataFrame(
+            [case.model_dump(exclude={"precision_at_k", "timeline"}) for case in selected.cases]
+        ),
         width="stretch",
         hide_index=True,
     )
     for note in sorted({note for case in selected.cases for note in case.notes}):
         st.warning(note)
+
+
+def _saved_report_fallback(report_path: Path) -> None:
+    """No Pipeline API: render a report the CLI wrote, or explain how to make one."""
+    report = load_eval_report(report_path)
+    if report is None:
+        st.info(
+            f"Pipeline API unreachable and no saved report at `{report_path}`. Either start "
+            "the Pipeline API with IOTSHIELD_EVAL_API=1, or generate a report:"
+        )
+        st.code(
+            "uv run python -m iotshield.eval --corpus synthetic --with-timeline "
+            "--spec config/bench/team3.yaml --out " + str(report_path),
+            language="bash",
+        )
+        return
+    st.warning("Pipeline API unreachable — showing the last saved report.")
+    _render_report(report)
+
+
+def evaluate_page(report_path: Path) -> None:
+    """Compose and run a benchmark, then visualise it.
+
+    Runs are **button-gated and cached** — see ``_run_benchmark`` for why that is what makes
+    running one from Streamlit safe. The dashboard stays a pure API client (ADR-0008): it
+    POSTs to the Pipeline API and renders, it never computes. When that API is unreachable
+    the page falls back to a saved report, so the CLI -> file -> dashboard path keeps
+    working and the page degrades instead of breaking.
+    """
+    st.title("Evaluate — detector benchmarks")
+    st.caption(
+        "How detectors score against labelled corpora. A research instrument: it needs "
+        "ground truth, which production data by definition never has."
+    )
+
+    client = get_control_client()
+    try:
+        catalogue = client.corpora()
+        detectors = client.eval_detectors()
+    except _API_ERRORS:
+        _saved_report_fallback(report_path)
+        return
+
+    if not catalogue.corpora:
+        st.warning(f"No corpora in `{catalogue.root}`. Build the committed one with:")
+        st.code("uv run python -m iotshield.eval generate", language="bash")
+        for hint in catalogue.fetchable.values():
+            st.caption(hint)
+        return
+
+    columns = st.columns([2, 2, 3])
+    corpus_name = columns[0].selectbox(
+        "Corpus", [item.name for item in catalogue.corpora], key="eval_corpus"
+    )
+    corpus = next(item for item in catalogue.corpora if item.name == corpus_name)
+    engine = columns[1].selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
+    protocol = columns[2].radio(
+        "Fit protocol", list(PROTOCOL_HELP), key="eval_protocol", horizontal=True
+    )
+    st.caption(f"{corpus.cases} case(s) · {corpus.description}")
+    if corpus.licence:
+        st.caption(f"Provenance: {corpus.provenance} · Licence: {corpus.licence}")
+
+    # Only telemetry detectors can judge the telemetry corpora we ship; offering a log
+    # detector here would build a spec whose format the API rightly refuses.
+    choices = [item.name for item in detectors if item.lane == "lane:telemetry"]
+    fittable = {item.name for item in detectors if item.fittable}
+    chosen = st.multiselect(
+        "Detectors to compare", choices, default=choices[:2], key="eval_detectors"
+    )
+    st.caption(PROTOCOL_HELP[protocol])
+    if protocol != "none" and chosen and not set(chosen) & fittable:
+        st.info(
+            "None of the selected detectors can be trained; they will be evaluated as "
+            "configured and the report will say so."
+        )
+
+    if not st.button("Run benchmark", type="primary", disabled=not chosen):
+        st.caption("Pick detectors and run — results are cached, so exploring them is instant.")
+        return
+
+    from iotshield.eval import EvaluationReport
+
+    with st.spinner(f"Benchmarking {len(chosen)} detector(s) over {corpus.cases} case(s)…"):
+        try:
+            payload = _run_benchmark(corpus_name, tuple(chosen), engine, protocol)
+        except _API_ERRORS as exc:
+            st.error(f"Benchmark failed: {exc}")
+            return
+    _render_report(EvaluationReport.model_validate_json(payload))
 
 
 def main() -> None:

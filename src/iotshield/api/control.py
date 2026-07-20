@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 
 import iotshield
+from iotshield.api._eval_gate import eval_api_enabled
 from iotshield.capabilities import formats_in
 from iotshield.contracts import PrioritizedAlert
 from iotshield.pipeline.compat import (
@@ -282,6 +283,15 @@ def create_control_app(engine: Engine) -> FastAPI:
                 },
             ) from exc
         return _run_response(report)
+
+    # The evaluation plane is opt-in and *absent* otherwise: no route to reach or probe in a
+    # product deployment, rather than a guard inside a live handler (ADR-0021 D1). Imported
+    # lazily so the eval package can be deleted from a product image without breaking this
+    # module's import.
+    if eval_api_enabled():
+        from iotshield.api.evaluation import create_eval_router
+
+        app.include_router(create_eval_router())
 
     return app
 

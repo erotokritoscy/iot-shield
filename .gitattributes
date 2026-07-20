@@ -1,2 +1,6 @@
 * text=auto eol=lf
 *.ps1 text eol=crlf
+
+# Corpus bundle payloads are gzip, not text (ADR-0021 D5). `text=auto` would let a CRLF
+# checkout rewrite bytes inside them, silently corrupting every committed corpus.
+*.gz binary

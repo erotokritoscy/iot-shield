@@ -198,15 +198,21 @@ class TestEvaluateMode:
         at = run_app(monkeypatch, empty_client)
         assert "Evaluate" in at.sidebar.radio[0].options
 
+    def _offline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No Pipeline API reachable, so the page takes the saved-report path."""
+        unreachable = ControlClient(httpx.Client(base_url="http://127.0.0.1:1"))
+        monkeypatch.setattr(dashboard_app, "get_control_client", lambda: unreachable)
+
     def test_missing_report_explains_how_to_make_one(
         self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
     ) -> None:
         monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
         monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(tmp_path / "absent.json"))
+        self._offline(monkeypatch)
         at = run_app(monkeypatch, empty_client)
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception
-        assert any("No evaluation report" in str(i.value) for i in at.info)
+        assert any("no saved report" in str(i.value).lower() for i in at.info)
 
     def test_a_saved_report_renders(
         self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
@@ -215,17 +221,18 @@ class TestEvaluateMode:
         from iotshield.pipeline import load_spec
 
         report = evaluate(
-            load_corpus("demo_micro"), [("team3", load_spec(Path("config/bench/team3.yaml")))]
+            load_corpus("synthetic"), [("team3", load_spec(Path("config/bench/team3.yaml")))]
         )
         report_path = tmp_path / "evaluation.json"
         report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
 
         monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
         monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(report_path))
+        self._offline(monkeypatch)
         at = run_app(monkeypatch, empty_client)
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception
-        assert any("demo_micro" in str(c.value) for c in at.caption)
+        assert any("synthetic" in str(c.value) for c in at.caption)
 
     def test_a_corrupt_report_is_an_empty_state_not_a_traceback(
         self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
@@ -234,10 +241,11 @@ class TestEvaluateMode:
         report_path.write_text("{not json", encoding="utf-8")
         monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
         monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(report_path))
+        self._offline(monkeypatch)
         at = run_app(monkeypatch, empty_client)
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception
-        assert any("No evaluation report" in str(i.value) for i in at.info)
+        assert any("no saved report" in str(i.value).lower() for i in at.info)
 
 
 def test_dashboard_does_not_import_the_eval_plane_at_module_scope() -> None:
@@ -256,3 +264,85 @@ def test_dashboard_does_not_import_the_eval_plane_at_module_scope() -> None:
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "False"
+
+
+class TestEvaluateRun:
+    """The Evaluate mode composes and runs a benchmark through the API (ADR-0021 D6)."""
+
+    def _open(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> AppTest:
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        monkeypatch.setattr(dashboard_app, "get_control_client", lambda: control_client)
+        at = run_app(monkeypatch, empty_client)
+        at.sidebar.radio[0].set_value("Evaluate").run()
+        assert not at.exception, f"page raised: {at.exception}"
+        return at
+
+    def test_the_page_offers_the_committed_corpus_and_detectors(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        assert "synthetic" in at.selectbox(key="eval_corpus").options
+        # Only telemetry detectors: offering a log detector would build a spec whose format
+        # the API rightly refuses over a telemetry corpus.
+        options = at.multiselect(key="eval_detectors").options
+        assert "stub_threshold" in options and "log_burst" not in options
+
+    def test_running_a_benchmark_renders_charts_and_a_table(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        # Explicit: which corpus sorts first depends on what has been fetched locally, and
+        # the multi-case sections only make sense on a multi-case corpus.
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
+        at.button[0].click().run()
+        assert not at.exception
+        headings = " ".join(str(h.value) for h in at.subheader)
+        assert "Head to head" in headings
+        assert "Consistency across cases" in headings  # the per-case variance strip
+        assert "What actually happened" in headings  # the timeline
+        assert at.dataframe
+
+    def test_the_fit_protocol_is_offered(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        assert set(at.radio(key="eval_protocol").options) == {"none", "prefix", "holdout"}
+
+    def test_an_unreachable_api_falls_back_to_a_saved_report(
+        self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
+    ) -> None:
+        # The CLI -> file -> dashboard path must keep working: the page degrades, never breaks.
+        from iotshield.eval import evaluate, load_corpus
+        from iotshield.pipeline import load_spec
+
+        report = evaluate(
+            load_corpus("synthetic"),
+            [("stub", load_spec(Path("config/bench/stub.yaml")))],
+            include_timeline=True,
+        )
+        report_path = tmp_path / "evaluation.json"
+        report_path.write_text(report.model_dump_json(), encoding="utf-8")
+
+        unreachable = ControlClient(httpx.Client(base_url="http://127.0.0.1:1"))
+        monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
+        monkeypatch.setenv(dashboard_app.EVAL_REPORT_ENV, str(report_path))
+        monkeypatch.setattr(dashboard_app, "get_control_client", lambda: unreachable)
+        at = run_app(monkeypatch, empty_client)
+        at.sidebar.radio[0].set_value("Evaluate").run()
+        assert not at.exception
+        assert any("unreachable" in str(w.value) for w in at.warning)

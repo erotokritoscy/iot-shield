@@ -31,3 +31,8 @@ assets:
     asset_type: pump
     location: skab-rig
     criticality: high
+  - asset_id: synthetic-rig
+    name: Synthetic rig
+    asset_type: pump
+    location: synthetic
+    criticality: high

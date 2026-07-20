@@ -30,13 +30,13 @@ STUB_SPEC = Path("config/bench/stub.yaml")
 
 class TestCli:
     def test_runs_on_the_committed_corpus(self, capsys) -> None:
-        assert main(["--corpus", "demo_micro", "--spec", str(TEAM3_SPEC)]) == 0
+        assert main(["--corpus", "synthetic", "--spec", str(TEAM3_SPEC)]) == 0
         out = capsys.readouterr().out
-        assert "demo_micro" in out and "team3" in out
+        assert "synthetic" in out and "team3" in out
 
     def test_compares_two_specs_head_to_head(self, capsys) -> None:
         exit_code = main(
-            ["--corpus", "demo_micro", "--spec", str(TEAM3_SPEC), "--spec", str(STUB_SPEC)]
+            ["--corpus", "synthetic", "--spec", str(TEAM3_SPEC), "--spec", str(STUB_SPEC)]
         )
         assert exit_code == 0
         out = capsys.readouterr().out
@@ -44,26 +44,33 @@ class TestCli:
 
     def test_writes_a_json_report(self, tmp_path: Path, capsys) -> None:
         out_path = tmp_path / "nested" / "report.json"
-        argv = ["--corpus", "demo_micro", "--spec", str(TEAM3_SPEC), "--out", str(out_path)]
+        argv = ["--corpus", "synthetic", "--spec", str(TEAM3_SPEC), "--out", str(out_path)]
         assert main(argv) == 0
         capsys.readouterr()
         payload = json.loads(out_path.read_text(encoding="utf-8"))
-        assert payload["corpus"] == "demo_micro"
-        assert payload["specs"][0]["cases"][0]["incidents"] == 1
+        assert payload["corpus"] == "synthetic"
+        assert payload["specs"][0]["cases"]
 
-    def test_unknown_corpus_exits_two(self, capsys) -> None:
-        assert main(["--corpus", "nope"]) == 2
-        assert "unknown corpus" in capsys.readouterr().err
+    def test_an_unknown_corpus_skips_and_lists_what_exists(self, capsys) -> None:
+        # A skip (exit 0), not a usage error: "that corpus is not here" is an ordinary
+        # state, and the message names the ones that are.
+        assert main(["--corpus", "nope"]) == 0
+        err = capsys.readouterr().err
+        assert "unknown corpus" in err and "available:" in err
 
-    def test_missing_external_data_skips_rather_than_failing(self, tmp_path: Path, capsys) -> None:
-        # Exit 0 so CI running the harness over optional corpora stays green.
+    def test_a_fetchable_corpus_skips_with_the_command_to_get_it(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        # Exit 0 so CI benchmarking over optional corpora stays green on a fresh clone, and
+        # the message is the command rather than a dead end.
         assert main(["--corpus", "skab_valve1", "--corpus-path", str(tmp_path)]) == 0
-        assert "skipped" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "skipped" in err and "fetch skab" in err
 
     def test_list_corpora(self, capsys) -> None:
-        assert main(["--list-corpora"]) == 0
+        assert main(["list"]) == 0
         out = capsys.readouterr().out
-        assert "demo_micro" in out and "skab_valve1" in out
+        assert "synthetic" in out and "skab_valve1" in out
 
 
 class TestBoundaries:
@@ -82,33 +89,35 @@ class TestBoundaries:
 
 class TestReport:
     def test_report_round_trips_and_renders(self) -> None:
-        corpus = load_corpus("demo_micro")
+        corpus = load_corpus("synthetic")
         report = evaluate(corpus, [("team3", load_spec(TEAM3_SPEC))], protocol=FitProtocol.NONE)
-        assert report.cases == 1 and report.incidents == 1
+        assert report.cases and report.incidents
         restored = type(report).model_validate_json(report.model_dump_json())
         assert render(restored) == render(report)
 
     def test_fitting_is_recorded_per_spec(self) -> None:
-        corpus = load_corpus("demo_micro")
+        corpus = load_corpus("synthetic")
         specs = [("team3", load_spec(TEAM3_SPEC)), ("stub", load_spec(STUB_SPEC))]
         report = evaluate(corpus, specs, protocol=FitProtocol.PREFIX)
         team3, stub = report.specs
-        # team3 can learn a baseline; the threshold rule cannot, and says so rather than
-        # failing the run.
-        assert team3.cases_fitted == 1
+        # Two different reasons for not fitting, both reported rather than raised: the
+        # threshold rule has no baseline to learn, and team3's shipped artifact is trained
+        # on SKAB's channels, which this corpus does not have.
         assert stub.cases_fitted == 0
         assert any("not fittable" in note for case in stub.cases for note in case.notes)
+        assert team3.cases_fitted == 0
+        assert any("fit refused" in note for case in team3.cases for note in case.notes)
 
     def test_a_row_scoring_detector_shows_its_fragmentation(self) -> None:
         # The stub flags rows and never merges them, so one fault becomes hundreds of
         # detections that the alert layer then compresses. This is the compression ratio
         # the two-level split exists to expose (ADR-0021 D2).
-        corpus = load_corpus("demo_micro")
+        corpus = load_corpus("synthetic")
         report = evaluate(corpus, [("stub", load_spec(STUB_SPEC))], protocol=FitProtocol.NONE)
         (spec_report,) = report.specs
-        (case,) = spec_report.cases
-        assert case.detections_per_incident is not None and case.detections_per_incident > 100
-        assert case.alerts_per_incident is not None and case.alerts_per_incident < 10
+        case = next(c for c in spec_report.cases if c.case.startswith("spike"))
+        assert case.detections_per_incident is not None and case.detections_per_incident > 10
+        assert case.alerts_per_incident is not None and case.alerts_per_incident <= 2
         assert spec_report.compression_ratio is not None
         assert spec_report.compression_ratio > 10
 

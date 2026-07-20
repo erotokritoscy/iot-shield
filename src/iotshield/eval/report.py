@@ -23,6 +23,33 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+TIMELINE_SPAN_CAP = 2000
+"""Most spans recorded per lane per case.
+
+Not arbitrary: Vega-Lite refuses to render past 5,000 rows by default, and a row-scoring
+detector produces 1,135 detections *per recording* — so an uncapped timeline would be both
+unrenderable and a multi-megabyte report. Truncation is flagged rather than silent.
+"""
+
+
+class CaseTimeline(BaseModel):
+    """Where the faults, detections and alerts actually fell, for one case.
+
+    The data behind the timeline chart, and the only part of a report that is about *shape*
+    rather than *score*. It answers the question a table cannot: a detector with
+    ``det/inc 300`` is fragmenting, but you only *see* what that costs an analyst when the
+    three lanes are drawn against one clock.
+
+    Off by default (``include_timeline``): the report's other job is to be a small, diffable
+    artifact a CI gate reads, and spans would dominate it.
+    """
+
+    truth: list[tuple[datetime, datetime]] = Field(default_factory=list)
+    detections: list[tuple[datetime, datetime]] = Field(default_factory=list)
+    alerts: list[tuple[datetime, datetime]] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class CaseReport(BaseModel):
     """One spec's result on one labelled case.
 
@@ -49,6 +76,7 @@ class CaseReport(BaseModel):
     mean_latency_seconds: float | None
     mean_rank_of_true: float | None
     precision_at_k: dict[int, float | None] = Field(default_factory=dict)
+    timeline: CaseTimeline | None = None
 
     @classmethod
     def build(
@@ -59,6 +87,7 @@ class CaseReport(BaseModel):
         alert_metrics: AlertMetrics,
         fitted: bool,
         notes: list[str],
+        timeline: CaseTimeline | None = None,
     ) -> "CaseReport":
         """Flatten both metric objects into the report row.
 
@@ -71,6 +100,7 @@ class CaseReport(BaseModel):
             case=case,
             fitted=fitted,
             notes=notes,
+            timeline=timeline,
             **{name: value for name, value in metrics.items() if name in cls.model_fields},
         )
 

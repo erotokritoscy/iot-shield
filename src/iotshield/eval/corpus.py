@@ -1,47 +1,66 @@
-"""Labelled corpora: the datasets a benchmark runs on, and how a researcher adds one.
+"""Labelled corpora: what a benchmark runs on, and how a researcher brings their own.
 
 A **case** is one labelled example — the raw input text(s) a run would ingest, plus where
-the faults really were. A **corpus** is a named set of cases. Corpora register in ``CORPORA``
-by name, deliberately the same shape as ``DETECTORS`` and ``NORMALIZERS`` in the pipeline
-registry, so "bring your own labelled dataset" is the same gesture as "bring your own
-adapter" (ADR-0021 D5).
+the faults really were. A **corpus** is a named set of cases, stored as a *bundle* on disk
+(see ``bundle.py`` for the format and why it exists).
 
-This is **not** a fifth port: no Protocol, no port contract suite. Ports are the pipeline's
-runtime joints, and nothing here ever runs at product runtime — a loader is a dev-time
-function, so a registry plus a dataclass is the right altitude.
+Corpora are **discovered, not registered**: everything under the corpus root that carries a
+manifest is a corpus. There is no registry to edit and no loader to write, so adding a
+dataset is a drop-in — which is the difference between a harness a researcher can extend and
+one only its author can (ADR-0021 D5).
 
-Two kinds ship. ``demo_micro`` is committed and needs nothing external, so the harness works
-on a fresh clone and in CI. The SKAB corpora read the read-only reference tree, which a
-clone of this repo does not have — they raise ``CorpusUnavailable``, which the CLI reports
-as a skip rather than a crash.
+This is deliberately **not** a fifth port: no Protocol, no contract suite. Ports are the
+pipeline's runtime joints, and nothing here ever runs at product runtime.
+
+The root is ``data/eval/`` in the repository, overridable by ``IOTSHIELD_CORPUS_PATH`` — the
+same 12-factor pattern as ``IOTSHIELD_DATABASE_URL``, and for the same reason: *where data
+lives* is a deployment property. It is never a caller-supplied value, because a request that
+names a path is a request to read arbitrary files (ADR-0018 §9-A).
 """
 
-import json
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+import os
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from iotshield.eval.truth import GroundTruth
+from iotshield.eval.bundle import (
+    MANIFEST_NAME,
+    BundleError,
+    CaseManifest,
+    CorpusManifest,
+    InputManifest,
+    Labels,
+    discover,
+    labels_name,
+    manifest_json,
+    payload_name,
+    read_labels,
+    read_manifest,
+    read_payload,
+    write_payload,
+)
+from iotshield.eval.truth import GroundTruth, Incident
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
-from iotshield.pipeline.registry import lookup
 
-# SKAB ships as semicolon-separated CSV with the labels inline; these are its label columns.
-_SKAB_SEPARATOR = ";"
-_SKAB_LABEL = "anomaly"
-_SKAB_TIME = "datetime"
-_SKAB_ASSET = "skab-testbed"
-_SKAB_DROP = (_SKAB_LABEL, "changepoint")
+CORPUS_PATH_ENV = "IOTSHIELD_CORPUS_PATH"
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SKAB_PATH = _REPO_ROOT.parent / "reference" / "team3-telemetry-ad" / "Datasets" / "SKAB"
-"""Where SKAB lives in the workspace. Absent in a standalone clone — hence CorpusUnavailable."""
+DEFAULT_CORPUS_ROOT = _REPO_ROOT / "data" / "eval"
+"""Corpora ship *inside* the repository, so a clone of it can benchmark with no other setup."""
+
+# Datasets we cannot redistribute but can convert locally. Listed so `--list-corpora` can
+# advertise them: a researcher should learn that SKAB is one command away, not conclude the
+# harness only has toy data. See eval/fetch.py.
+FETCHABLE: dict[str, str] = {
+    "skab": "SKAB valve faults + anomaly-free (Skoltech, GPLv3) — run: iotshield.eval fetch skab"
+}
 
 
 class CorpusUnavailable(RuntimeError):
-    """A corpus needs data that is not on this machine (external dataset, wrong path)."""
+    """A named corpus is not present on this machine (never fetched, or wrong root)."""
 
 
 @dataclass(frozen=True)
@@ -65,7 +84,7 @@ class Case:
     """One labelled example: what to ingest, and where the faults really were.
 
     ``inputs`` is a list so a case aligns 1:1 with ``PipelineSpec.sources``; a future
-    multimodal corpus needs no change here, only a corpus that supplies two inputs.
+    multimodal corpus needs no change here, only a bundle that supplies two inputs.
     """
 
     name: str
@@ -79,6 +98,8 @@ class Corpus:
     name: str
     description: str
     cases: list[Case]
+    provenance: str = ""
+    licence: str = ""
 
     @property
     def incidents(self) -> int:
@@ -86,12 +107,26 @@ class Corpus:
 
 
 @dataclass(frozen=True)
-class CorpusSpec:
-    """A registered corpus: how to load it, and whether it needs data we do not ship."""
+class CorpusInfo:
+    """What a listing knows about a corpus without paying to load it.
 
-    loader: Callable[[Path | None], Corpus]
+    ``cases`` comes from the manifest, so a picker can show the size of a 16-recording
+    corpus without decompressing 2 MB of readings.
+    """
+
+    name: str
     description: str
-    needs_external_data: bool = False
+    provenance: str
+    licence: str
+    cases: int
+
+
+def corpus_root(root: Path | None = None) -> Path:
+    """The directory bundles live in: explicit argument, else env, else the repo's own."""
+    if root is not None:
+        return root
+    configured = os.environ.get(CORPUS_PATH_ENV, "").strip()
+    return Path(configured) if configured else DEFAULT_CORPUS_ROOT
 
 
 def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: str) -> CaseInput:
@@ -119,99 +154,113 @@ def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: s
     return CaseInput(STUB_CSV, "\n".join(lines) + "\n")
 
 
-def _skab_case(path: Path) -> Case:
-    frame = pd.read_csv(path, sep=_SKAB_SEPARATOR)
-    timestamps = [
-        moment.to_pydatetime().replace(tzinfo=UTC) for moment in pd.to_datetime(frame[_SKAB_TIME])
+def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
+    inputs = [
+        CaseInput(source.source_format, read_payload(directory / source.path))
+        for source in entry.inputs
     ]
-    labels = (
-        [bool(value) for value in frame[_SKAB_LABEL]]
-        if _SKAB_LABEL in frame.columns
-        else [False] * len(frame)
+    labels = read_labels(directory / entry.labels)
+    truth = GroundTruth.from_incidents(
+        labels.timestamps, [Incident(start, end) for start, end in labels.incidents]
     )
-    channels = frame.drop(columns=[_SKAB_TIME, *(c for c in _SKAB_DROP if c in frame.columns)])
-    return Case(
-        name=f"{path.parent.name}/{path.name}",
-        inputs=[to_stub_csv(channels, timestamps, _SKAB_ASSET)],
-        truth=GroundTruth.from_timeline(list(zip(timestamps, labels, strict=True))),
-    )
+    return Case(name=entry.name, inputs=inputs, truth=truth)
 
 
-def _skab_loader(subdirectory: str) -> Callable[[Path | None], Corpus]:
-    def load(root: Path | None) -> Corpus:
-        base = (root or DEFAULT_SKAB_PATH) / subdirectory
-        if not base.is_dir():
-            raise CorpusUnavailable(
-                f"SKAB directory not found: {base}. Point --corpus-path at your SKAB "
-                "checkout (the reference dataset is not shipped with this repository)."
-            )
-        files = sorted(base.glob("*.csv"))
-        if not files:
-            raise CorpusUnavailable(f"no CSV files under {base}")
-        # description is stamped by load_corpus from the registry — see there.
-        return Corpus(
-            name=f"skab_{subdirectory}", description="", cases=[_skab_case(p) for p in files]
-        )
-
-    return load
-
-
-def _demo_micro(_: Path | None) -> Corpus:
-    """The committed micro-corpus: the demo telemetry slice plus its labels.
-
-    Small on purpose — it exists so the harness runs, and is tested, on a fresh clone with
-    no external dataset. It is the same input ``config/demo_team3.yaml`` uses, so a
-    benchmark on it is directly comparable to the demo everyone has already seen.
-    """
-    csv_path = _REPO_ROOT / "data" / "demo" / "demo_team3.csv"
-    labels_path = _REPO_ROOT / "data" / "eval" / "demo_team3.labels.json"
-    if not labels_path.is_file():
-        raise CorpusUnavailable(f"labels missing: {labels_path}")
-    payload = json.loads(labels_path.read_text(encoding="utf-8"))
-    timeline = [
-        (datetime.fromisoformat(moment), bool(flagged)) for moment, flagged in payload["timeline"]
-    ]
+def load_bundle(directory: Path) -> Corpus:
+    """Load one bundle directory into a Corpus."""
+    manifest = read_manifest(directory)
+    try:
+        cases = [_case_from_manifest(directory, entry) for entry in manifest.cases]
+    except (OSError, BundleError) as exc:
+        raise BundleError(f"corpus {manifest.name!r} in {directory}: {exc}") from exc
     return Corpus(
-        name="demo_micro",
-        description="",  # stamped by load_corpus from the registry
-        cases=[
-            Case(
-                name=payload.get("case", "demo_team3"),
-                inputs=[CaseInput(STUB_CSV, csv_path.read_text(encoding="utf-8-sig"))],
-                truth=GroundTruth.from_timeline(timeline),
-            )
-        ],
+        name=manifest.name,
+        description=manifest.description,
+        cases=cases,
+        provenance=manifest.provenance,
+        licence=manifest.licence,
     )
 
 
-CORPORA: dict[str, CorpusSpec] = {
-    "demo_micro": CorpusSpec(
-        _demo_micro, "SKAB valve1/13 slice, as config/demo_team3.yaml uses (1 case)"
-    ),
-    "skab_valve1": CorpusSpec(
-        _skab_loader("valve1"),
-        "SKAB valve1 closure faults (16 recordings, one fault each)",
-        needs_external_data=True,
-    ),
-    "skab_valve2": CorpusSpec(
-        _skab_loader("valve2"),
-        "SKAB valve2 faults (4 recordings, one fault each)",
-        needs_external_data=True,
-    ),
-    "skab_clean": CorpusSpec(
-        _skab_loader("anomaly-free"),
-        "SKAB anomaly-free recording (no faults: every alert is a false alarm)",
-        needs_external_data=True,
-    ),
-}
+def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
+    """Describe every bundle under the root, cheaply (manifests only, no readings)."""
+    infos: list[CorpusInfo] = []
+    for _, directory in discover(corpus_root(root)):
+        try:
+            manifest = read_manifest(directory)
+        except BundleError:
+            continue  # a broken manifest must not break the listing; loading it will say so
+        infos.append(
+            CorpusInfo(
+                name=manifest.name,
+                description=manifest.description,
+                provenance=manifest.provenance,
+                licence=manifest.licence,
+                cases=len(manifest.cases),
+            )
+        )
+    return infos
 
 
 def load_corpus(name: str, root: Path | None = None) -> Corpus:
-    """Load a registered corpus by name, or raise naming the known alternatives.
+    """Load a corpus by name, or explain how to obtain it.
 
-    The registry's ``description`` is stamped onto the loaded corpus here so it has exactly
-    one home: a loader that also carried its own description would let ``--list-corpora``
-    and the report drift apart, which they had already begun to do.
+    An absent corpus is ``CorpusUnavailable`` rather than a plain error because the CLI
+    treats it as a *skip* (exit 0): a fetchable dataset nobody has fetched yet is a normal
+    state on a fresh clone, not a broken invocation.
     """
-    spec = lookup("corpus", CORPORA, name)
-    return replace(spec.loader(root), description=spec.description)
+    base = corpus_root(root)
+    # A bundle answers to its directory name or its manifest name; they normally agree, and
+    # accepting either means renaming a folder does not break a saved command line.
+    for directory_name, directory in discover(base):
+        if name == directory_name or name == read_manifest(directory).name:
+            return load_bundle(directory)
+
+    for prefix, hint in FETCHABLE.items():
+        if name.startswith(prefix):
+            raise CorpusUnavailable(f"corpus {name!r} is not in {base}. {hint}")
+    known = ", ".join(info.name for info in list_corpora(root)) or "none"
+    raise CorpusUnavailable(f"unknown corpus {name!r} in {base}; available: {known}")
+
+
+def write_bundle(
+    directory: Path,
+    corpus: Corpus,
+    *,
+    provenance: str | None = None,
+    licence: str | None = None,
+) -> CorpusManifest:
+    """Write a Corpus out as a bundle — the one writer the generator and fetcher share.
+
+    Round-trips with ``load_bundle``: everything a benchmark needs is recorded, so a corpus
+    built once (generated, or converted from an external dataset) is thereafter just data.
+    """
+    cases: list[CaseManifest] = []
+    for case in corpus.cases:
+        inputs: list[InputManifest] = []
+        for index, given in enumerate(case.inputs):
+            relative = payload_name(case.name, given.source_format, index)
+            write_payload(directory, relative, given.text)
+            inputs.append(InputManifest(source_format=given.source_format, path=relative))
+
+        labels_relative = labels_name(case.name)
+        write_payload(
+            directory,
+            labels_relative,
+            Labels(
+                timestamps=[moment for moment, _ in case.truth.timeline],
+                incidents=[(i.start, i.end) for i in case.truth.incidents],
+            ).model_dump_json(indent=1),
+        )
+        cases.append(CaseManifest(name=case.name, inputs=inputs, labels=labels_relative))
+
+    manifest = CorpusManifest(
+        name=corpus.name,
+        description=corpus.description,
+        provenance=provenance if provenance is not None else corpus.provenance,
+        licence=licence if licence is not None else corpus.licence,
+        cases=cases,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / MANIFEST_NAME).write_text(manifest_json(manifest), encoding="utf-8")
+    return manifest

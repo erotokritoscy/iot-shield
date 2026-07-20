@@ -53,15 +53,27 @@ Run all four before considering any task done.
 ```
 # Benchmark against labelled data (ADR-0021) — the other half of the port suite:
 # pytest says whether an adapter FITS, this says whether it is GOOD.
-uv run python -m iotshield.eval --list-corpora
-uv run python -m iotshield.eval --corpus demo_micro \
-    --spec config/bench/team3.yaml --spec config/bench/stub.yaml
+uv run python -m iotshield.eval list                 # what corpora exist here
+uv run python -m iotshield.eval generate             # (re)build the committed corpus
+uv run python -m iotshield.eval fetch skab           # convert SKAB into local bundles
+uv run python -m iotshield.eval --corpus synthetic --spec config/bench/stub.yaml \
+    --with-timeline --out reports/evaluation.json
 uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
-    --spec config/bench/team3.yaml --out reports/valve1.json
+    --spec config/bench/team3.yaml
 ```
 
-`demo_micro` is committed and needs nothing external; the SKAB corpora read `../reference/`
-and skip cleanly (exit 0) when it is absent, as in a standalone clone.
+Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
+format, and interval labels. They are *discovered*, not registered: anything under the root
+with a manifest is a corpus, so adding one is dropping in data, not writing code. The root is
+`IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
+
+`synthetic` is committed and always works. SKAB is **GPLv3**, so it is not redistributed —
+`fetch skab` converts a local checkout into gitignored bundles. An absent corpus is a *skip*
+(exit 0), not a failure, so CI stays green on a fresh clone.
+
+Note `team3_zscore`'s committed artifact is trained on SKAB's channels, so it cannot judge
+the synthetic corpus (the channel-coverage guard skips it; `--fit-protocol prefix` reports
+why). Compare detectors on `synthetic` with `stub_threshold`, on SKAB with `team3_zscore`.
 
 ```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
@@ -138,8 +150,14 @@ needs labelled corpora — which production data by definition never has. The de
 points one way (eval → pipeline, never back), and a benchmark **cannot** write to a store:
 `compute_run` and the guard take `PipelineSpec`, which has no `database_url`, so it is the
 type checker rather than discipline that stops twenty benchmark runs flooding an operator's
-triage queue. The dashboard's `Evaluate` mode is off unless `IOTSHIELD_EVAL_UI` is set, and
-it renders a saved report — it never launches one.
+triage queue.
+
+Two flags, both off unless a deployment opts in (compose sets both — it is the research
+stack): `IOTSHIELD_EVAL_API` decides whether the Pipeline API *registers* the `/eval` router
+(absent, not merely guarded — a product image has no route and no OpenAPI entry), and
+`IOTSHIELD_EVAL_UI` shows the dashboard's Evaluate mode. The dashboard runs benchmarks
+through the API and renders them; it never computes, and its `eval` imports are deferred so
+the package stays deletable. With no API reachable it falls back to a saved report JSON.
 
 Detectors may implement the **optional** `Fittable` capability (`fit(events) -> Detector`,
 returning a new detector). The pipeline never calls it; only a benchmark does, so it can

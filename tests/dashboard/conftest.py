@@ -120,3 +120,17 @@ def control_client(tmp_path: Path) -> ControlClient:
     engine = make_engine(f"sqlite:///{(tmp_path / 'compose.db').as_posix()}")
     create_schema(engine)  # init owns the schema; the write API assumes it exists
     return ControlClient(TestClient(create_control_app(engine)))
+
+
+@pytest.fixture()
+def eval_control_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ControlClient:
+    """A ControlClient whose Pipeline API has the evaluation plane mounted.
+
+    Separate from ``control_client`` because the flag must be set *before* the app is
+    built — the eval router is registered at construction, not consulted per request, which
+    is what makes it absent rather than merely guarded (ADR-0021 D1).
+    """
+    monkeypatch.setenv("IOTSHIELD_EVAL_API", "1")
+    engine = make_engine(f"sqlite:///{(tmp_path / 'eval.db').as_posix()}")
+    create_schema(engine)
+    return ControlClient(TestClient(create_control_app(engine)))

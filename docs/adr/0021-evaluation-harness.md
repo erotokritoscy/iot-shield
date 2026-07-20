@@ -125,37 +125,140 @@ Making it a switch rather than a mode turns it into an experiment: running `none
 rig, which decides whether the product ships one artifact per device class or must fit per
 asset. See Consequences — the answer was not what we expected.
 
-### D5 — Corpora are a registry, not a fifth port
+### D5 — Corpora are *data on disk*, discovered — not code
 
-`CORPORA` is a name→loader dict, deliberately the same shape as `DETECTORS`/`NORMALIZERS`, so
-"bring your own labelled dataset" is the same gesture as "bring your own adapter". It is
-explicitly **not** a port: no Protocol, no port contract suite. Ports are the pipeline's
-runtime joints and nothing here runs at product runtime, so a registry plus a dataclass is
-the right altitude.
+**Amended 2026-07-20.** This decision originally made `CORPORA` a name→loader dict in Python,
+mirroring `DETECTORS`. That shape had two faults, and the second is disqualifying for what
+this repository is for.
 
-Because we push `iotshield/` only, a clone has no `reference/` tree and therefore no SKAB.
-So corpus paths are configurable, a missing corpus raises `CorpusUnavailable` (which the CLI
-reports as a **skip, exit 0**, so CI stays green), and one committed micro-corpus
-(`data/eval/demo_team3.labels.json`) needs nothing external.
+**Adding a corpus required writing code.** A loader function plus a registry entry is a
+contribution to our source tree; a labelled dataset is data. Making a researcher edit Python
+to register data is the difference between a harness they can extend and one only its author
+can.
 
-Corpora produce raw **text**, not events, so a benchmark exercises normalization too — it
-measures the pipeline, not just a detector. Each input is *tagged* with its
-`source_format` (`CaseInput`) and checked against the spec's `sources`, for the same reason
-ADR-0019 routes by explicit tags: an untagged mismatch is not an error but a *misleading
-number*, since the wrong normalizer quarantines every line, the detector sees nothing, and
-the report reads exactly like a detector that failed. The harness exists to stop publishing
-numbers like that, so the mismatch is refused.
+**No corpus actually lived in the repository.** The loaders read `../reference/`, outside
+the repo. Post-internship a researcher clones `iotshield/` alone — so of four corpora, three
+were unreachable and the fourth was a 300-row slice. The harness worked on one machine.
 
-### D6 — CLI-first; no API endpoint
+So a corpus is now a **bundle**: a self-describing directory under `data/eval/` holding a
+manifest, gzipped readings in a real ingest format, and an answer key. Everything under the
+corpus root with a manifest *is* a corpus — no registry, no loader, no import. Adding one is
+a drop-in, and the CLI, API and dashboard all see it with no change to any of them.
 
-The researcher's loop becomes two symmetric commands: `uv run pytest` (does it fit?) and
+Three consequences worth stating:
+
+- **Labels are intervals plus the row clock**, not per-row booleans (`GroundTruth.from_incidents`).
+  Smaller — measured, uncompressed labels were *larger* than the readings they annotate — and
+  strictly more expressive: two incidents that touch are one run of flags but two intervals.
+- **Readings stay real text**, so a benchmark exercises normalization and measures the
+  *pipeline*, not a detector in isolation. Each input is **tagged** with its `source_format`
+  and checked against the spec's `sources`, for the same reason ADR-0019 routes by explicit
+  tags: an untagged mismatch is not an error but a *misleading number*, since the wrong
+  normalizer quarantines every line and the report then reads exactly like a bad detector.
+- **The root is `IOTSHIELD_CORPUS_PATH`-overridable**, defaulting to the repo's own — the
+  same 12-factor pattern as `IOTSHIELD_DATABASE_URL`, and never caller-supplied, because a
+  request naming a path is a request to read arbitrary files (ADR-0018 §9-A).
+
+#### D5a — Three tiers, because licensing decides what may ship
+
+The blocker was not size (SKAB's labelled subsets are 599 KB gzipped — smaller than CSVs we
+already commit). It is that **SKAB is GPLv3**: copyleft, with share-alike obligations on
+derivative works, and our labels derive from its `anomaly` column. This repository declares
+no licence and its stated direction is a commercial product, so committing those bytes would
+bake a licensing question into git history, where it is expensive to undo.
+
+| Tier | How it arrives | Committed? |
+|---|---|---|
+| **Ours** | `data/eval/synthetic`, built by `iotshield.eval generate` | ✅ |
+| **Third-party** | `iotshield.eval fetch skab` converts a local checkout into bundles | ❌ gitignored |
+| **Bring-your-own** | drop a bundle in the corpus root | n/a |
+
+A manifest **must** carry `provenance` and `licence` — a bundle that cannot say where it came
+from is one nobody can safely reuse, which is exactly the problem this tiering solves.
+
+#### D5b — A synthetic generator, so a fresh clone has a real benchmark
+
+Without one, a cloner gets no substantial corpus at all. Anomalies injected by construction
+*are* the labels, so there is no annotation step and no licence question, and it does things
+a fixed dataset cannot: arbitrary size, and fault shapes chosen to *discriminate* rather than
+whatever a testbed happened to do. Three shapes ship, and the third is the point:
+
+- **spike** — a violent excursion. Any threshold catches it; it is the floor.
+- **drift** — a slow ramp ending past the threshold but never locally sudden, so a fixed rule
+  catches it *late*. This is where latency separates detectors a hit/miss score would tie.
+- **stuck** — the sensor freezes at a plausible value. In range the whole time, so a fixed
+  threshold is **structurally blind**; only a detector that models normal can see it.
+
+Measured on the shipped bundle, `stub_threshold` scores recall 1.00 on spike and drift and
+**0.00 on all three stuck cases** — the corpus discriminates by construction, and that is
+pinned by a test.
+
+The output is written once and committed, like the team3 artifact (ADR-0012) and for the same
+reason: generated inputs must be *fixed*, or every benchmark silently measures a different
+dataset. Writes are byte-reproducible (gzip `mtime=0`), so regenerating is not a diff.
+
+### D6 — CLI-first, and (amended) a gated API + a dashboard that can run one
+
+The researcher's loop is two symmetric commands: `uv run pytest` (does it fit?) and
 `uv run python -m iotshield.eval` (is it good?). CLI-first because the report is a diffable
-JSON artifact CI could gate on, benchmarks are long-running and not request-shaped, and it
-is scriptable. **The dashboard renders a saved report and never launches one** — Streamlit
-re-executes on every interaction, so a multi-minute corpus run there is a spinner of death.
+JSON artifact CI could gate on, and because it is scriptable.
 
-No Pipeline-API endpoint: that API runs *the operator's* pipeline on *their* data, and a
-benchmark endpoint would let any caller pin a worker for minutes on a corpus they do not own.
+**Amended 2026-07-20.** This decision originally added "the dashboard renders a saved report
+and never launches one" and "no Pipeline-API endpoint", on two grounds: a multi-minute run
+under Streamlit's re-execute-on-every-interaction model is a spinner of death, and an
+endpoint would let a caller pin a worker for minutes on a corpus they do not own.
+
+Both were true when written, and the *measurement changed*: the efficiency pass took a full
+16-recording benchmark from **12.9 s to 3.2 s**. "Minutes" no longer describes anything we
+have. Recorded rather than quietly reversed, because the useful part is that the decision was
+downstream of a number, and the number moved.
+
+What the reversal keeps:
+
+- **The run is button-gated and cached** (`st.cache_data`), which is what actually makes
+  Streamlit safe — not duration. Work in the page body re-runs on every click; behind a
+  button with a cache, it happens once and every later interaction replays instantly.
+- **The dashboard stays a pure API client** (ADR-0008). It POSTs and renders; it never
+  computes. Its `iotshield.eval` imports are deferred into the functions that need them, so
+  the package stays deletable from a product image — pinned by a test that imports the
+  dashboard and asserts `iotshield.eval` is absent from `sys.modules`.
+- **The endpoints do not exist unless opted in.** `IOTSHIELD_EVAL_API` decides whether the
+  router is *registered*, not whether a live handler rejects the call. A product deployment
+  has no `/eval` route to reach or probe, and none in its OpenAPI schema. The flag is read
+  from `api/_eval_gate.py`, which imports nothing from `eval/`, so asking "is the plane on?"
+  never drags the plane in.
+- **The router takes no database.** A benchmark computes and returns; that it needs no
+  resources is the third plane visible in the wiring, and a test proves the eval routes work
+  against an engine `/health` cannot reach.
+- **Synchronous.** The trigger for a job/poll pattern is a corpus that takes longer than
+  ~30 s, which none does.
+
+The UI composes specs from *detector* picks, because a researcher thinks "compare these
+detectors" but head-to-head comparison needs N specs of one detector each — several
+detectors in one spec run *together* rather than competing. The full-power path (arbitrary
+hand-written specs) stays on the CLI, and the API accepts full specs, so the UI is never the
+ceiling.
+
+#### D6a — What the dashboard shows, and why those three views
+
+A table was the original output, and tables hide exactly our best findings:
+
+- **Head-to-head bar** — event F1 per spec. A magnitude comparison, so one hue with identity
+  on the axis.
+- **Per-case variance strip** — one dot per recording. The reason it exists: SKAB's fitted
+  run scored a *mean* of 0.47, which reads as "mediocre everywhere" and is wrong — thirteen
+  recordings scored near 1.0 and three collapsed to 0. A mean cannot show that.
+- **Case timeline** — truth, detections and alerts against one clock. `det/inc 300` is a
+  number a reader must decode; three lanes show it as texture, with latency visible as the
+  gap before the first detection. This needs per-case spans, so `CaseTimeline` is an
+  **optional** report field (capped at 2,000 spans per lane, truncation flagged) — off by
+  default, because the report's other job is to stay small and diffable.
+
+No new colours were introduced: identity rides on the y-axis in all three, so none is a
+categorical palette. The one candidate pair was run through the palette validator and
+rejected for the right reason — a deliberate neutral fails the chroma floor because it *is*
+gray, which is the signal that ground truth is a reference backdrop like the grid, not a
+series competing for identity.
 
 ### D7 — What we deliberately do NOT measure
 
@@ -230,8 +333,22 @@ compliance (detections-per-incident) so the cost is visible; nothing rejects an 
   What it delivers is that "event F1" is now a committed, tested definition, so the claim is
   **auditable** and re-runnable against any adapter we do have.
 
-- **Deferred**, each with a trigger: a labelled multimodal corpus for the corroboration A/B
-  (needs the synthetic generator); CICIDS2017 once a flow lane exists; learned/calibrated
-  prioritization (needs analyst feedback); a benchmark API endpoint (needs a hosted
-  "benchmark on your own data" product); guarding a fit against a pathological baseline
-  (newly discovered above).
+- **A clone of this repository can benchmark with no other setup.** `data/eval/synthetic`
+  ships (276 KB), so `uv run python -m iotshield.eval` works on a fresh checkout — which is
+  the whole point of the bundle work, and was not true of the first version.
+
+- **The team3 artifact is SKAB-specific, and the harness says so rather than scoring it
+  zero.** `team3_zscore` cannot judge the synthetic corpus: its committed artifact is trained
+  on SKAB's eight channels, and the channel-coverage guard (ADR-0012 D4) correctly skips an
+  asset that lacks them. Under `--fit-protocol none` that reads as recall 0, which is the
+  misleading-number failure again — under `prefix` the refusal is reported as a note (`fit
+  refused (fit input is missing trained channels: …)`). **Deferred:** a synthetic-trained
+  artifact so both detectors can be compared on the committed corpus. Until then, compare
+  detectors on `synthetic` with `stub_threshold`, and on SKAB with `team3_zscore`.
+
+- **Deferred**, each with a trigger: a labelled *multimodal* corpus for the corroboration A/B
+  (the generator now exists, so this is a recipe away); CICIDS2017 once a flow lane exists;
+  learned/calibrated prioritization (needs analyst feedback); guarding a fit against a
+  pathological baseline; a synthetic-trained team3 artifact (above); declaring `fittable` in
+  the registry rather than discovering it by `isinstance` (only worth it if the question
+  moves onto a hot path).
