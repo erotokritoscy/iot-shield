@@ -10,6 +10,13 @@
 .pyright/
 *.db
 .env
+
+# Fetched corpora: datasets we may USE but not REDISTRIBUTE (SKAB is GPL-3.0, ADR-0021 D5a).
+# .gitignore keeps them out of git, but an image is distribution too — without this, `COPY
+# data/` bakes whatever the developer happened to fetch into a shippable artifact, and the
+# image stops being reproducible from a clone (which has only the committed corpus).
+data/eval/skab_*/
+reports/
 dist/
 build/
 *.egg-info/
