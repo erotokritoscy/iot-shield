@@ -34,6 +34,7 @@ from iotshield.pipeline import (
     compute_result,
     normalize_sources,
 )
+from iotshield.pipeline.config import config_fingerprint
 from iotshield.sink import RunResult
 
 
@@ -77,8 +78,21 @@ def _ingest_key(spec: PipelineSpec, case: Case) -> tuple[Any, ...]:
     Detectors are excluded deliberately — they consume the ingest phase's output and never
     influence it. That is exactly what makes the cache pay off for a sweep, whose specs
     differ *only* in detector params (``eval/sweep.py:_applied`` rewrites nothing else).
+
+    A source's identity is its name **and its params**, via the one rule the runner and the
+    guard already share. Keying on the name alone was correct only while normalizers took
+    no params; once they did (ADR-0023 D8), two specs differing only in ``home_networks``
+    collided here and the second was scored against the first's events — a benchmark
+    publishing a number it did not measure, which is the one failure this harness exists to
+    prevent.
     """
-    return (case.name, tuple((s.normalizer, s.source_format) for s in spec.sources))
+    return (
+        case.name,
+        tuple(
+            (source.source_format, config_fingerprint(source.normalizer, source.params))
+            for source in spec.sources
+        ),
+    )
 
 
 def evaluate_case(
