@@ -216,6 +216,50 @@ class TestRejects:
         with pytest.raises(ValueError, match="unsupported source_format"):
             FlowNormalizer().normalize("anything", source_format="netflow-v9", origin=ORIGIN)
 
+    def test_a_non_finite_duration_is_rejected_before_it_reaches_metadata(self) -> None:
+        # inf/nan pass float() and become invalid JSON in metadata, which Postgres JSONB
+        # rejects at write time — so they are quarantined at the boundary instead.
+        row = "2026-07-07T12:00:00+00:00,10.0.0.7,1,203.0.113.9,23,tcp,inf,1,0,1,0,S0"
+        result = run(csv(row))
+        assert result.events == []
+        assert "not finite" in result.malformed[0].error
+
+    def test_a_negative_counter_is_rejected(self) -> None:
+        row = "2026-07-07T12:00:00+00:00,10.0.0.7,1,203.0.113.9,23,tcp,0,-5,0,1,0,S0"
+        result = run(csv(row))
+        assert result.events == [] and "negative" in result.malformed[0].error
+
+    def test_an_out_of_range_port_is_rejected(self) -> None:
+        row = "2026-07-07T12:00:00+00:00,10.0.0.7,99999,203.0.113.9,23,tcp,0,1,0,1,0,S0"
+        result = run(csv(row))
+        assert result.events == [] and "out of range" in result.malformed[0].error
+
+    def test_a_truncated_row_is_rejected_not_zero_filled(self) -> None:
+        # A torn write at log rotation: 8 of 12 columns. Previously the missing counters
+        # were silently read as unset (0), producing a plausible but corrupt event.
+        row = "2026-07-07T12:00:00+00:00,10.0.0.7,51514,203.0.113.9,23,tcp,0.5,999"
+        result = run(csv(row))
+        assert result.events == []
+        assert "field(s)" in result.malformed[0].error
+
+    def test_a_quoted_delimiter_does_not_shift_the_columns(self) -> None:
+        # flow-csv is a real CSV: a field carrying a comma inside quotes is one field, not
+        # two, and str.split would shatter it and misalign every column after it.
+        text = (
+            "start,src_ip,src_port,dst_ip,dst_port,proto,service\n"
+            '2026-07-07T12:00:00+00:00,10.0.0.7,51514,203.0.113.9,23,tcp,"http,proxy"\n'
+        )
+        (event,) = run(text).events
+        record = FlowRecord.from_event(event)
+        assert record is not None
+        assert record.peer_port == 23 and record.service == "http,proxy"
+
+    def test_an_explicitly_empty_home_networks_is_a_config_error(self) -> None:
+        # Distinct from unset: an empty range set rejects every flow, so it is almost
+        # certainly a mistake rather than a request.
+        with pytest.raises(ValueError, match="empty"):
+            FlowNormalizer(home_networks=[])
+
 
 class TestPortlessProtocols:
     def test_icmp_without_ports_still_produces_an_event(self) -> None:

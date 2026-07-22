@@ -47,6 +47,8 @@ we refuse to guess column order.
 
 from __future__ import annotations
 
+import csv
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -97,6 +99,10 @@ class Dialect:
     delimiter: str = ","
     comment_prefix: str | None = None
     fields_directive: str | None = None
+    quoted: bool = False
+    """Whether fields may be RFC 4180 quoted (a value carrying the delimiter, wrapped in
+    ``"``). True for a real CSV; false for Zeek, whose fields are never quoted and may
+    themselves contain ``"``, which a CSV parser would misread."""
 
     @property
     def header_is_first_row(self) -> bool:
@@ -106,6 +112,23 @@ class Dialect:
         other, and there is no coherent dialect in which they would.
         """
         return self.fields_directive is None
+
+    def split(self, line: str, delimiter: str) -> list[str]:
+        """One line into its fields, honouring the dialect's quoting.
+
+        A CSV field may legitimately contain the delimiter inside quotes; ``str.split``
+        would shatter it and shift every column after it. ``csv.reader`` is only used when
+        the dialect declares quoting, because Zeek fields are unquoted and can contain a
+        literal ``"`` that would otherwise be read as a quote character.
+
+        Even on the quoted dialect, only a line that actually contains a ``"`` can split
+        differently, so the common case takes ``str.split`` — building a fresh
+        ``csv.reader`` per line is several times slower and needless on a millions-of-rows
+        capture whose fields are almost never quoted.
+        """
+        if self.quoted and '"' in line:
+            return next(csv.reader([line], delimiter=delimiter))
+        return line.split(delimiter)
 
 
 ZEEK_CONN = Dialect(
@@ -152,6 +175,7 @@ FLOW_CSV = Dialect(
         "state": "state",
     },
     parse_timestamp=_parse_iso,
+    quoted=True,
 )
 
 DIALECTS: dict[str, Dialect] = {ZEEK_CONN.name: ZEEK_CONN, FLOW_CSV.name: FLOW_CSV}
@@ -186,6 +210,10 @@ class _Reader:
     flag the next line would be read as a replacement header, so a file with a bad header
     row would silently parse its first data row as the schema.
     """
+    column_count: int = 0
+    """How many columns the header declared. A data row with a different count is a torn
+    write (log rotation) or a delimiter problem, not a row with a few unset fields — the
+    two were indistinguishable while a short row was silently zero-filled."""
 
     @property
     def ready(self) -> bool:
@@ -201,6 +229,7 @@ class _Reader:
         original line is.
         """
         self.header_seen = True
+        self.column_count = len(headings)
         positions = {name.strip(): index for index, name in enumerate(headings)}
         self.index_of = {
             canonical: positions[column]
@@ -237,13 +266,18 @@ def _number(reader: _Reader, parts: Sequence[str], name: str, *, default: int = 
         return default
     try:
         # Some exporters write counters as floats ("1024.0"); int(float(x)) accepts both.
-        return int(float(text))
+        value = int(float(text))
     except (ValueError, OverflowError) as exc:
         # OverflowError, not just ValueError: float("1e400") is inf, and int(inf) raises
         # OverflowError. Uncaught, one corrupt counter escaped normalize() and killed the
         # whole multi-source run — the port's first law is that a bad *record* is data, not
         # an exception, so it is quarantined like any other unreadable field.
         raise FlowParseError(f"{name} is not a usable number: {text!r}") from exc
+    if value < 0:
+        # A byte or packet count cannot be negative; a negative one is corrupt data, and
+        # left through it could drive the exfiltration sum *downward*.
+        raise FlowParseError(f"{name} is negative: {text!r}")
+    return value
 
 
 def _port(reader: _Reader, parts: Sequence[str], name: str) -> int | None:
@@ -251,9 +285,12 @@ def _port(reader: _Reader, parts: Sequence[str], name: str) -> int | None:
     if text is None:
         return None  # ICMP and other portless protocols
     try:
-        return int(text)
+        port = int(text)
     except ValueError as exc:
         raise FlowParseError(f"{name} is not a port number: {text!r}") from exc
+    if not 0 <= port <= 65535:
+        raise FlowParseError(f"{name} is out of range: {text!r}")
+    return port
 
 
 def _required(reader: _Reader, parts: Sequence[str], name: str) -> str:
@@ -277,6 +314,12 @@ def _parse_row(reader: _Reader, parts: Sequence[str], locality: Locality) -> dic
         duration = float(duration_text) if duration_text is not None else 0.0
     except ValueError as exc:
         raise FlowParseError(f"duration is not a number: {duration_text!r}") from exc
+    if not math.isfinite(duration):
+        # inf/nan pass float() but ride into metadata as the bare tokens Infinity/NaN, which
+        # are not valid JSON: SQLite stores them, Postgres JSONB rejects the whole run's
+        # transaction at write time. The contract's FiniteFloat guards value/timestamp; this
+        # is the one numeric that only lives in metadata, so it must be guarded here.
+        raise FlowParseError(f"duration is not finite: {duration_text!r}")
 
     # Orientation is what turns two endpoints into (asset, peer) — see flow.orient. Its
     # failure is a data-quality fact about this row, so it becomes a reject with the reason.
@@ -321,11 +364,24 @@ class FlowNormalizer:
         deployment without configuration. Accepts a list (YAML) or a comma-separated
         string (a UI text box), because both are how it actually arrives.
         """
+        if home_networks is None:
+            # Unset: the private/link-local defaults, right for almost every IoT deployment.
+            self._locality = Locality()
+            return
         if isinstance(home_networks, str):
             home_networks = [part for part in home_networks.split(",") if part.strip()]
+        networks = parse_networks(home_networks)
+        if not networks:
+            # Provided but empty is not the same as unset: with no local range every flow
+            # has no local endpoint and is rejected, so this is almost certainly a mistake
+            # (a cleared UI box, a bad computed list) rather than a request for that.
+            raise ValueError(
+                "home_networks was given but is empty; every flow would be rejected as "
+                "non-local. Omit it to use the private/link-local defaults."
+            )
         # One Locality per normalizer, so its memo lives as long as the ingest does — the
         # asset side of a device's flows repeats on every row (flow.Locality).
-        self._locality = Locality(parse_networks(home_networks)) if home_networks else Locality()
+        self._locality = Locality(networks)
 
     def normalize(self, text: str, *, source_format: str, origin: str) -> NormalizeResult:
         # An unsupported format is a configuration error, not a data error (port rule 3).
@@ -360,12 +416,12 @@ class FlowNormalizer:
                     if value.strip() and (separator := _unescape(value)):
                         delimiter = separator
                 elif dialect.fields_directive and line.startswith(dialect.fields_directive):
-                    if error := reader.consume_header(line.split(delimiter)[1:]):
+                    if error := reader.consume_header(dialect.split(line, delimiter)[1:]):
                         reject(line, error)
                 continue
 
             if not reader.header_seen and dialect.header_is_first_row:
-                if error := reader.consume_header(line.split(delimiter)):
+                if error := reader.consume_header(dialect.split(line, delimiter)):
                     reject(line, error)
                 continue
 
@@ -373,8 +429,18 @@ class FlowNormalizer:
                 reject(line, "flow data with no usable header describing its columns")
                 continue
 
+            parts = dialect.split(line, delimiter)
+            if len(parts) != reader.column_count:
+                # A row whose field count differs from the header is a torn write or a
+                # delimiter problem, not a row with unset fields — rejecting it stops a
+                # truncated row being silently zero-filled into a plausible-looking event.
+                reject(
+                    line,
+                    f"row has {len(parts)} field(s) but the header declared {reader.column_count}",
+                )
+                continue
             try:
-                fields = _parse_row(reader, line.split(delimiter), self._locality)
+                fields = _parse_row(reader, parts, self._locality)
                 result.events.append(NormalizedEvent.model_validate({**fields, "raw": line}))
             except FlowParseError as exc:
                 reject(line, str(exc))

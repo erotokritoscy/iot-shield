@@ -303,9 +303,13 @@ def orient(
     dst_local = locality(dst_ip)
 
     if not src_local and not dst_local:
+        # Do not advise "widen home_networks": the widest setting (0.0.0.0/0) makes every
+        # flow local, so orientation always picks the originator and every internet host it
+        # talks to is auto-discovered as an asset — the inventory-pollution outcome the
+        # home-network rule exists to avoid. If a subnet is genuinely monitored, name *it*.
         raise FlowOrientationError(
             f"neither endpoint is inside the monitored network ({src_ip} -> {dst_ip}); "
-            f"widen home_networks if this traffic is yours"
+            f"not attributed to any asset. Add the subnet to home_networks if it is yours."
         )
 
     if src_local and dst_local:
