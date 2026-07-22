@@ -124,7 +124,11 @@ def get_events(
     if start is not None:
         stmt = stmt.where(EventRow.timestamp >= start)
     if end is not None:
-        stmt = stmt.where(EventRow.timestamp < end)
+        # Closed upper bound, not half-open: the contract recovers a detection's evidence by
+        # querying (asset, window_start..window_end, lane), and a point anomaly is a
+        # zero-length window (start == end). With `< end` such a detection recovered no
+        # events at all (models.py DetectionResult).
+        stmt = stmt.where(EventRow.timestamp <= end)
     return [row.to_contract() for row in _oldest_first(session, stmt)]
 
 
