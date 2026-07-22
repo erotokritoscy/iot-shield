@@ -106,6 +106,21 @@ def _check(specs: Sequence[PipelineSpec], sweep: Mapping[str, Sequence[Any]]) ->
             )
         if not values:
             raise ValueError(f"sweep {name!r} has no values")
+        # Ambiguity guard: a name several detectors in ONE spec accept (two lanes both
+        # declaring `threshold`, or two presets of one adapter) would be applied to all of
+        # them under a single label that reports one change — the FLOW lane made this
+        # reachable, since `threshold`/`window_minutes` are no longer unique to one detector.
+        # Refuse it rather than silently vary two knobs; sweep a parameter unique to one.
+        for spec in specs:
+            accepting = [
+                entry.name for entry in spec.detectors if name in detector_param_names(entry.name)
+            ]
+            if len(accepting) > 1:
+                raise ValueError(
+                    f"sweep {name!r} is accepted by more than one detector in a spec "
+                    f"({', '.join(accepting)}); it would vary all of them at once under one "
+                    f"label. Sweep a parameter unique to one detector."
+                )
 
     total = math.prod(len(values) for values in sweep.values())
     if total > MAX_EXPANSION:

@@ -104,6 +104,17 @@ class TestRefusals:
         with pytest.raises(ValueError, match="no values"):
             expand([("t", spec())], {"window_size": []})
 
+    def test_a_name_two_detectors_in_one_spec_accept_is_refused(self) -> None:
+        # `threshold` is declared by both stub_threshold and flow_burst, so sweeping it over
+        # a spec holding both would vary two knobs (different units) under one label. Fail
+        # loud rather than silently — the FLOW lane made this collision reachable.
+        base = spec(
+            {"name": "stub_threshold", "params": {"threshold": 80.0}},
+            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+        )
+        with pytest.raises(ValueError, match="more than one detector"):
+            expand([("mix", base)], {"threshold": [10, 20]})
+
     def test_an_oversized_cross_product_is_refused_before_running(self) -> None:
         # The cap exists because the caller is often a button: a stray comma must not
         # launch hundreds of benchmarks on someone else's server.
