@@ -4,10 +4,11 @@ To add an adapter: append a DetectorCase whose ``triggering_events`` are
 guaranteed to produce at least one detection for that implementation.
 """
 
+import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -22,8 +23,19 @@ from iotshield.detect import (
 )
 from iotshield.detect._fitted import NotFitted, is_fitted
 from iotshield.flow import METADATA_KEY, Direction, FlowRecord
-from iotshield.pipeline.registry import build_detector
+from iotshield.pipeline.registry import DETECTORS, build_detector
 from tests.team3_fixtures import make_detector
+
+
+def _learns(registry_name: str) -> bool:
+    """Whether the registered adapter carries hyperparameters (ADR-0022).
+
+    Derived from the registry, not from a case field, so that whether THE LAW *applies*
+    to an adapter is a fact about the adapter — a learning adapter cannot exempt itself
+    from the law by leaving a case field unset (which it previously could).
+    """
+    return DETECTORS[registry_name].params_type is not None
+
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -244,11 +256,17 @@ def test_hyperparameters_survive_fitting(case: DetectorCase) -> None:
     rule exists to forbid, and the one team3 actually had — both fits would be identical
     and this fails.
 
-    Adapters with no hyperparameter worth varying (or that cannot fit) declare no
-    ``distinguishing_params`` and skip, exactly like the fit test above.
+    Whether the law *applies* is derived from the registry (does the adapter carry
+    hyperparameters), not from the case: a learning adapter that supplied no
+    ``distinguishing_params`` used to skip silently, so it could exempt itself from the one
+    law the project calls THE LAW. Now it fails instead.
     """
-    if case.distinguishing_params is None:
-        pytest.skip("adapter declares no distinguishing hyperparameters")
+    if not _learns(case.registry_name):
+        pytest.skip("adapter carries no hyperparameters, so the law does not apply")
+    assert case.distinguishing_params is not None, (
+        f"{case.registry_name} carries hyperparameters but its case supplies no "
+        "distinguishing_params to check THE LAW with"
+    )
     assert case.fit_events is not None, "a distinguishing case must supply fit_events"
 
     first_params, second_params = case.distinguishing_params
@@ -269,8 +287,11 @@ def test_a_detector_built_without_a_cached_fit_says_so(case: DetectorCase) -> No
     Only adapters that can be constructed from hyperparameters alone have this state; the
     rest are always ready, which ``is_fitted`` reports by absence.
     """
-    if case.distinguishing_params is None:
-        pytest.skip("adapter cannot be constructed without a cached fit")
+    if not _learns(case.registry_name):
+        pytest.skip("adapter has no untrained state")
+    assert case.distinguishing_params is not None, (
+        f"{case.registry_name} carries hyperparameters but its case supplies none"
+    )
     assert case.fit_events is not None
 
     untrained = build_detector(case.registry_name, case.distinguishing_params[0])
@@ -296,3 +317,25 @@ def test_deterministic_apart_from_generated_ids(case: DetectorCase) -> None:
     assert fingerprint(detector.detect(case.triggering_events)) == fingerprint(
         detector.detect(case.triggering_events)
     )
+
+
+def test_output_is_independent_of_input_order(case: DetectorCase) -> None:
+    """The port's law 4 in full: the set of judgments must not depend on arrival order.
+
+    ``group_by_asset`` owns this for every adapter (foreign-lane isolation, asset sort, and
+    time sort within an asset). A windowed detector fed unordered events does not fail
+    loudly, it over-fires, so this is the test that keeps a new adapter from shipping that.
+    """
+    detector = case.make()
+    shuffled = list(case.triggering_events)
+    random.Random(0).shuffle(shuffled)
+    assert sorted(_fingerprint(detector.detect(shuffled))) == sorted(
+        _fingerprint(detector.detect(case.triggering_events))
+    )
+
+
+def test_every_registered_detector_joins_this_suite() -> None:
+    """CLAUDE.md golden rule 2 made enforceable: a registered adapter with no port case
+    would otherwise ship with zero port-law coverage and a green gate."""
+    covered = {cast(DetectorCase, param.values[0]).registry_name for param in CASES}
+    assert covered == set(DETECTORS), f"detectors missing a port case: {set(DETECTORS) - covered}"

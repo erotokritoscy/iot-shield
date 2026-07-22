@@ -7,6 +7,7 @@ line counts you know. This suite is the swap-safety net (CLAUDE.md rule 2).
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import cast
 
 import pytest
 
@@ -170,3 +171,16 @@ def test_empty_text_yields_nothing(case: NormalizerCase) -> None:
     result = case.make().normalize("", source_format=case.source_format, origin=ORIGIN)
     assert result.events == []
     assert result.malformed == []
+
+
+def test_every_registered_normalizer_format_joins_this_suite() -> None:
+    """Golden rule 2 made enforceable for normalizers: every format a registered normalizer
+    declares it accepts must have a port case, or a new dialect ships with no coverage."""
+    from iotshield.capabilities import formats_in
+    from iotshield.pipeline.registry import NORMALIZERS, normalizer_capability
+
+    declared = {
+        fmt for name in NORMALIZERS for fmt in formats_in(normalizer_capability(name).consumes)
+    }
+    covered = {cast(NormalizerCase, param.values[0]).source_format for param in CASES}
+    assert declared == covered, f"formats missing a port case: {declared - covered}"

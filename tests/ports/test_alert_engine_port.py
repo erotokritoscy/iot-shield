@@ -8,6 +8,7 @@ boost priority, they never gate detection.
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -49,11 +50,12 @@ def detection(
 @dataclass(frozen=True)
 class AlertEngineCase:
     make: Callable[[], AlertEngine]
+    registry_name: str
 
 
 CASES = [
-    pytest.param(AlertEngineCase(make=StubAlertEngine), id="stub-alert-engine"),
-    pytest.param(AlertEngineCase(make=WeightedAlertEngine), id="weighted-alert-engine"),
+    pytest.param(AlertEngineCase(StubAlertEngine, "stub"), id="stub-alert-engine"),
+    pytest.param(AlertEngineCase(WeightedAlertEngine, "weighted"), id="weighted-alert-engine"),
 ]
 
 
@@ -113,3 +115,15 @@ def test_alerts_ranked_by_priority(case: AlertEngineCase) -> None:
     alerts = case.make().build_alerts(detections, ASSETS)
     scores = [alert.priority_score for alert in alerts]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_every_registered_alert_engine_joins_this_suite() -> None:
+    """Golden rule 2 made enforceable here too: a registered engine with no port case would
+    ship with zero port-law coverage and a green gate — the same guard the detector and
+    normalizer suites now carry."""
+    from iotshield.pipeline.registry import ALERT_ENGINES
+
+    covered = {cast(AlertEngineCase, param.values[0]).registry_name for param in CASES}
+    assert covered == set(ALERT_ENGINES), (
+        f"alert engines missing a port case: {set(ALERT_ENGINES) - covered}"
+    )
