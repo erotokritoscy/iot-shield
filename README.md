@@ -164,10 +164,12 @@ $env:IOTSHIELD_PIPELINE_API_URL = "http://127.0.0.1:8100"   # Pipeline API (defa
 uv run streamlit run src/iotshield/dashboard/streamlit_app.py
 ```
 
-Four pages: Triage (ranked alert queue + drill-down to evidence), Assets &
-telemetry (per-asset timeline with detection overlays), Data health (counts + the
-malformed-input audit), and **Compose & run** (pick modules, validate the chain,
-and trigger a run against the Pipeline API — its results then appear under Triage).
+A sidebar **Mode** picks the plane — Monitor, Operate, and (when the deployment enables it)
+Evaluate. Monitor holds Triage (ranked alert queue + drill-down to each detection's
+evidence), Assets & telemetry (per-asset timeline plus an all-lane detections table), and
+Data health (counts + the malformed-input audit); Operate is **Compose & run** (pick
+modules, validate the chain, trigger a run against the Pipeline API — results then appear
+under Triage); Evaluate runs benchmarks and hyperparameter sweeps.
 
 ## Benchmark detectors against labelled data
 

@@ -16,7 +16,7 @@ connections to forty different hosts on port 23 in ten seconds is a compromised 
 looking for its next victim. The signal exists only in the *aggregate over a host's recent
 behaviour*, so that is what we compute. This also makes it correct on run #1 — no labels,
 no training corpus, no artifact, no new runtime dependency — and explainable, which our
-alert contract mandates: "cam-07 contacted 41 distinct destinations in 12s (boundary 20)"
+alert contract mandates: "cam-07 contacted 43 distinct destinations in a minute (boundary 20)"
 is something an analyst can act on; a random-forest probability of 0.94 is not.
 
 It earns the lane its place: a compromised camera scanning the internet produces perfectly

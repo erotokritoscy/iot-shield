@@ -108,7 +108,17 @@ one, which also exercises the orchestration UI's multi-format branch for the fir
 Two ship: **`zeek-conn`** (the de-facto standard in network security monitoring, and what a
 real deployment plausibly already has) and **`flow-csv`** (a canonical header-driven CSV
 with ISO timestamps — the FLOW lane's `stub-csv`: the permanent reference dialect the port
-suite runs against). Adding NetFlow or CICFlowMeter later is a `DIALECTS` entry.
+suite runs against).
+
+The honest scope of `Dialect` (corrected 2026-07-22): it abstracts **column naming, the
+timestamp convention, the delimiter, and whether fields are quoted** — which is what the two
+shipped dialects vary. It does *not* yet abstract a per-field value transform (CICFlowMeter
+writes duration in microseconds and protocol as an IANA number), a per-dialect "unset"
+marker, a headerless/positional column order, or a capture timezone for offset-less
+timestamps. So a real third wire format (NetFlow via nfdump, CICFlowMeter) needs a small
+`Dialect` *extension* for the axis it introduces, not merely a `DIALECTS` entry. Those
+extension points are deferred until a concrete second format lands, so they are shaped by a
+real case rather than guessed.
 
 Provenance (rewrite, not wrap — golden rule 3): team1-lognorm holds the reference set's
 only flow parsing (`zeek_parser.py`'s `#separator`/`#fields` handling, `unsw_nb15_parser.py`'s
@@ -144,13 +154,16 @@ before a usable header **is** a reject: we refuse to guess column order.
 
 ### D7 — Rejects are specific
 
-Flow data has its own junk: `-` for unset Zeek fields, portless ICMP, IPv6 where IPv4 was
-expected, and the "neither endpoint is local" case. Each gets its own reason, because
+Flow data has its own junk, and each failure carries the reason it failed, because
 ADR-0017's high-reject-rate warning is the operator's only clue that `home_networks` is set
 wrong — a misconfiguration that would otherwise present as a completely silent empty run.
-Unset *counters*, by contrast, become 0 rather than a reject: a rejected connection
-legitimately has no byte counts, and quarantining those rows would throw away exactly the
-scan traffic the lane exists to catch.
+The distinct reasons: a row whose field count does not match the header (a torn write), an
+unreadable/non-finite/negative counter, an out-of-range port, an unparseable timestamp, and
+the "neither endpoint is local" case (not our traffic). Note two things that are *not*
+rejects: an unset `-` counter becomes 0 (a rejected connection legitimately has no byte
+counts, and quarantining those rows would throw away exactly the scan traffic the lane
+exists to catch), and portless ICMP simply has no port. There is no IPv6-specific reason —
+an IPv6 address in an IPv4-only deployment falls through to "neither endpoint is local".
 
 ### D8 — Normalizers become parameterizable
 
@@ -220,6 +233,7 @@ Two smaller things came with it:
   layer** (an `Asset` that owns several natural keys) that we have deliberately not built.
   It belongs with the deferred cross-run asset-enrichment work, and until it exists,
   cross-lane correlation involving flows requires the sources to agree on an identifier.
-- Deferred: NetFlow/IPFIX and CICFlowMeter dialects (each a `DIALECTS` entry); sub-flow time
+- Deferred: NetFlow/IPFIX and CICFlowMeter dialects (each a `DIALECTS` entry plus a small
+  `Dialect` extension for the axis it introduces, see D4); sub-flow time
   resolution (D3); asset aliasing; converting `log_burst` to the same
   one-registry-name-per-variant shape the UI fix makes possible.

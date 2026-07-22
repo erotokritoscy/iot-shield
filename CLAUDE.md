@@ -116,7 +116,8 @@ because flow is the first modality whose payload outgrows the contract's own fie
 cross-lane correlation involving flows currently requires the sources to agree on an
 identifier (asset aliasing is an open item — ADR-0023 Consequences).
 
-Nine demo runs exercise the adapters: `config/demo.yaml` + `data/demo/demo.csv`
+Ten demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
+`config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
 normalizer, re-implemented from team4 → LOG-lane events across three hosts, both
@@ -145,7 +146,8 @@ sweeping 41 hosts for telnet merges into ONE collective detection, score 43 vs b
 inbound SSH session does not count as fan-out, and a flow between two foreign hosts is
 quarantined not dropped — ADR-0023 + ADR-0024); and `config/demo_trimodal.yaml`
 (**all three lanes judging one asset in one run** — telemetry + syslog + flow on the camera
-→ 4 detections across 3 lanes → `corroboration` 2.0, the ceiling the factor can express;
+→ 4 detections across 3 lanes → `corroboration` 2.0 (its highest value with today's three
+lanes; the factor `1 + 0.5·(lanes−1)` is not itself capped);
 the identical flow sweep scores 44.1/MEDIUM alone vs **76.4/CRITICAL** corroborated).
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
