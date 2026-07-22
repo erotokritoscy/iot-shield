@@ -53,11 +53,16 @@ def _default_sinks() -> list[SinkConfig]:
 
 
 def config_fingerprint(name: str, params: Mapping[str, Any]) -> str:
-    """Identity of a configured adapter: its name plus its construction params.
+    """Canonical identity of a (name, params) pair: the one way this package hashes a
+    configured adapter.
 
-    Two rules in this package depend on deciding when two entries are *the same entry* —
-    the runner caches one normalizer per distinct configuration, and the guard warns about a
-    detector configured twice identically. They must agree, so the rule lives once.
+    Two rules share it — the runner caches one normalizer per distinct configuration, and
+    the guard warns about a detector configured twice identically — so the canonicalization
+    lives once here. They differ only in what they hand in: the guard first resolves a
+    detector's params to their *effective* values (``registry.effective_detector_params``,
+    so ``{}`` and ``{preset: fan_out}`` are recognised as one detector), while the caches
+    hash the params as written — a cache miss on omitted-vs-explicit-default merely rebuilds
+    an identical adapter, which is harmless, whereas a missed duplicate warning is not.
 
     JSON rather than a tuple because param values may be lists (``home_networks``), which
     are unhashable; ``sort_keys`` so two mappings written in a different order compare

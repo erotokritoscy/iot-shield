@@ -30,6 +30,7 @@ from iotshield.pipeline.config import PipelineSpec, config_fingerprint
 from iotshield.pipeline.registry import (
     alert_engine_capability,
     detector_capability,
+    effective_detector_params,
     normalizer_capability,
 )
 
@@ -197,7 +198,15 @@ def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
     issues: list[CompatIssue] = []
     seen: dict[str, int] = {}
     for index, detector in enumerate(config.detectors):
-        fingerprint = config_fingerprint(detector.name, detector.params)
+        # Compare *effective* params (factory defaults filled in), so `{}` and
+        # `{preset: fan_out}` are recognised as the same detector rather than only textually
+        # identical entries. Resolution can raise for an unknown name; that is a separate
+        # ERROR the detector loop below already reports, so fall back to the written params.
+        try:
+            resolved = effective_detector_params(detector.name, detector.params)
+        except ValueError:
+            resolved = dict(detector.params)
+        fingerprint = config_fingerprint(detector.name, resolved)
         first = seen.get(fingerprint)
         if first is None:
             seen[fingerprint] = index

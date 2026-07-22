@@ -85,13 +85,15 @@ class AdapterSpec(Generic[T]):
 
 
 def _stub_threshold(
-    threshold: float = 80.0, lane: Literal["telemetry", "log", "flow"] = "telemetry"
+    threshold: float = 80.0, lane: Literal["telemetry", "flow"] = "telemetry"
 ) -> StubThresholdDetector:
     # float() coerces YAML scalars that arrive quoted (e.g. "90"); a non-numeric
     # value raises ValueError, caught and attributed by _build.
     # The Literal is not enforcement (params arrive untyped from YAML — Lane() is what
     # rejects a bad value); it is *declaration*, so /modules can report the closed
-    # vocabulary and the UI can offer it as a choice instead of a free-text box.
+    # vocabulary and the UI can offer it as a choice instead of a free-text box. It offers
+    # only the value-carrying lanes: this detector compares event.value, and a LOG event
+    # never has one, so `lane: log` would validate clean and then never fire.
     return StubThresholdDetector(threshold=float(threshold), lane=Lane(lane))
 
 
@@ -252,6 +254,25 @@ def lookup(kind: str, registry: Mapping[str, V], name: str) -> V:
     except KeyError:
         known = ", ".join(sorted(registry))
         raise ValueError(f"unknown {kind} {name!r}; known: {known}") from None
+
+
+def effective_detector_params(name: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    """A detector's params with its factory defaults filled in.
+
+    Two entries are the *same detector* when they build the same thing, which the written
+    params alone do not show: ``{}`` and ``{preset: fan_out}`` are identical because
+    ``fan_out`` is the default. The guard's duplicate check compares effective params so it
+    catches that, rather than only textually-identical entries. Unknown params are left as
+    written — the builder rejects them, and this is only about detecting sameness.
+    """
+    spec = lookup("detector", DETECTORS, name)
+    resolved = {
+        parameter.name: parameter.default
+        for parameter in config_parameters(spec.factory)
+        if parameter.default is not inspect.Parameter.empty
+    }
+    resolved.update(params)
+    return resolved
 
 
 def _construct(kind: str, name: str, build: Callable[[], T]) -> T:

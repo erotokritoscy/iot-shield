@@ -82,7 +82,7 @@ def test_syslog_normalizer_actually_emits_its_declared_lane() -> None:
 
 @pytest.mark.parametrize(
     "params,expected",
-    [({}, Lane.TELEMETRY), ({"lane": "telemetry"}, Lane.TELEMETRY), ({"lane": "log"}, Lane.LOG)],
+    [({}, Lane.TELEMETRY), ({"lane": "telemetry"}, Lane.TELEMETRY), ({"lane": "flow"}, Lane.FLOW)],
 )
 def test_stub_detector_declared_lane_matches_built_instance(
     params: dict[str, str], expected: Lane
@@ -104,10 +104,30 @@ def _choices_of(spec: AdapterSpec, param: str) -> list[str] | None:
     return next(p.choices for p in describe_params(spec.factory) if p.name == param)
 
 
-def test_declared_lane_choices_match_the_lane_vocabulary() -> None:
-    # The Literal on the factory is a hand-written mirror of an enum, so pin it: a new Lane
-    # member that never reaches the catalogue would be invisible in the operator UI.
-    assert _choices_of(DETECTORS["stub_threshold"], "lane") == [lane.value for lane in Lane]
+def test_declared_lane_choices_are_the_value_carrying_lanes() -> None:
+    # stub_threshold compares event.value, which only telemetry and flow carry — a LOG event
+    # has none, so `lane: log` would validate clean and never fire. The offered vocabulary is
+    # the value-carrying lanes, not every Lane; this pins that (and catches a new such lane).
+    value_carrying = [Lane.TELEMETRY.value, Lane.FLOW.value]
+    assert _choices_of(DETECTORS["stub_threshold"], "lane") == value_carrying
+
+
+def test_learning_adapters_params_type_mirrors_the_factory_signature() -> None:
+    """A hyperparameter field with no matching factory argument is silently unreachable from
+    config (ADR-0022 Consequences). Pin the mirror so it cannot drift."""
+    import inspect
+
+    for name, spec in DETECTORS.items():
+        if spec.params_type is None:
+            continue
+        factory_args = set(inspect.signature(spec.factory).parameters) - {"self"}
+        artifact = {spec.artifact_param} if spec.artifact_param else set()
+        fields = set(spec.params_type.model_fields)
+        # Every factory arg except the artifact selector is a hyperparameter field, and every
+        # field is a factory arg. Either gap means a knob that config or fitting cannot reach.
+        assert fields == factory_args - artifact, (
+            f"{name}: params_type {fields} vs factory {factory_args - artifact}"
+        )
 
 
 def test_every_preset_adapter_declares_its_presets_as_choices() -> None:

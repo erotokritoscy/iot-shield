@@ -48,6 +48,19 @@ def test_duplicate_detection_ignores_the_order_params_were_written_in() -> None:
     assert levels(cfg(detectors=entries)) == [CompatLevel.WARNING]
 
 
+def test_duplicate_detection_resolves_defaults_so_omitted_equals_explicit() -> None:
+    # `{}` and `{preset: fan_out}` are the same detector, since fan_out is the default. The
+    # guard compares *effective* params, so it catches this — not only textual identity.
+    entries = [
+        {"name": "flow_burst", "params": {}},
+        {"name": "flow_burst", "params": {"preset": "fan_out"}},
+    ]
+    issues = check_compatibility(
+        cfg(source_format="flow-csv", normalizer="flow", detectors=entries)
+    )
+    assert [i.level for i in issues if "double-counted" in i.message] == [CompatLevel.WARNING]
+
+
 def test_the_same_detector_with_different_params_is_not_a_duplicate() -> None:
     # The legitimate case the list form exists to enable: one adapter, two configurations.
     entries = [
