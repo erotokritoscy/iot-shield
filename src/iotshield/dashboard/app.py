@@ -145,6 +145,13 @@ def triage_page(client: ApiClient) -> None:
         ),
         hide_index=True,
     )
+    # The per-detection evidence payload (top peers, ports, matched messages, ...) is what
+    # makes the finding actionable — "cam-07 contacted 41 destinations" rather than a bare
+    # score. It reached the API but nothing rendered it, so the analyst never saw it.
+    for detection in evidence:
+        if detection.evidence:
+            with st.expander(f"{detection.method} — why it fired"):
+                st.json(detection.evidence)
 
 
 def assets_page(client: ApiClient) -> None:
@@ -161,26 +168,30 @@ def assets_page(client: ApiClient) -> None:
     )
 
     events = client.events(asset_id=selected.asset_id, lane=Lane.TELEMETRY)
-    # Telemetry-only lane: the timeline plots telemetry values, so overlaying
-    # detections from other lanes (e.g. logs) would draw red bands over a series
-    # they don't belong to.
-    detections = client.detections(asset_id=selected.asset_id, lane=Lane.TELEMETRY)
-    chart = telemetry_timeline(events, detections)
+    # The chart is telemetry-only on purpose: it plots telemetry values, and overlaying a
+    # flow or log detection's window on a value series they don't belong to would be
+    # misleading. Only the telemetry detections are drawn as bands.
+    telemetry_detections = client.detections(asset_id=selected.asset_id, lane=Lane.TELEMETRY)
+    chart = telemetry_timeline(events, telemetry_detections)
     if chart is None:
         st.info("No telemetry with numeric values for this asset.")
     else:
         st.altair_chart(chart, width="stretch")
         st.caption(
-            "Blue line: telemetry values. Red bands/rules: detection windows "
-            "(details in the table below)."
+            "Blue line: telemetry values. Red bands/rules: telemetry detection windows "
+            "(all lanes are in the table below)."
         )
 
+    # The table lists EVERY lane, so a flow- or log-only asset is not invisible here — its
+    # alert sits in Triage while this page used to show it "no telemetry" and nothing else.
+    detections = client.detections(asset_id=selected.asset_id)
     if detections:
         st.subheader("Detections")
         st.dataframe(
             pd.DataFrame(
                 {
                     "method": [d.method for d in detections],
+                    "lane": [d.lane.value for d in detections],
                     "score": [d.score for d in detections],
                     "threshold": [d.threshold for d in detections],
                     "window start": [d.window_start for d in detections],
@@ -188,6 +199,8 @@ def assets_page(client: ApiClient) -> None:
             ),
             hide_index=True,
         )
+    else:
+        st.info("No detections for this asset.")
 
 
 def data_health_page(client: ApiClient) -> None:
