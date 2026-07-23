@@ -1,0 +1,64 @@
+# Flow demo — the FLOW lane's first judge (ADR-0023 normalizer, ADR-0024 detector).
+#
+# The input is a real-shaped Zeek conn.log. An IP camera (10.0.0.24) whose entire normal
+# world is an MQTT broker, an NTP server and a DNS resolver suddenly contacts 41 distinct
+# destinations on port 23 in twelve seconds, every one of them unanswered (conn_state S0),
+# then finds one that replies on 2323. That is the Mirai propagation signature: a
+# compromised IoT device looking for its next victim.
+#
+# The `fan_out` preset counts DISTINCT destinations inside a sliding minute, so the sweep
+# merges into ONE collective detection: score 43 vs threshold 20 (the exceedance boundary)
+# gives the weighted engine a 2.15x margin -> priority 44.1, a MEDIUM alert on a
+# high-criticality camera.
+#
+# Why 43 and not the 41 scanned hosts: the camera's own broker and NTP server are also
+# distinct destinations inside that same minute. That is correct, not an artefact — the
+# question the preset asks is "how many different places did this device talk to just now",
+# and the honest answer includes its legitimate ones.
+#
+# Why this lane earns its place: none of this is visible anywhere else. The camera's
+# telemetry is perfectly normal (it still reads 22 degrees) and it writes no log lines —
+# compromised firmware does not log about itself. Only the network behaviour betrays it.
+#
+# Three details worth watching:
+#   - the gateway (10.0.0.11) sends THIRTY flows in the same window and stays silent: they
+#     all go to one destination. Volume is not fan-out — cardinality is the signal, which
+#     is exactly what a "too many events" rule like log_burst could not express.
+#   - an inbound admin SSH session to the gateway is ignored by fan_out: someone dialling
+#     IN is a different phenomenon, and counting it would make every popular server a
+#     "scanner".
+#   - one flow is between two hosts that are both outside `home_networks`; it is not our
+#     traffic, so it is quarantined as a malformed record rather than silently dropped, and
+#     shows up in the dashboard's Data health page.
+
+database_url: "sqlite:///demo.db"
+
+sources:
+  - normalizer: flow
+    source_format: zeek-conn
+    path: data/demo/demo_flow.log
+    # params: {home_networks: [...]} — omitted on purpose: the default is private +
+    # link-local space, which is right for this fleet and for most IoT deployments.
+
+detectors:
+  - name: flow_burst
+    params:
+      preset: fan_out
+      # window_minutes and threshold are left blank, so each comes from the preset itself
+      # (1 minute / 20 peers). Scanning and exfiltration have completely different natural
+      # timescales, which is why the preset owns these rather than the adapter.
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+# Flows identify a device by IP, because that is the only identity a flow record carries.
+# The camera is registered (criticality high -> it weighs the alert up); the gateway is
+# deliberately absent and gets auto-discovered.
+assets:
+  - asset_id: 10.0.0.24
+    name: Line-1 IP camera (cam-07)
+    asset_type: camera
+    location: line-1
+    criticality: high

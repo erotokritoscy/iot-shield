@@ -15,9 +15,68 @@ VALID = {
 
 def test_minimal_config_parses_with_defaults() -> None:
     config = PipelineConfig.model_validate(VALID)
-    assert config.normalizer == "stub"
     assert config.alert_engine.name == "stub"
     assert config.assets == []
+
+
+def test_legacy_single_source_desugars_into_one_source() -> None:
+    # The top-level source_format/normalizer form (every config written before ADR-0019)
+    # folds into a one-element sources list, so nothing downstream sees the legacy shape.
+    config = PipelineConfig.model_validate(VALID)
+    assert len(config.sources) == 1
+    assert config.sources[0].normalizer == "stub"
+    assert config.sources[0].source_format == "stub-csv"
+
+
+def test_multi_source_form_parses() -> None:
+    config = PipelineConfig.model_validate(
+        {
+            "database_url": "sqlite:///x.db",
+            "sources": [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {"normalizer": "syslog", "source_format": "syslog"},
+            ],
+            "detectors": [{"name": "stub_threshold"}],
+        }
+    )
+    assert [s.normalizer for s in config.sources] == ["stub", "syslog"]
+
+
+def test_source_params_default_to_empty_and_parse_when_given() -> None:
+    # ADR-0023 D8: additive with a default, so every config written before it stays valid.
+    config = PipelineConfig.model_validate(
+        {
+            "database_url": "sqlite:///x.db",
+            "sources": [
+                {"normalizer": "stub", "source_format": "stub-csv"},
+                {
+                    "normalizer": "flow",
+                    "source_format": "flow-csv",
+                    "params": {"home_networks": ["10.0.0.0/8"]},
+                },
+            ],
+            "detectors": [{"name": "stub_threshold"}],
+        }
+    )
+    assert config.sources[0].params == {}
+    assert config.sources[1].params == {"home_networks": ["10.0.0.0/8"]}
+
+
+def test_naming_both_legacy_and_sources_is_refused() -> None:
+    # A contradiction (which one wins?) — refuse it loudly rather than resolve silently.
+    with pytest.raises(ValidationError, match="not both"):
+        PipelineConfig.model_validate(VALID | {"sources": [{"source_format": "stub-csv"}]})
+
+
+def test_empty_sources_list_rejected() -> None:
+    with pytest.raises(ValidationError, match="sources"):
+        PipelineConfig.model_validate(
+            {
+                "database_url": "sqlite:///x.db",
+                "sources": [],
+                "detectors": [{"name": "stub_threshold"}],
+            }
+        )
 
 
 def test_unknown_key_rejected() -> None:
@@ -27,9 +86,29 @@ def test_unknown_key_rejected() -> None:
 
 
 def test_missing_database_url_rejected() -> None:
+    # The default sink is postgres, which requires a database — so omitting it fails.
     incomplete = {k: v for k, v in VALID.items() if k != "database_url"}
     with pytest.raises(ValidationError, match="database_url"):
         PipelineConfig.model_validate(incomplete)
+
+
+def test_default_sink_is_postgres() -> None:
+    # A config that names no sinks behaves as before the output seam existed (ADR-0018).
+    config = PipelineConfig.model_validate(VALID)
+    assert [sink.name for sink in config.sinks] == ["postgres"]
+
+
+def test_file_only_config_needs_no_database_url() -> None:
+    # A pluggable store means a file-only run is valid with no database at all.
+    config = PipelineConfig.model_validate(
+        {
+            "source_format": "stub-csv",
+            "detectors": [{"name": "stub_threshold"}],
+            "sinks": [{"name": "file", "params": {"path": "out.jsonl"}}],
+        }
+    )
+    assert config.database_url is None
+    assert [sink.name for sink in config.sinks] == ["file"]
 
 
 def test_empty_detector_list_rejected() -> None:
@@ -70,7 +149,7 @@ def test_load_config_reads_yaml_file(tmp_path: Path) -> None:
         "  - name: stub_threshold\n",
         encoding="utf-8",
     )
-    assert load_config(path).source_format == "stub-csv"
+    assert load_config(path).sources[0].source_format == "stub-csv"
 
 
 _MINIMAL_YAML = "source_format: stub-csv\ndetectors:\n  - name: stub_threshold\n"

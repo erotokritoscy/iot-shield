@@ -4,23 +4,48 @@ To add an adapter: append a DetectorCase whose ``triggering_events`` are
 guaranteed to produce at least one detection for that implementation.
 """
 
-from collections.abc import Callable, Sequence
+import random
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
-from iotshield.detect import Detector, StubThresholdDetector, Team3ZScoreDetector
-from iotshield.detect.team3.train import train_artifact
+from iotshield.detect import (
+    Detector,
+    Fittable,
+    FlowBurstDetector,
+    LogBurstDetector,
+    StubThresholdDetector,
+)
+from iotshield.detect._fitted import NotFitted, is_fitted
+from iotshield.flow import METADATA_KEY, Direction, FlowRecord
+from iotshield.pipeline.registry import DETECTORS, build_detector
+from tests.team3_fixtures import make_detector
+
+
+def _learns(registry_name: str) -> bool:
+    """Whether the registered adapter carries hyperparameters (ADR-0022).
+
+    Derived from the registry, not from a case field, so that whether THE LAW *applies*
+    to an adapter is a fact about the adapter — a learning adapter cannot exempt itself
+    from the law by leaving a case field unset (which it previously could).
+    """
+    return DETECTORS[registry_name].params_type is not None
+
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
 
 def event(
-    *, value: float | None, lane: Lane = Lane.TELEMETRY, offset_s: int = 0
+    *,
+    value: float | None,
+    lane: Lane = Lane.TELEMETRY,
+    offset_s: int = 0,
+    message: str | None = None,
 ) -> NormalizedEvent:
     return NormalizedEvent(
         timestamp=T0 + timedelta(seconds=offset_s),
@@ -29,6 +54,7 @@ def event(
         source_format="test",
         metric="Pressure",
         value=value,
+        message=message,
         raw=f"test-record value={value}",
     )
 
@@ -37,20 +63,58 @@ def event(
 class DetectorCase:
     make: Callable[[], Detector]
     triggering_events: Sequence[NormalizedEvent]  # must yield >= 1 detection
+    # Normal-looking events a Fittable adapter can actually learn a baseline from. Required
+    # only for adapters implementing the optional capability: `triggering_events` are chosen
+    # to fire, which usually makes them unfit for training (team3 rejects an all-constant
+    # frame as degenerate, correctly).
+    fit_events: Sequence[NormalizedEvent] | None = None
+    # Two REGISTRY param sets differing in one hyperparameter, which must fit differently.
+    # The behavioural test of ADR-0022 rule 2 — see the law test below for why this shape.
+    distinguishing_params: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None
+    registry_name: str = ""
 
 
-# A hermetic team3 artifact: trained on a synthetic single-channel normal series
-# (tiny window so the case stays small), with no committed file involved.
-_TEAM3_ARTIFACT = train_artifact(
-    pd.DataFrame({"Pressure": np.random.default_rng(0).normal(10.0, 0.5, 300)}),
-    channels=["Pressure"],
-    window_size=3,
-    lag_steps=[1],
-    fft_enabled=False,
-    percentile=99.0,
-)
 # Flat-normal readings with a sustained spike in the middle -> at least one episode.
 _TEAM3_VALUES = [10.0] * 8 + [55.0, 57.0, 56.0] + [10.0] * 4
+
+# Six auth failures 10s apart: one burst episode well inside the 5-minute window. They keep
+# the contract's default INFO severity (as sshd really logs them), which is also why this
+# case would be invisible to a severity-based rule.
+_LOG_BURST_EVENTS = [
+    event(
+        value=None,
+        lane=Lane.LOG,
+        offset_s=index * 10,
+        message=f"Failed password for root from 10.0.0.9 port {52000 + index} ssh2",
+    )
+    for index in range(6)
+]
+
+
+def flow_event(offset_s: int, peer: str, port: int = 23, bytes_out: int = 44) -> NormalizedEvent:
+    record = FlowRecord(
+        asset_ip="pump-02",
+        peer_ip=peer,
+        protocol="tcp",
+        direction=Direction.OUTBOUND,
+        peer_port=port,
+        bytes_out=bytes_out,
+    )
+    return NormalizedEvent(
+        timestamp=T0 + timedelta(seconds=offset_s),
+        asset_id="pump-02",
+        source_type=Lane.FLOW,
+        source_format="flow-csv",
+        metric="bytes_out",
+        value=float(bytes_out),
+        message=record.summary(),
+        raw=f"flow to {peer}",
+        metadata={METADATA_KEY: record.to_metadata()},
+    )
+
+
+# 25 distinct destinations in 25s: one fan-out episode, well past the boundary of 20.
+_FLOW_FANOUT_EVENTS = [flow_event(index, f"203.0.113.{index}") for index in range(25)]
 
 CASES = [
     pytest.param(
@@ -63,15 +127,44 @@ CASES = [
                 event(value=None, offset_s=3),
                 event(value=500.0, lane=Lane.LOG, offset_s=4),  # foreign lane
             ],
+            registry_name="stub_threshold",
         ),
         id="stub-threshold",
     ),
     pytest.param(
         DetectorCase(
-            make=lambda: Team3ZScoreDetector(_TEAM3_ARTIFACT),
+            make=lambda: make_detector(["Pressure"], window=3),
             triggering_events=[event(value=v, offset_s=i) for i, v in enumerate(_TEAM3_VALUES)],
+            fit_events=[
+                event(value=float(v), offset_s=i)
+                for i, v in enumerate(np.random.default_rng(1).normal(10.0, 0.5, 200))
+            ],
+            distinguishing_params=(
+                {"window_size": 4, "lag_steps": [1]},
+                {"window_size": 30, "lag_steps": [1]},
+            ),
+            registry_name="team3_zscore",
         ),
         id="team3-zscore",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: LogBurstDetector(preset="auth_failure", window_minutes=5.0, min_count=5),
+            triggering_events=_LOG_BURST_EVENTS,
+            registry_name="log_burst",
+        ),
+        id="log-burst",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: FlowBurstDetector(preset="fan_out"),
+            triggering_events=_FLOW_FANOUT_EVENTS,
+            # No distinguishing_params: this detector learns nothing, so it declares
+            # neither Fittable nor hyperparameters and skips the ADR-0022 law tests —
+            # the same position stub_threshold and log_burst are in.
+            registry_name="flow_burst",
+        ),
+        id="flow-burst",
     ),
 ]
 
@@ -124,6 +217,92 @@ def test_empty_input_yields_nothing(case: DetectorCase) -> None:
     assert case.make().detect([]) == []
 
 
+def test_fitting_yields_a_detector_that_still_obeys_every_law(case: DetectorCase) -> None:
+    """A fitted detector is still a detector — fitting must not let one escape the port.
+
+    ``Fittable`` is optional (ADR-0021 D3), so adapters that do not implement it skip this.
+    Those that do must return something that stamps its lane/method, keeps windows in range,
+    clears its threshold, and does not mutate the original — otherwise fitting would be a
+    hole in the suite that every other law is checked through.
+    """
+    detector = case.make()
+    if not isinstance(detector, Fittable):
+        pytest.skip("adapter does not implement the optional Fittable capability")
+    assert case.fit_events is not None, "a Fittable adapter's case must supply fit_events"
+
+    fitted = detector.fit(case.fit_events)
+    assert fitted is not detector  # a new object, so no hidden fitted state
+
+    lane_times = [e.timestamp for e in case.triggering_events if e.source_type == fitted.lane]
+    for detection in fitted.detect(case.triggering_events):
+        assert detection.lane == fitted.lane
+        assert detection.method == fitted.method
+        assert detection.score > detection.threshold
+        assert min(lane_times) <= detection.window_start
+        assert detection.window_end <= max(lane_times)
+
+
+def _fingerprint(detections: list[DetectionResult]) -> list[tuple[Any, ...]]:
+    return [(d.window_start, d.window_end, d.score, d.threshold) for d in detections]
+
+
+def test_hyperparameters_survive_fitting(case: DetectorCase) -> None:
+    """THE LAW (ADR-0022 rule 2): ``fit()`` uses CONSTRUCTION, never prior fitted state.
+
+    Checked behaviourally rather than by introspection, which is what makes it general.
+    Build the adapter twice through the registry, differing in exactly one hyperparameter;
+    fit both on the same data. If ``fit()`` honoured construction the two fitted detectors
+    must differ. If it instead reached into the artifact it was loaded from — the bug this
+    rule exists to forbid, and the one team3 actually had — both fits would be identical
+    and this fails.
+
+    Whether the law *applies* is derived from the registry (does the adapter carry
+    hyperparameters), not from the case: a learning adapter that supplied no
+    ``distinguishing_params`` used to skip silently, so it could exempt itself from the one
+    law the project calls THE LAW. Now it fails instead.
+    """
+    if not _learns(case.registry_name):
+        pytest.skip("adapter carries no hyperparameters, so the law does not apply")
+    assert case.distinguishing_params is not None, (
+        f"{case.registry_name} carries hyperparameters but its case supplies no "
+        "distinguishing_params to check THE LAW with"
+    )
+    assert case.fit_events is not None, "a distinguishing case must supply fit_events"
+
+    first_params, second_params = case.distinguishing_params
+    first = build_detector(case.registry_name, first_params)
+    second = build_detector(case.registry_name, second_params)
+    assert isinstance(first, Fittable) and isinstance(second, Fittable)
+
+    fitted_first = first.fit(case.fit_events)
+    fitted_second = second.fit(case.fit_events)
+    assert _fingerprint(fitted_first.detect(case.triggering_events)) != _fingerprint(
+        fitted_second.detect(case.triggering_events)
+    )
+
+
+def test_a_detector_built_without_a_cached_fit_says_so(case: DetectorCase) -> None:
+    """Untrained is a *reportable state*, not an empty result (ADR-0022).
+
+    Only adapters that can be constructed from hyperparameters alone have this state; the
+    rest are always ready, which ``is_fitted`` reports by absence.
+    """
+    if not _learns(case.registry_name):
+        pytest.skip("adapter has no untrained state")
+    assert case.distinguishing_params is not None, (
+        f"{case.registry_name} carries hyperparameters but its case supplies none"
+    )
+    assert case.fit_events is not None
+
+    untrained = build_detector(case.registry_name, case.distinguishing_params[0])
+    assert is_fitted(untrained) is False
+    with pytest.raises(NotFitted):
+        untrained.detect(case.triggering_events)
+
+    assert isinstance(untrained, Fittable)
+    assert is_fitted(untrained.fit(case.fit_events)) is True
+
+
 def test_deterministic_apart_from_generated_ids(case: DetectorCase) -> None:
     detector = case.make()
 
@@ -138,3 +317,25 @@ def test_deterministic_apart_from_generated_ids(case: DetectorCase) -> None:
     assert fingerprint(detector.detect(case.triggering_events)) == fingerprint(
         detector.detect(case.triggering_events)
     )
+
+
+def test_output_is_independent_of_input_order(case: DetectorCase) -> None:
+    """The port's law 4 in full: the set of judgments must not depend on arrival order.
+
+    ``group_by_asset`` owns this for every adapter (foreign-lane isolation, asset sort, and
+    time sort within an asset). A windowed detector fed unordered events does not fail
+    loudly, it over-fires, so this is the test that keeps a new adapter from shipping that.
+    """
+    detector = case.make()
+    shuffled = list(case.triggering_events)
+    random.Random(0).shuffle(shuffled)
+    assert sorted(_fingerprint(detector.detect(shuffled))) == sorted(
+        _fingerprint(detector.detect(case.triggering_events))
+    )
+
+
+def test_every_registered_detector_joins_this_suite() -> None:
+    """CLAUDE.md golden rule 2 made enforceable: a registered adapter with no port case
+    would otherwise ship with zero port-law coverage and a green gate."""
+    covered = {cast(DetectorCase, param.values[0]).registry_name for param in CASES}
+    assert covered == set(DETECTORS), f"detectors missing a port case: {set(DETECTORS) - covered}"

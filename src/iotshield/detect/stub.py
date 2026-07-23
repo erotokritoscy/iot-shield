@@ -5,9 +5,12 @@ Deliberately dumb and permanent: reference implementation for the port suite
 and the pre-committed fallback for the detection stage.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
+from iotshield.detect._group import group_by_asset
 
 
 class StubThresholdDetector:
@@ -24,26 +27,40 @@ class StubThresholdDetector:
         return "stub_threshold"
 
     def detect(self, events: Sequence[NormalizedEvent]) -> list[DetectionResult]:
+        # Routed through group_by_asset like every other detector, so its output is
+        # deterministic regardless of input order (the port's law 4) rather than merely
+        # echoing the arrival order — which is what the shuffle test in the port suite pins.
         detections: list[DetectionResult] = []
-        for event in events:
-            if event.source_type is not self._lane or event.value is None:
-                continue
-            if event.value > self._threshold:
-                detections.append(
-                    DetectionResult(
-                        asset_id=event.asset_id,
-                        window_start=event.timestamp,
-                        window_end=event.timestamp,
-                        lane=self._lane,
-                        method=self.method,
-                        score=event.value,
-                        threshold=self._threshold,
-                        event_kind=EventKind.POINT,
-                        evidence={
-                            "metric": event.metric,
-                            "value": event.value,
-                            "event_id": str(event.event_id),
-                        },
+        for _asset_id, asset_events in group_by_asset(
+            events, lane=self._lane, keep=lambda event: event.value is not None
+        ):
+            for event in asset_events:
+                if event.value is not None and event.value > self._threshold:
+                    detections.append(
+                        DetectionResult(
+                            asset_id=event.asset_id,
+                            window_start=event.timestamp,
+                            window_end=event.timestamp,
+                            lane=self._lane,
+                            method=self.method,
+                            score=event.value,
+                            threshold=self._threshold,
+                            event_kind=EventKind.POINT,
+                            evidence={
+                                "metric": event.metric,
+                                "value": event.value,
+                                "event_id": str(event.event_id),
+                            },
+                        )
                     )
-                )
         return detections
+
+
+def capability(params: Mapping[str, Any]) -> Capability:
+    """This detector's lane is configurable, so its declared capability follows params.
+
+    Mirrors the factory's default (``registry._stub_threshold``); the meta-test in
+    tests/pipeline/test_capabilities.py pins the two together against a built instance.
+    """
+    lane = Lane(params.get("lane", Lane.TELEMETRY))
+    return Capability.of(consumes={LaneToken(lane)}, produces={DETECTIONS})

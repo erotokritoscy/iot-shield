@@ -65,6 +65,44 @@ services:
       timeout: 3s
       retries: 10
 
+  # Write-side Pipeline API (ADR-0015): compose a pipeline and trigger runs. A
+  # separate role from the read API so the read plane stays write-free and
+  # independently scalable, and a slow/crashing run can't take the read side down.
+  pipeline-api:
+    <<: *app
+    command: ["python", "-m", "iotshield.api.control"]
+    environment:
+      <<: *db-env
+      IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
+      IOTSHIELD_PIPELINE_API_PORT: "8100"
+      # File-sink output dir (ADR-0018): bind-mounted to the host below, so a file-sink
+      # run's JSONL is visible on the host and survives container recreation. A
+      # caller-supplied filename is confined to this dir (sink/file.py).
+      IOTSHIELD_OUTPUT_DIR: "/app/results"
+      # The evaluation plane (ADR-0021). This compose stack IS the research/dev stack, so
+      # it opts in; the default when unset stays off, which is what a product image gets.
+      # Without it the /eval routes are never registered — absent, not merely guarded.
+      IOTSHIELD_EVAL_API: "1"
+      # Corpora live here. The image carries only the committed `synthetic` bundle —
+      # datasets we may use but not redistribute are kept out of it (ADR-0021 D5a) — so
+      # the host's data/eval is bind-mounted read-only on top, making anything a developer
+      # fetched locally (`iotshield.eval fetch skab`) visible to the API without ever
+      # baking it into a shippable artifact.
+      IOTSHIELD_CORPUS_PATH: "/app/data/eval"
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./results:/app/results
+      - ./data/eval:/app/data/eval:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   dashboard:
     <<: *app
     command:
@@ -75,10 +113,16 @@ services:
       - --server.port=8501
     environment:
       IOTSHIELD_API_URL: http://api:8000
+      IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
+      # Shows the Evaluate mode. Paired with IOTSHIELD_EVAL_API above: this flag only
+      # surfaces the UI, the API flag is what actually serves benchmarks.
+      IOTSHIELD_EVAL_UI: "1"
     ports:
       - "8501:8501"
     depends_on:
       api:
+        condition: service_healthy
+      pipeline-api:
         condition: service_healthy
 
   # Batch job, not a service: runs once and exits. Profile-gated so `up` never

@@ -13,13 +13,14 @@ around the model, but rewritten to our contract:
   consecutive anomalous rows into episodes** — one ``DetectionResult`` per run,
   with ``event_kind`` from run length and top-channel ``evidence`` (ADR-0012 D5).
 
-The model parameters live entirely in a ``Team3Artifact``; this class is pure
-inference and has no dependency beyond numpy/pandas.
+Constructed from two things, never one (ADR-0022): ``Team3Params``, the hyperparameters a
+human chose, and an optional ``Team3State``, the baseline a previous fit computed. Without
+state it is an untrained model — legal to build, legal to ``fit()``, and refusing to
+``detect()``. No dependency beyond numpy/pandas.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -27,10 +28,19 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
+from iotshield.detect._fitted import NotFitted
+from iotshield.detect._group import group_by_asset
+from iotshield.detect._runs import merge_runs
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import featurewise_robust_z
-from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
+from iotshield.detect.team3.artifact import Team3State
+from iotshield.detect.team3.params import METHOD, Team3Params
+from iotshield.detect.team3.train import train_state
+
+# Fixed telemetry-lane detector; declared for the compatibility guard.
+CAPABILITY = Capability.of(consumes={LaneToken(Lane.TELEMETRY)}, produces={DETECTIONS})
 
 _MIN_COLLECTIVE = 3  # run length at/above which an episode is "collective" (team3 postprocess)
 _TOP_CHANNELS = 3
@@ -45,19 +55,25 @@ def _classify(run_length: int) -> EventKind:
     return EventKind.CONTEXTUAL
 
 
-def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Inclusive [start, end] index ranges of each maximal True run."""
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for i, flagged in enumerate(mask):
-        if flagged and start is None:
-            start = i
-        elif not flagged and start is not None:
-            runs.append((start, i - 1))
-            start = None
-    if start is not None:
-        runs.append((start, len(mask) - 1))
-    return runs
+def _has_reading(event: NormalizedEvent) -> bool:
+    """Only a named channel with a numeric value can enter the (time x channel) matrix."""
+    return event.metric is not None and event.value is not None
+
+
+def wide_frame(events: Sequence[NormalizedEvent]) -> pd.DataFrame:
+    """Pivot univariate events back into the ``(time x channel)`` matrix the model wants.
+
+    The inverse of the normalizer's fan-out (ADR-0003 D1). Shared by inference (per asset)
+    and by ``fit`` (over the whole training slice), so the two can never disagree about how
+    events become a matrix. The index is the tz-aware timestamp; callers narrow the columns.
+    """
+    records = [
+        (event.timestamp, event.metric, float(event.value))
+        for event in events
+        if event.metric is not None and event.value is not None
+    ]
+    frame = pd.DataFrame(records, columns=["ts", "metric", "value"])
+    return frame.pivot_table(index="ts", columns="metric", values="value", aggfunc="mean")
 
 
 def _channel_of(feature_name: str, channels: Sequence[str]) -> str:
@@ -68,22 +84,20 @@ def _channel_of(feature_name: str, channels: Sequence[str]) -> str:
 
 
 class Team3ZScoreDetector:
-    def __init__(self, artifact: Team3Artifact, *, min_segment_length: int = 1) -> None:
-        if min_segment_length < 1:
-            raise ValueError("min_segment_length must be >= 1")
-        self._artifact = artifact
-        self._min_segment_length = min_segment_length
+    def __init__(self, params: Team3Params, state: Team3State | None = None) -> None:
+        self._params = params
+        self._state = state
         # Resolve each engineered feature's source channel once, so evidence is a
         # lookup rather than a per-detection re-scan.
-        self._channel_by_feature = {
-            name: _channel_of(name, artifact.channels) for name in artifact.feature_columns
-        }
+        self._channel_by_feature = (
+            {name: _channel_of(name, state.channels) for name in state.feature_columns}
+            if state is not None
+            else {}
+        )
 
-    @classmethod
-    def from_resource(
-        cls, artifact: str = "skab_zscore", *, min_segment_length: int = 1
-    ) -> Team3ZScoreDetector:
-        return cls(load_artifact(artifact), min_segment_length=min_segment_length)
+    @property
+    def is_fitted(self) -> bool:
+        return self._state is not None
 
     @property
     def lane(self) -> Lane:
@@ -91,38 +105,78 @@ class Team3ZScoreDetector:
 
     @property
     def method(self) -> str:
-        return self._artifact.method
+        return METHOD
 
     def detect(self, events: Sequence[NormalizedEvent]) -> list[DetectionResult]:
-        by_asset: dict[str, list[NormalizedEvent]] = defaultdict(list)
-        for event in events:
-            if event.source_type is not self.lane or event.metric is None or event.value is None:
-                continue
-            by_asset[event.asset_id].append(event)
-
+        # Foreign-lane isolation and deterministic asset order are the port's laws, shared
+        # by every detector; only the "is this event judgeable" predicate is ours.
+        if self._state is None:
+            raise NotFitted(
+                f"{METHOD} was built from hyperparameters with no trained baseline; name an "
+                "'artifact' in its params, or fit it first (--fit-protocol prefix|holdout)"
+            )
         detections: list[DetectionResult] = []
-        for asset_id in sorted(by_asset):  # deterministic asset order
-            detections.extend(self._detect_asset(asset_id, by_asset[asset_id]))
+        for asset_id, asset_events in group_by_asset(events, lane=self.lane, keep=_has_reading):
+            detections.extend(self._detect_asset(asset_id, asset_events, self._state))
         return detections
 
-    def _detect_asset(self, asset_id: str, events: list[NormalizedEvent]) -> list[DetectionResult]:
-        art = self._artifact
-        # detect() already dropped metric/value-less events; the guard here only
-        # narrows the type to float and keeps the three columns aligned.
-        records = [
-            (e.timestamp, e.metric, float(e.value))
-            for e in events
-            if e.metric is not None and e.value is not None
+    def fit(self, events: Sequence[NormalizedEvent]) -> Team3ZScoreDetector:
+        """Relearn the baseline from ``events`` (assumed normal); return a fitted detector.
+
+        The optional ``Fittable`` capability (ADR-0021 D3). Never called by the pipeline —
+        it exists so an evaluation can train on an asset's own clean history rather than
+        measuring domain shift, which ADR-0012 D3 found is what sinks a foreign baseline.
+
+        Every hyperparameter comes from ``self._params`` — this instance's *construction* —
+        and never from a previously loaded artifact (ADR-0022 rule 2). What is learned is
+        the baseline, the threshold, and the feature schema, including ``channels`` when
+        they were left unpinned: an unpinned detector adopts whatever channels the training
+        data carries, which is what lets one adapter fit a rig it has never seen.
+
+        Rolling and lag features assume one asset's contiguous history, so several assets
+        would interleave into a meaningless matrix; that is refused rather than fitted.
+        """
+        lane_events = [
+            event for event in events if event.source_type is self.lane and _has_reading(event)
         ]
-        frame = pd.DataFrame(records, columns=["ts", "metric", "value"])
-        wide = frame.pivot_table(index="ts", columns="metric", values="value", aggfunc="mean")
+        if not lane_events:
+            raise ValueError("fit needs telemetry readings with a metric and value; got none")
+        assets = {event.asset_id for event in lane_events}
+        if len(assets) > 1:
+            raise ValueError(
+                f"fit expects one asset's history; got {len(assets)} ({', '.join(sorted(assets))})"
+            )
+        wide = wide_frame(sorted(lane_events, key=lambda event: event.timestamp))
+        # Pinned channels are a promise the data must keep; unpinned ones are learned from
+        # it. pivot_table sorts its columns, so the learned order is deterministic.
+        channels = tuple(self._params.channels or wide.columns)
+        missing = [channel for channel in channels if channel not in wide.columns]
+        if missing:
+            raise ValueError(f"fit input is missing pinned channels: {missing}")
+        frame = wide.reindex(columns=list(channels)).sort_index().ffill().dropna()
+
+        state = train_state(
+            frame.reset_index(drop=True),
+            self._params,
+            channels=channels,
+            provenance=f"refit on {len(frame)} normal rows of {', '.join(sorted(assets))}",
+        )
+        return Team3ZScoreDetector(self._params, state)
+
+    def _detect_asset(
+        self, asset_id: str, events: list[NormalizedEvent], state: Team3State
+    ) -> list[DetectionResult]:
+        # State is a parameter rather than re-read from self: detect() has already refused
+        # the unfitted case, so passing it makes the narrowing a signature instead of a
+        # runtime assertion.
+        wide = wide_frame(events)
 
         # Feature columns are sacred: skip an asset that lacks any trained channel
         # rather than score it against a misaligned matrix (ADR-0012 D4).
-        if not set(art.channels).issubset(wide.columns):
+        if not set(state.channels).issubset(wide.columns):
             return []
 
-        wide = wide.reindex(columns=art.channels).sort_index().ffill().dropna()
+        wide = wide.reindex(columns=state.channels).sort_index().ffill().dropna()
         if wide.empty:
             return []
         # The tz-aware DatetimeIndex carries the real timestamps; feature-building
@@ -131,18 +185,19 @@ class Team3ZScoreDetector:
         timestamps = wide.index
         wide = wide.reset_index(drop=True)
 
+        params = self._params
         features = build_multivariate_features(
             wide,
-            window=art.window_size,
-            lag_steps=art.lag_steps,
-            fft_enabled=art.fft.enabled,
-            fft_include_dc=art.fft.include_dc,
+            window=params.window_size,
+            lag_steps=params.lag_steps,
+            fft_enabled=params.fft_enabled,
+            fft_include_dc=params.fft_include_dc,
         )
         if features.empty:
             return []
         # Enforce the trained order; identical builder + validated channels means
         # the columns already match, but reindex makes the positional contract explicit.
-        features = features.reindex(columns=art.feature_columns)
+        features = features.reindex(columns=state.feature_columns)
 
         positions = features.index.to_numpy()
         # Select only the surviving rows' timestamps, then convert (iterating the
@@ -151,16 +206,16 @@ class Team3ZScoreDetector:
 
         # One z-matrix pass; the row score is its per-row max (the evidence step
         # reuses the same matrix, so it is never recomputed).
-        z_matrix = featurewise_robust_z(features.to_numpy(dtype=float), art.baseline)
+        z_matrix = featurewise_robust_z(features.to_numpy(dtype=float), state.baseline)
         scores = z_matrix.max(axis=1)
-        anomaly = np.isfinite(scores) & (scores > art.threshold)
+        anomaly = np.isfinite(scores) & (scores > state.threshold)
         if not anomaly.any():
             return []
 
         detections: list[DetectionResult] = []
-        for start, end in _runs(anomaly):
+        for start, end in merge_runs(anomaly):
             length = end - start + 1
-            if length < self._min_segment_length:
+            if length < params.min_segment_length:
                 continue
             peak = start + int(np.argmax(scores[start : end + 1]))
             detections.append(
@@ -171,18 +226,27 @@ class Team3ZScoreDetector:
                     lane=self.lane,
                     method=self.method,
                     score=float(scores[peak]),
-                    threshold=float(art.threshold),
+                    threshold=float(state.threshold),
                     event_kind=_classify(length),
-                    evidence=self._evidence(z_matrix[peak], row_ts[peak], scores[peak], length),
+                    evidence=self._evidence(
+                        state, z_matrix[peak], row_ts[peak], scores[peak], length
+                    ),
                 )
             )
         return detections
 
     def _evidence(
-        self, z_row: np.ndarray, peak_ts: datetime, peak_score: float, length: int
+        self,
+        state: Team3State,
+        z_row: np.ndarray,
+        peak_ts: datetime,
+        peak_score: float,
+        length: int,
     ) -> dict[str, Any]:
+        # Zipped against the state's own column order, which is what z_row is aligned to;
+        # the lookup dict is a pure cache and must not be the thing defining the order.
         per_channel: dict[str, float] = {}
-        for name, z in zip(self._artifact.feature_columns, z_row, strict=True):
+        for name, z in zip(state.feature_columns, z_row, strict=True):
             channel = self._channel_by_feature[name]
             per_channel[channel] = max(per_channel.get(channel, 0.0), float(z))
         top = sorted(per_channel.items(), key=lambda kv: kv[1], reverse=True)[:_TOP_CHANNELS]

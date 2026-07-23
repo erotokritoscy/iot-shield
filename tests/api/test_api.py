@@ -130,7 +130,7 @@ class TestReads:
         assert len(rows) == 2
         assert all(r["asset_id"] == "pump-02" for r in rows)
 
-    def test_events_time_range_is_half_open(self, api: ApiHarness) -> None:
+    def test_events_time_range_is_closed(self, api: ApiHarness) -> None:
         seed_incident(api)
         rows = api.client.get(
             "/events",
@@ -140,7 +140,9 @@ class TestReads:
                 "end": (T0 + timedelta(seconds=30)).isoformat(),
             },
         ).json()
-        assert [r["raw"] for r in rows] == ["r0"]  # r30 excluded: end is exclusive
+        # Closed upper bound: r30 sits exactly on `end` and is included, so a detection's
+        # evidence recovers events on its window_end (models.py DetectionResult).
+        assert [r["raw"] for r in rows] == ["r0", "r30"]
 
     def test_alerts_are_the_ranked_queue(self, api: ApiHarness) -> None:
         seed_incident(api)
@@ -213,7 +215,8 @@ class TestValidation:
                 "end": (T0 + timedelta(seconds=30)).isoformat(),
             },
         ).json()
-        assert [r["raw"] for r in rows] == ["r0"]
+        # athens == T0, so r0 is included; the range is closed, so r30 (on `end`) is too.
+        assert [r["raw"] for r in rows] == ["r0", "r30"]
 
     def test_invalid_lane_is_422(self, api: ApiHarness) -> None:
         assert api.client.get("/events", params={"lane": "carrier-pigeon"}).status_code == 422

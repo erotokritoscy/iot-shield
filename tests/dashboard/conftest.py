@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from iotshield.api import create_app
+from iotshield.api.control import create_control_app
 from iotshield.contracts import (
     AlertSeverity,
     Asset,
@@ -21,6 +22,7 @@ from iotshield.contracts import (
     PrioritizedAlert,
 )
 from iotshield.dashboard.client import ApiClient
+from iotshield.dashboard.control_client import ControlClient
 from iotshield.storage import create_schema, make_engine, make_session_factory, repository
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -110,3 +112,25 @@ def seeded(tmp_path: Path) -> SeededDashboard:
         repository.insert_detections(session, [detection])
         repository.insert_alerts(session, [alert])
     return SeededDashboard(client=client, alert=alert, detection=detection)
+
+
+@pytest.fixture()
+def control_client(tmp_path: Path) -> ControlClient:
+    """A ControlClient wired to the real Pipeline API in-process over a fresh SQLite db."""
+    engine = make_engine(f"sqlite:///{(tmp_path / 'compose.db').as_posix()}")
+    create_schema(engine)  # init owns the schema; the write API assumes it exists
+    return ControlClient(TestClient(create_control_app(engine)))
+
+
+@pytest.fixture()
+def eval_control_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ControlClient:
+    """A ControlClient whose Pipeline API has the evaluation plane mounted.
+
+    Separate from ``control_client`` because the flag must be set *before* the app is
+    built — the eval router is registered at construction, not consulted per request, which
+    is what makes it absent rather than merely guarded (ADR-0021 D1).
+    """
+    monkeypatch.setenv("IOTSHIELD_EVAL_API", "1")
+    engine = make_engine(f"sqlite:///{(tmp_path / 'eval.db').as_posix()}")
+    create_schema(engine)
+    return ControlClient(TestClient(create_control_app(engine)))

@@ -29,7 +29,11 @@ from collections.abc import Mapping, Sequence
 from datetime import timedelta
 
 from iotshield.alert._correlate import correlate_and_rank, detection_margin, severity_from_priority
+from iotshield.capabilities import ALERTS, DETECTIONS, Capability
 from iotshield.contracts import Asset, Criticality, DetectionResult, PrioritizedAlert
+
+# Consumes detections, produces alerts — the universal alert-engine shape.
+CAPABILITY = Capability.of(consumes={DETECTIONS}, produces={ALERTS})
 
 # team2's device_weight, re-expressed over our asset criticality (>= 1.0).
 _CRITICALITY_WEIGHT = {

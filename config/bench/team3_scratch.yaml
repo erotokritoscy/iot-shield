@@ -1,0 +1,46 @@
+# Benchmark spec: team3's z-score fitted FROM SCRATCH, with hyperparameters you choose.
+#
+# The difference from bench/team3.yaml is one line: no `artifact:`. That is the whole
+# ADR-0022 distinction, and it is deliberate rather than an omission.
+#
+#   - bench/team3.yaml names an artifact. An artifact is *atomic* — it carries a baseline
+#     aligned to the features its own hyperparameters produced — so its window/lags/
+#     percentile cannot be overridden, and a `--sweep` over them is refused.
+#   - this spec names hyperparameters and no artifact, so it is an *untrained* model. It
+#     cannot run in the product (a run never fits; the runner refuses it), and in the
+#     harness it needs `--fit-protocol prefix` or `holdout` to learn a baseline per case.
+#
+# Which makes this the spec to sweep:
+#
+#   uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
+#       --spec config/bench/team3_scratch.yaml --sweep window_size=20,60,120
+#
+# `channels` is left unset on purpose: unpinned, fit() learns the channel set from each
+# recording, which is what lets this same spec benchmark a rig it has never seen.
+
+source_format: stub-csv
+normalizer: stub
+
+detectors:
+  - name: team3_zscore
+    params:
+      window_size: 60
+      lag_steps: [1, 5, 10]
+      percentile: 99.0
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+assets:
+  - asset_id: skab-testbed
+    name: SKAB rotor testbed
+    asset_type: pump
+    location: skab-rig
+    criticality: high
+  - asset_id: synthetic-rig
+    name: Synthetic rig
+    asset_type: pump
+    location: synthetic
+    criticality: high

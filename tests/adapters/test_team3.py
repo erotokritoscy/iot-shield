@@ -11,26 +11,14 @@ import pandas as pd
 import pytest
 
 from iotshield.contracts import EventKind, Lane, NormalizedEvent
-from iotshield.detect.team3.artifact import Team3Artifact, load_artifact
-from iotshield.detect.team3.detector import Team3ZScoreDetector, _classify, _runs
-from iotshield.detect.team3.train import train_artifact
+from iotshield.detect._fitted import NotFitted
+from iotshield.detect.team3.artifact import Team3State, load_artifact, parse_artifact
+from iotshield.detect.team3.detector import Team3ZScoreDetector, _classify
+from iotshield.detect.team3.params import Team3Params
+from iotshield.detect.team3.train import train_state
+from tests.team3_fixtures import make_detector, normal_frame
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
-
-
-def make_artifact(
-    channels: list[str], *, window: int = 5, lags: tuple[int, ...] = (1,), percentile: float = 99.0
-) -> Team3Artifact:
-    rng = np.random.default_rng(0)
-    frame = pd.DataFrame({c: rng.normal(10.0, 0.5, 300) for c in channels})
-    return train_artifact(
-        frame,
-        channels=channels,
-        window_size=window,
-        lag_steps=list(lags),
-        fft_enabled=False,
-        percentile=percentile,
-    )
 
 
 def events_from(
@@ -72,7 +60,7 @@ def fingerprint(detections: list) -> list[tuple]:
 
 class TestEpisodes:
     def test_sustained_anomaly_is_one_collective_detection(self) -> None:
-        det = Team3ZScoreDetector(make_artifact(["Pressure"]))
+        det = make_detector(["Pressure"])
         dets = det.detect(events_from({"Pressure": flat_with_spike(25, range(10, 18))}))
         assert len(dets) == 1
         (d,) = dets
@@ -83,10 +71,9 @@ class TestEpisodes:
         assert d.window_start <= d.window_end
 
     def test_min_segment_length_suppresses_short_episodes(self) -> None:
-        art = make_artifact(["Pressure"])
         events = events_from({"Pressure": flat_with_spike(25, range(10, 14))})
-        assert Team3ZScoreDetector(art, min_segment_length=1).detect(events)
-        assert Team3ZScoreDetector(art, min_segment_length=1000).detect(events) == []
+        assert make_detector(["Pressure"], min_segment_length=1).detect(events)
+        assert make_detector(["Pressure"], min_segment_length=1000).detect(events) == []
 
     def test_classify_maps_run_length_to_event_kind(self) -> None:
         assert _classify(1) == EventKind.POINT
@@ -94,29 +81,25 @@ class TestEpisodes:
         assert _classify(3) == EventKind.COLLECTIVE
         assert _classify(50) == EventKind.COLLECTIVE
 
-    def test_runs_finds_maximal_true_ranges(self) -> None:
-        mask = np.array([False, True, True, False, True, False])
-        assert _runs(mask) == [(1, 2), (4, 4)]
-
 
 class TestPivotAndGuards:
     def test_top_channel_is_the_one_that_spiked(self) -> None:
-        det = Team3ZScoreDetector(make_artifact(["Accel", "Pressure"]))
+        det = make_detector(["Accel", "Pressure"])
         series = {"Accel": [10.0] * 25, "Pressure": flat_with_spike(25, range(10, 18))}
         (d,) = det.detect(events_from(series))
         assert d.evidence["top_channels"][0]["channel"] == "Pressure"
 
     def test_asset_missing_a_trained_channel_is_skipped(self) -> None:
-        det = Team3ZScoreDetector(make_artifact(["A", "B"]))
+        det = make_detector(["A", "B"])
         # Only channel A present -> cannot form the matrix -> skip, never misalign.
         assert det.detect(events_from({"A": [10.0] * 25})) == []
 
     def test_input_shorter_than_window_yields_nothing(self) -> None:
-        det = Team3ZScoreDetector(make_artifact(["Pressure"], window=10))
+        det = make_detector(["Pressure"], window=10)
         assert det.detect(events_from({"Pressure": [10.0, 11.0, 60.0]})) == []
 
     def test_each_asset_scored_independently(self) -> None:
-        det = Team3ZScoreDetector(make_artifact(["Pressure"]))
+        det = make_detector(["Pressure"])
         calm = events_from({"Pressure": [10.0] * 25}, asset="calm")
         faulty = events_from({"Pressure": flat_with_spike(25, range(10, 18))}, asset="faulty")
         assets = {d.asset_id for d in det.detect(calm + faulty)}
@@ -126,48 +109,126 @@ class TestPivotAndGuards:
 class TestNumericalSafety:
     def test_extreme_spike_stays_finite(self) -> None:
         # A huge spike must not produce inf/nan (the contract rejects those).
-        det = Team3ZScoreDetector(make_artifact(["Pressure"]))
+        det = make_detector(["Pressure"])
         dets = det.detect(events_from({"Pressure": flat_with_spike(25, range(10, 16), spike=1e9)}))
         assert dets and all(np.isfinite(d.score) for d in dets)
 
     def test_all_constant_training_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="degenerate"):
-            train_artifact(pd.DataFrame({"A": [5.0] * 100}), channels=["A"], window_size=5)
+            train_state(
+                pd.DataFrame({"A": [5.0] * 100}),
+                Team3Params(window_size=5, lag_steps=(1,)),
+                channels=["A"],
+                provenance="p",
+            )
+
+
+class TestHyperparametersAndFittedState:
+    """ADR-0022, as it lands on this adapter: what fitting may and may not carry over."""
+
+    def _quiet(self, channels: tuple[str, ...] = ("Pressure",)) -> list[NormalizedEvent]:
+        frame = normal_frame(channels, rows=120, seed=7)
+        return events_from({c: list(frame[c]) for c in channels})
+
+    def test_fit_uses_the_constructed_window_not_the_previous_one(self) -> None:
+        """The regression this ADR exists for.
+
+        ``fit()`` used to read window/lags/percentile/channels out of the artifact it was
+        loaded from, so two detectors built with different hyperparameters produced
+        *identical* fitted models — the override silently did nothing.
+        """
+        training = self._quiet()
+        narrow = make_detector(["Pressure"], window=4).fit(training)
+        wide = make_detector(["Pressure"], window=30).fit(training)
+        assert narrow._state is not None and wide._state is not None
+        assert len(narrow._state.feature_columns) != len(wide._state.feature_columns) or (
+            narrow._state.threshold != wide._state.threshold
+        )
+
+    def test_fit_keeps_the_hyperparameters_it_was_built_with(self) -> None:
+        detector = make_detector(["Pressure"], window=7, percentile=95.0)
+        fitted = detector.fit(self._quiet())
+        assert fitted._params == detector._params
+
+    def test_unpinned_channels_are_learned_from_the_training_data(self) -> None:
+        # No `channels` in the params: the detector adopts whatever the rig actually
+        # carries, which is what lets one adapter fit a rig it has never seen.
+        detector = Team3ZScoreDetector(Team3Params(window_size=5, lag_steps=(1,)))
+        assert detector.is_fitted is False
+        fitted = detector.fit(self._quiet(("Current", "Pressure")))
+        assert fitted.is_fitted is True
+        assert fitted._state is not None
+        assert fitted._state.channels == ["Current", "Pressure"]
+
+    def test_pinned_channels_are_a_promise_the_data_must_keep(self) -> None:
+        detector = Team3ZScoreDetector(
+            Team3Params(window_size=5, lag_steps=(1,), channels=("Pressure", "Torque"))
+        )
+        with pytest.raises(ValueError, match="missing pinned channels"):
+            detector.fit(self._quiet(("Pressure",)))
+
+    def test_an_untrained_detector_refuses_to_judge(self) -> None:
+        # Not an empty list: "no anomalies" is a successful verdict, and the most
+        # dangerous wrong answer a detector can give.
+        detector = Team3ZScoreDetector(Team3Params())
+        with pytest.raises(NotFitted, match="no trained baseline"):
+            detector.detect(events_from({"Pressure": [10.0] * 25}))
+
+    def test_fitting_needs_readings(self) -> None:
+        with pytest.raises(ValueError, match="got none"):
+            Team3ZScoreDetector(Team3Params()).fit([])
 
 
 class TestArtifact:
     def test_json_round_trip_preserves_scoring(self) -> None:
-        art = make_artifact(["Pressure", "Current"])
-        reloaded = Team3Artifact.model_validate_json(art.model_dump_json())
-        assert reloaded.feature_columns == art.feature_columns
-        assert reloaded.median == art.median and reloaded.mad == art.mad
+        detector = make_detector(["Pressure", "Current"])
+        state = detector._state
+        assert state is not None
+        reloaded = Team3State.model_validate_json(state.model_dump_json())
+        assert reloaded.feature_columns == state.feature_columns
+        assert reloaded.median == state.median and reloaded.mad == state.mad
         events = events_from(
             {"Pressure": flat_with_spike(25, range(10, 18)), "Current": [10.0] * 25}
         )
-        assert fingerprint(Team3ZScoreDetector(art).detect(events)) == fingerprint(
-            Team3ZScoreDetector(reloaded).detect(events)
+        assert fingerprint(detector.detect(events)) == fingerprint(
+            Team3ZScoreDetector(detector._params, reloaded).detect(events)
         )
 
     def test_length_mismatch_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="median/mad length"):
-            Team3Artifact(
-                method="m",
+            Team3State(
                 provenance="p",
-                window_size=3,
                 channels=["A"],
                 feature_columns=["A_mean", "A_std"],
                 median=[0.0],
                 mad=[1.0],
                 threshold=1.0,
-                percentile=99.0,
             )
 
     def test_committed_skab_artifact_loads(self) -> None:
+        """The one place the shipped model's own numbers are pinned.
+
+        Every other suite builds a hermetic artifact, so nothing else would notice if this
+        file were reshaped, truncated, or retrained by accident — and it is the model the
+        demos and the SKAB benchmark actually run.
+        """
         art = load_artifact("skab_zscore")
-        assert art.method == "team3_zscore"
-        assert len(art.channels) == 8
-        assert len(art.median) == len(art.mad) == len(art.feature_columns)
+        assert art.params.channels is not None and len(art.params.channels) == 8
+        assert art.state.channels == list(art.params.channels)
+        assert (art.params.window_size, art.params.percentile) == (60, 99.0)
+        assert len(art.state.median) == len(art.state.mad) == len(art.state.feature_columns) == 45
+        assert art.state.threshold == pytest.approx(24.539536363633378)
 
     def test_unknown_artifact_id_is_a_value_error(self) -> None:
         with pytest.raises(ValueError, match="unknown team3 artifact"):
             load_artifact("does-not-exist")
+
+    def test_a_stale_schema_version_says_to_regenerate(self) -> None:
+        """A v1 file must fail on the fact that matters, not on a list of unexpected keys.
+
+        ``extra="forbid"`` would otherwise report ten unknown fields, burying the one
+        actionable thing: this artifact predates the params/state split (ADR-0022).
+        """
+        v1 = '{"schema_version": 1, "method": "team3_zscore", "window_size": 60}'
+        with pytest.raises(ValueError, match="regenerate"):
+            parse_artifact(v1, "stale")

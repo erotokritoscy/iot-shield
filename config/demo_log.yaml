@@ -1,0 +1,44 @@
+# Log demo — the LOG lane finally has a judge (ADR-0020). Until now the syslog normalizer
+# produced log events that nothing consumed; this run detects on them.
+#
+# The input is an sshd brute force against gateway-01: twelve failed passwords in ~60s
+# (root, admin, backup, svc-plc), ending in an *accepted* password — the attack succeeded.
+# The `auth_failure` preset counts only the failures, so twelve matches inside the 2-minute
+# window (trigger: 5) merge into ONE collective detection: 12 attempts is one incident, not
+# twelve alerts. score=12 vs threshold=4 (the exceedance boundary, min_count-1) gives the
+# weighted engine a 3x margin -> a HIGH alert on a high-criticality gateway.
+#
+# Two details worth watching:
+#   - every line here is severity INFO (sshd logs failures that way), so the *other* preset,
+#     `severity_spike`, would see nothing at all. That is exactly why a content-matched
+#     preset exists alongside the format-agnostic one.
+#   - gateway-02 has two failures spread over two minutes: below the trigger, so it stays
+#     silent. A couple of mistyped passwords is not a brute force.
+
+database_url: "sqlite:///demo.db"
+
+sources:
+  - normalizer: syslog
+    source_format: syslog
+    path: data/demo/demo_log.log
+
+detectors:
+  - name: log_burst
+    params:
+      preset: auth_failure
+      window_minutes: 2
+      min_count: 5
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+# gateway-01 is registered (criticality high -> it weighs the alert up); gateway-02 is
+# deliberately absent and gets auto-discovered from the log lines.
+assets:
+  - asset_id: gateway-01
+    name: Edge gateway 1
+    asset_type: gateway
+    location: line-1
+    criticality: high

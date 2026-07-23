@@ -1,0 +1,171 @@
+"""Every adapter must declare a capability, and the declaration must match reality.
+
+This is the capability analogue of the port suites: a structural guarantee that no
+adapter ships undeclared, plus behavioural cross-checks that a declared shape agrees
+with what the built adapter actually does — so the guard never reads a stale lie.
+"""
+
+import sys
+
+import pytest
+
+from iotshield.api.control import describe_params
+from iotshield.capabilities import Capability, formats_in, lanes_in
+from iotshield.contracts import Lane
+from iotshield.normalize import FLOW_DIALECTS, STUB_SOURCE_FORMAT, SYSLOG_SOURCE_FORMAT
+from iotshield.pipeline.registry import (
+    ALERT_ENGINES,
+    DETECTORS,
+    NORMALIZERS,
+    AdapterSpec,
+    build_detector,
+    build_normalizer,
+)
+
+_ALL_SPECS = [
+    *((f"normalizer:{name}", spec) for name, spec in NORMALIZERS.items()),
+    *((f"detector:{name}", spec) for name, spec in DETECTORS.items()),
+    *((f"alert_engine:{name}", spec) for name, spec in ALERT_ENGINES.items()),
+]
+
+
+@pytest.mark.parametrize("label,spec", _ALL_SPECS, ids=[label for label, _ in _ALL_SPECS])
+def test_every_adapter_declares_a_nonempty_capability(label: str, spec: AdapterSpec) -> None:
+    capability = spec.capability({})  # default params
+    assert isinstance(capability, Capability)
+    assert capability.consumes, f"{label} declares no consumes tokens"
+    assert capability.produces, f"{label} declares no produces tokens"
+
+
+def test_normalizer_declared_format_matches_source_format_constant() -> None:
+    assert formats_in(NORMALIZERS["stub"].capability({}).consumes) == {STUB_SOURCE_FORMAT}
+    assert formats_in(NORMALIZERS["syslog"].capability({}).consumes) == {SYSLOG_SOURCE_FORMAT}
+
+
+def test_flow_normalizer_declares_every_dialect_it_can_parse() -> None:
+    # The first normalizer accepting more than one format: the declaration must list every
+    # dialect, or the guard would reject a source the adapter handles perfectly well.
+    assert formats_in(NORMALIZERS["flow"].capability({}).consumes) == set(FLOW_DIALECTS)
+
+
+def test_flow_normalizer_actually_emits_its_declared_lane() -> None:
+    declared = lanes_in(NORMALIZERS["flow"].capability({}).produces)
+    text = (
+        "start,src_ip,src_port,dst_ip,dst_port,proto\n"
+        "2026-07-07T12:00:00+00:00,10.0.0.7,51514,203.0.113.9,23,tcp\n"
+    )
+    result = build_normalizer("flow").normalize(text, source_format="flow-csv", origin="test")
+    assert result.events  # the sample parsed
+    assert {event.source_type for event in result.events} <= declared
+
+
+def test_stub_normalizer_actually_emits_its_declared_lane() -> None:
+    declared = lanes_in(NORMALIZERS["stub"].capability({}).produces)
+    result = build_normalizer("stub").normalize(
+        "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0",
+        source_format=STUB_SOURCE_FORMAT,
+        origin="test",
+    )
+    assert result.events  # the sample parsed
+    assert {event.source_type for event in result.events} <= declared
+
+
+def test_syslog_normalizer_actually_emits_its_declared_lane() -> None:
+    declared = lanes_in(NORMALIZERS["syslog"].capability({}).produces)
+    line = "<34>1 2026-07-07T12:00:00Z host-a app 1 ID - disk failure"
+    result = build_normalizer("syslog").normalize(
+        line, source_format=SYSLOG_SOURCE_FORMAT, origin="test"
+    )
+    assert result.events  # the sample parsed
+    assert {event.source_type for event in result.events} <= declared
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [({}, Lane.TELEMETRY), ({"lane": "telemetry"}, Lane.TELEMETRY), ({"lane": "flow"}, Lane.FLOW)],
+)
+def test_stub_detector_declared_lane_matches_built_instance(
+    params: dict[str, str], expected: Lane
+) -> None:
+    # The param-driven case: the declaration must follow params exactly as the
+    # factory does, or the guard would warn (or stay silent) about the wrong lane.
+    declared = lanes_in(DETECTORS["stub_threshold"].capability(params).consumes)
+    assert declared == {expected}
+    assert build_detector("stub_threshold", params).lane == expected
+
+
+def test_team3_detector_declared_lane_matches_built_instance() -> None:
+    declared = lanes_in(DETECTORS["team3_zscore"].capability({}).consumes)
+    assert declared == {Lane.TELEMETRY}
+    assert build_detector("team3_zscore", {}).lane == Lane.TELEMETRY
+
+
+def _choices_of(spec: AdapterSpec, param: str) -> list[str] | None:
+    return next(p.choices for p in describe_params(spec.factory) if p.name == param)
+
+
+def test_declared_lane_choices_are_the_value_carrying_lanes() -> None:
+    # stub_threshold compares event.value, which only telemetry and flow carry — a LOG event
+    # has none, so `lane: log` would validate clean and never fire. The offered vocabulary is
+    # the value-carrying lanes, not every Lane; this pins that (and catches a new such lane).
+    value_carrying = [Lane.TELEMETRY.value, Lane.FLOW.value]
+    assert _choices_of(DETECTORS["stub_threshold"], "lane") == value_carrying
+
+
+def test_learning_adapters_params_type_mirrors_the_factory_signature() -> None:
+    """A hyperparameter field with no matching factory argument is silently unreachable from
+    config (ADR-0022 Consequences). Pin the mirror so it cannot drift."""
+    import inspect
+
+    for name, spec in DETECTORS.items():
+        if spec.params_type is None:
+            continue
+        factory_args = set(inspect.signature(spec.factory).parameters) - {"self"}
+        artifact = {spec.artifact_param} if spec.artifact_param else set()
+        fields = set(spec.params_type.model_fields)
+        # Every factory arg except the artifact selector is a hyperparameter field, and every
+        # field is a factory arg. Either gap means a knob that config or fitting cannot reach.
+        assert fields == factory_args - artifact, (
+            f"{name}: params_type {fields} vs factory {factory_args - artifact}"
+        )
+
+
+def test_every_preset_adapter_declares_its_presets_as_choices() -> None:
+    """Same guard on the other side: a new PRESETS entry the Literal does not list would be
+    unreachable from the UI even though the adapter supports it.
+
+    Discovered from the registry rather than named by hand, so the law covers the *next*
+    preset adapter automatically — naming them would only guarantee it for the ones
+    somebody remembered to add here.
+    """
+    checked: list[str] = []
+    for name in DETECTORS:
+        module = sys.modules[type(build_detector(name, {})).__module__]
+        presets = getattr(module, "PRESETS", None)
+        if presets is None:
+            continue  # an adapter with no preset vocabulary has nothing to mirror
+        assert set(_choices_of(DETECTORS[name], "preset") or []) == set(presets), name
+        checked.append(name)
+    # Guard the guard: if the discovery above ever stops finding anything, this test would
+    # pass vacuously while asserting nothing at all.
+    assert set(checked) == {"log_burst", "flow_burst"}
+
+
+def test_flow_burst_declared_lane_matches_built_instance() -> None:
+    # Fixed-lane detector: the declaration must hold for every preset, since a preset
+    # changes *what* it measures but never *which* lane it reads.
+    assert lanes_in(DETECTORS["flow_burst"].capability({}).consumes) == {Lane.FLOW}
+    for preset in ("fan_out", "port_scan", "exfiltration"):
+        assert build_detector("flow_burst", {"preset": preset}).lane == Lane.FLOW
+
+
+def test_a_param_with_no_closed_vocabulary_reports_no_choices() -> None:
+    assert _choices_of(DETECTORS["stub_threshold"], "threshold") is None
+
+
+def test_log_burst_detector_declared_lane_matches_built_instance() -> None:
+    # Fixed-lane detector: the declaration must hold for every preset, not just the
+    # default, since the preset changes *what* it counts but never *which* lane it reads.
+    assert lanes_in(DETECTORS["log_burst"].capability({}).consumes) == {Lane.LOG}
+    for preset in ("severity_spike", "auth_failure"):
+        assert build_detector("log_burst", {"preset": preset}).lane == Lane.LOG

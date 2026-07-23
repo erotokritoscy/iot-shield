@@ -79,12 +79,21 @@ class TestEventQueries:
         assert [e.asset_id for e in pump_telemetry] == ["pump-02"]
         assert pump_telemetry[0].source_type == Lane.TELEMETRY
 
-    def test_time_range_is_half_open(self, session: Session) -> None:
+    def test_time_range_is_closed_so_a_point_windows_own_events_recover(
+        self, session: Session
+    ) -> None:
+        # Closed [start, end], not half-open: the contract recovers a detection's evidence by
+        # (asset, window_start..window_end), and a point anomaly is a zero-length window, so
+        # the upper bound must be inclusive or it recovers nothing (models.py DetectionResult).
         repository.insert_events(session, [event(offset_s=s) for s in (0, 10, 20)])
-        window = repository.get_events(
-            session, start=T0, end=T0 + timedelta(seconds=20)
-        )  # [start, end)
-        assert [e.timestamp for e in window] == [T0, T0 + timedelta(seconds=10)]
+        window = repository.get_events(session, start=T0, end=T0 + timedelta(seconds=20))
+        assert [e.timestamp for e in window] == [
+            T0,
+            T0 + timedelta(seconds=10),
+            T0 + timedelta(seconds=20),
+        ]
+        point = repository.get_events(session, start=T0, end=T0)  # a zero-length window
+        assert [e.timestamp for e in point] == [T0]
 
     def test_limit_returns_newest_rows_oldest_first(self, session: Session) -> None:
         repository.insert_events(session, [event(offset_s=s) for s in (20, 0, 10)])

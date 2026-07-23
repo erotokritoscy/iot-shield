@@ -15,7 +15,12 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m iotshield.pipeline",
         description="Run the iotshield detection pipeline on an input file.",
     )
-    parser.add_argument("--input", required=True, type=Path, help="Input data file")
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="Input file for a single-source config; multi-source configs name a path per source",
+    )
     parser.add_argument("--config", required=True, type=Path, help="Pipeline YAML config")
     args = parser.parse_args(argv)
 
