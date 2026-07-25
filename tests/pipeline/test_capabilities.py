@@ -5,6 +5,7 @@ adapter ships undeclared, plus behavioural cross-checks that a declared shape ag
 with what the built adapter actually does — so the guard never reads a stale lie.
 """
 
+import json
 import sys
 
 import pytest
@@ -12,7 +13,12 @@ import pytest
 from iotshield.api.control import describe_params
 from iotshield.capabilities import Capability, formats_in, lanes_in
 from iotshield.contracts import Lane
-from iotshield.normalize import FLOW_DIALECTS, STUB_SOURCE_FORMAT, SYSLOG_SOURCE_FORMAT
+from iotshield.normalize import (
+    FLOW_DIALECTS,
+    PASSTHROUGH_SOURCE_FORMAT,
+    STUB_SOURCE_FORMAT,
+    SYSLOG_SOURCE_FORMAT,
+)
 from iotshield.pipeline.registry import (
     ALERT_ENGINES,
     DETECTORS,
@@ -40,6 +46,8 @@ def test_every_adapter_declares_a_nonempty_capability(label: str, spec: AdapterS
 def test_normalizer_declared_format_matches_source_format_constant() -> None:
     assert formats_in(NORMALIZERS["stub"].capability({}).consumes) == {STUB_SOURCE_FORMAT}
     assert formats_in(NORMALIZERS["syslog"].capability({}).consumes) == {SYSLOG_SOURCE_FORMAT}
+    passthrough = formats_in(NORMALIZERS["passthrough"].capability({}).consumes)
+    assert passthrough == {PASSTHROUGH_SOURCE_FORMAT}
 
 
 def test_flow_normalizer_declares_every_dialect_it_can_parse() -> None:
@@ -78,6 +86,28 @@ def test_syslog_normalizer_actually_emits_its_declared_lane() -> None:
     )
     assert result.events  # the sample parsed
     assert {event.source_type for event in result.events} <= declared
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [({}, Lane.TELEMETRY), ({"lane": "log"}, Lane.LOG), ({"lane": "flow"}, Lane.FLOW)],
+)
+def test_passthrough_normalizer_declared_lane_matches_built_instance(
+    params: dict[str, str], expected: Lane
+) -> None:
+    # The first param-driven NORMALIZER capability (ADR-0025): the declared lane must follow
+    # params exactly as the factory does, or the guard would reason about the wrong lane. The
+    # record deliberately omits source_type, so the lane it comes out on is the one the built
+    # instance filled in from its param — asserting the declaration against behaviour rather
+    # than against a value the input already carried.
+    declared = lanes_in(NORMALIZERS["passthrough"].capability(params).produces)
+    assert declared == {expected}
+    record = json.dumps({"timestamp": "2026-07-07T12:00:00+00:00", "asset_id": "a", "value": 1.0})
+    result = build_normalizer("passthrough", params).normalize(
+        record, source_format=PASSTHROUGH_SOURCE_FORMAT, origin="test"
+    )
+    assert result.events  # the sample parsed
+    assert {event.source_type for event in result.events} == {expected}
 
 
 @pytest.mark.parametrize(

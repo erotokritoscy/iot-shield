@@ -116,7 +116,7 @@ because flow is the first modality whose payload outgrows the contract's own fie
 cross-lane correlation involving flows currently requires the sources to agree on an
 identifier (asset aliasing is an open item — ADR-0023 Consequences).
 
-Ten demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
+Eleven demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
 `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
@@ -148,7 +148,13 @@ quarantined not dropped — ADR-0023 + ADR-0024); and `config/demo_trimodal.yaml
 (**all three lanes judging one asset in one run** — telemetry + syslog + flow on the camera
 → 4 detections across 3 lanes → `corroboration` 2.0 (its highest value with today's three
 lanes; the factor `1 + 0.5·(lanes−1)` is not itself capped);
-the identical flow sweep scores 44.1/MEDIUM alone vs **76.4/CRITICAL** corroborated).
+the identical flow sweep scores 44.1/MEDIUM alone vs **76.4/CRITICAL** corroborated); and
+`config/demo_passthrough.yaml` + `data/demo/demo_passthrough.jsonl` (a partner system that
+already emits `NormalizedEvent` JSONL → the `passthrough` normalizer **validates and
+envelopes** rather than parses → 7 events, 3 quarantined lines (naive timestamp, wrong-lane
+record, non-JSON line), the `stub_threshold` detector ranks the pump's two correlated spikes
+above the discovered sensor — the smallest adapter that honors every port law, and the first
+normalizer whose produced lane is a config **param** so the guard stays accurate — ADR-0025).
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
@@ -163,7 +169,7 @@ src/iotshield/
   contracts/       frozen data contracts (pydantic v2) — the product's core
   capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
   flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
-  normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, ...); a run routes each of its sources here by format (ADR-0019)
+  normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, passthrough=validate-and-envelope pre-normalized JSONL, ...); a run routes each of its sources here by format (ADR-0019)
   detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, ...)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output

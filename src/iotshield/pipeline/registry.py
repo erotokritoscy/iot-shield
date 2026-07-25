@@ -40,8 +40,15 @@ from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.artifact import load_artifact
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
 from iotshield.detect.team3.params import Team3Params
-from iotshield.normalize import FlowNormalizer, Normalizer, StubCsvNormalizer, SyslogNormalizer
+from iotshield.normalize import (
+    FlowNormalizer,
+    Normalizer,
+    PassThroughNormalizer,
+    StubCsvNormalizer,
+    SyslogNormalizer,
+)
 from iotshield.normalize.flow import CAPABILITY as _FLOW_NORMALIZER_CAPABILITY
+from iotshield.normalize.passthrough import capability as _passthrough_capability
 from iotshield.normalize.stub import CAPABILITY as _STUB_NORMALIZER_CAPABILITY
 from iotshield.normalize.syslog import CAPABILITY as _SYSLOG_NORMALIZER_CAPABILITY
 from iotshield.sink import ResultSink, SinkResources
@@ -171,6 +178,17 @@ def _flow_normalizer(home_networks: str | list[str] | None = None) -> FlowNormal
     return FlowNormalizer(home_networks=home_networks)
 
 
+def _passthrough_normalizer(
+    lane: Literal["telemetry", "log", "flow"] = "telemetry",
+) -> PassThroughNormalizer:
+    # The first param-driven NORMALIZER capability (ADR-0025): a pass-through record carries
+    # its own lane in source_type, which the static guard cannot see, so the lane this source
+    # carries is declared here and its capability follows it. The Literal is declaration, not
+    # enforcement (params arrive untyped from YAML; Lane() is what rejects a bad value), so
+    # /modules can offer the closed vocabulary as a choice instead of a free-text box.
+    return PassThroughNormalizer(lane=Lane(lane))
+
+
 def _optional_float(value: Any) -> float | None:
     """A tunable left blank means "use the preset's default".
 
@@ -201,6 +219,7 @@ NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
     "stub": AdapterSpec(StubCsvNormalizer, static(_STUB_NORMALIZER_CAPABILITY)),
     "syslog": AdapterSpec(SyslogNormalizer, static(_SYSLOG_NORMALIZER_CAPABILITY)),
     "flow": AdapterSpec(_flow_normalizer, static(_FLOW_NORMALIZER_CAPABILITY)),
+    "passthrough": AdapterSpec(_passthrough_normalizer, _passthrough_capability),
 }
 
 DETECTORS: dict[str, AdapterSpec[Detector]] = {

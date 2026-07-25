@@ -130,6 +130,27 @@ Note that flows identify a device by IP (that is the only identity a flow carrie
 this demo keys all three sources on the camera's IP address. Reconciling hostname-keyed
 and IP-keyed identities in general needs an asset-aliasing layer that does not exist yet.
 
+### Already-normalized input: the pass-through normalizer
+
+Not every source needs parsing. Some upstream systems already emit our canonical event
+shape. `config/demo_passthrough.yaml` reads JSONL from a partner that does (ADR-0025):
+
+```
+uv run python -m iotshield.pipeline --config config/demo_passthrough.yaml
+```
+
+The `passthrough` normalizer **validates and envelopes** rather than parses — every record
+is still checked against the contract (timezone-aware timestamps, finite values, no unknown
+fields) and every failure is still quarantined, never dropped. Here 7 events flow through
+and 3 lines are captured as malformed: a naive timestamp, a record that declares the wrong
+lane for this source, and a non-JSON line the exporter left in the stream. It is the
+smallest a working normalizer can be — the hello-world for adding your own module.
+
+One design point it introduces: because a pass-through record carries its own lane in the
+data (which the compatibility guard cannot see statically), the lane a source carries is a
+config `param`. That keeps the guard's coverage feedback accurate and lets the adapter
+quarantine a misrouted record — the first normalizer whose declared shape follows its params.
+
 ## Serve the API
 
 ```

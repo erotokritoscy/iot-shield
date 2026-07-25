@@ -12,10 +12,12 @@ from typing import cast
 import pytest
 
 from iotshield.normalize import (
+    PASSTHROUGH_SOURCE_FORMAT,
     STUB_SOURCE_FORMAT,
     SYSLOG_SOURCE_FORMAT,
     FlowNormalizer,
     Normalizer,
+    PassThroughNormalizer,
     StubCsvNormalizer,
     SyslogNormalizer,
 )
@@ -84,6 +86,20 @@ start,src_ip,src_port,dst_ip,dst_port,proto,duration,src_bytes,dst_bytes,src_pac
 # 2 good (one with a non-UTC offset), 1 header (schema), 1 blank, 3 bad: two foreign
 # endpoints, a naive timestamp (the contract rejects it), and a non-numeric port.
 
+
+PASSTHROUGH_TEXT = """\
+{"timestamp":"2026-07-07T12:00:00Z","asset_id":"pump-02","source_type":"telemetry","value":0.38}
+{"timestamp":"2026-07-07T12:00:01+02:00","asset_id":"pump-02","value":0.41}
+
+{"timestamp":"2026-07-07T12:00:02","asset_id":"pump-02","value":0.44}
+{"timestamp":"2026-07-07T12:00:03Z","asset_id":"gw-01","source_type":"log","message":"wrong lane"}
+this is not a json object at all
+"""
+# 2 good (line 1 explicit telemetry; line 2 omits source_type -> filled from the lane param,
+# and carries a non-UTC offset), 1 blank (skipped), 3 bad (naive timestamp, a record on the
+# wrong lane for this telemetry source, a non-JSON line). Provenance defaulting is pinned in
+# tests/adapters/test_passthrough_normalizer.py, so these records omit source_format.
+
 CASES = [
     pytest.param(
         NormalizerCase(
@@ -124,6 +140,16 @@ CASES = [
             expected_malformed=3,
         ),
         id="flow-csv",
+    ),
+    pytest.param(
+        NormalizerCase(
+            make=PassThroughNormalizer,
+            source_format=PASSTHROUGH_SOURCE_FORMAT,
+            text=PASSTHROUGH_TEXT,
+            expected_events=2,
+            expected_malformed=3,
+        ),
+        id="passthrough-jsonl",
     ),
 ]
 
