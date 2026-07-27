@@ -32,7 +32,7 @@ from iotshield.dashboard.control_client import ControlClient
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV_FORMAT
 
 if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see load_eval_report
-    from iotshield.api.evaluation import CorporaResponse, DetectorSummary
+    from iotshield.api.evaluation import BenchSpecSummary, CorporaResponse, DetectorSummary
     from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
@@ -540,11 +540,18 @@ def load_eval_report(path: Path) -> "EvaluationReport | None":
 PROTOCOL_HELP = {
     "none": "Judge with each detector exactly as configured (its shipped artifact).",
     "prefix": (
-        "Relearn 'normal' from each case's own data before its first fault — what a real "
-        "deployment does. Detectors that cannot train are used as configured and say so."
+        "Relearn 'normal' from a reserved head of each asset's clock, which is then NOT "
+        "scored — what a real deployment does. Detectors that cannot train are used as "
+        "configured and say so."
     ),
-    "holdout": "Relearn from a separate clean recording the corpus supplies.",
 }
+"""The fit protocols, in the order the radio shows them.
+
+There is no ``holdout``: no bundle format can carry a holdout recording, so the option could
+only ever produce a table of zeros (``eval.fit``). Keyed off this dict rather than off
+``FitProtocol`` so the page keeps its own help text, but a protocol added to the enum and not
+here would simply not be offered — which is the safe direction.
+"""
 
 
 def _normalizer_for(source_format: str, normalizers: dict[str, Any]) -> str:
@@ -559,13 +566,21 @@ def _normalizer_for(source_format: str, normalizers: dict[str, Any]) -> str:
     )
 
 
-def _bench_spec(
+def _composed_spec(
     detectors: Sequence[dict[str, Any]],
     engine: str,
     source_formats: Sequence[str],
     normalizers: dict[str, Any],
 ) -> dict[str, Any]:
     """One spec from one *entry* — whose detectors run together, in a single pipeline.
+
+    This composes a spec from what is on screen, which is the right thing for an exploratory
+    comparison and the *wrong* thing for reproducing a committed benchmark: it carries no
+    ``assets:`` block and no source or engine parameters, so it is a lookalike of
+    ``config/bench/*.yaml`` rather than the thing itself, and the two published different
+    numbers for what read as the same run. Reproducing a committed benchmark is now its own
+    mode, fed by ``/eval/specs`` (``BenchSpecSummary``); this stays what it always was, and
+    the page shows the spec it built either way.
 
     The unit of comparison is the entry, not the detector. This used to build exactly one
     detector per spec, which made head-to-head easy and made the other experiment impossible:
@@ -575,8 +590,8 @@ def _bench_spec(
     not be expressed from the UI at any setting.
 
     Both shapes now fall out of the same control. One detector per entry is head-to-head,
-    unchanged; three detectors in one entry is ``config/bench/trimodal_all.yaml``. Nothing
-    combines anything on the user's behalf — the entry says what runs together.
+    unchanged; three detectors in one entry approximates ``config/bench/trimodal_all.yaml``.
+    Nothing combines anything on the user's behalf — the entry says what runs together.
 
     The sources come from **the corpus's own declared shape**, one per position. Hardcoding a
     single stub-csv source was correct only while every corpus was single-lane telemetry: a
@@ -669,17 +684,24 @@ def _sweep_widgets(prefix: str, offered: dict[str, ParamInfo]) -> dict[str, list
     return {chosen: swept}
 
 
-def _eval_catalogue() -> tuple["CorporaResponse", list["DetectorSummary"]]:
-    """The Evaluate page's two catalogue calls.
+def _eval_catalogue() -> tuple[
+    "CorporaResponse", list["DetectorSummary"], list["BenchSpecSummary"], dict[str, Any]
+]:
+    """The Evaluate page's catalogue calls.
 
     Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale
     catalogue after the Pipeline API goes away, defeating the saved-report fallback below
-    — which is the page's whole degradation story. The server builds this response once
-    (``api/evaluation.py``), so the per-rerun cost is two local round-trips against a
+    — which is the page's whole degradation story. The server builds these responses once
+    (``api/evaluation.py``), so the per-rerun cost is local round-trips against a
     precomputed payload, not repeated introspection.
     """
     client = get_control_client()
-    return client.corpora(), client.eval_detectors()
+    return (
+        client.corpora(),
+        client.eval_detectors(),
+        client.eval_specs(),
+        {info.name: info for info in client.modules().normalizers},
+    )
 
 
 def _run_count(sweep: dict[str, list[Any]]) -> int:
@@ -761,8 +783,8 @@ def _detector_plan(
             if protocol == "none":
                 problem = (
                     f"**{summary.name}** has no trained weights in this mode, and the fit "
-                    "protocol is `none` — it would judge nothing. Pick `prefix` or "
-                    "`holdout` above, or switch it back to trained weights."
+                    "protocol is `none` — it would judge nothing. Pick `prefix` above, or "
+                    "switch it back to trained weights."
                 )
 
     return {"name": summary.name, "params": params}, problem, sweepable
@@ -864,6 +886,110 @@ def _labelled(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+_SHIPPED_SPECS = "Run a committed bench spec"
+_COMPOSE_SPECS = "Compose my own"
+
+
+def _shipped_widgets(
+    bench_specs: list["BenchSpecSummary"], corpus_name: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Pick one or more committed ``config/bench/*.yaml`` and run them **verbatim**.
+
+    The point of the mode: what runs is the file, not a reconstruction of it, so a number on
+    this page and the same number from the CLI are the same measurement. The specs arrive from
+    ``/eval/specs`` already parsed, and the page forwards the spec object untouched — it never
+    names a path, and it never edits what it was given.
+
+    Only specs whose source shape matches the corpus are offered, which is the pairing the
+    server derives (``eval.bench``). Offering the rest would put a guaranteed alignment failure
+    in a dropdown.
+    """
+    fitting = [item for item in bench_specs if corpus_name in item.corpora]
+    if not fitting:
+        return [], [
+            f"No committed bench spec matches `{corpus_name}`'s input shape. Compose one "
+            "instead, or add a spec whose `sources` match."
+        ]
+    chosen = st.multiselect(
+        "Bench specs",
+        [item.name for item in fitting],
+        default=[fitting[0].name],
+        key="eval_bench_specs",
+        help="Each becomes one row of the comparison, exactly as the CLI would run it.",
+    )
+    picked = [item for item in fitting if item.name in chosen]
+    for item in picked:
+        st.caption(f"**{item.name}** — {', '.join(item.detectors)}")
+    return [
+        # No sweep: an artifact is atomic and a committed spec is a fixed measurement. Sweeping
+        # one belongs in the compose mode, where the hyperparameters are on screen (ADR-0022).
+        {"label": item.name, "spec": item.spec.model_dump(mode="json"), "sweep": {}}
+        for item in picked
+    ], []
+
+
+def _compose_widgets(
+    detectors: list["DetectorSummary"],
+    corpus: Any,
+    engine: str,
+    normalizers: dict[str, Any],
+    protocol: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build specs from detectors picked on screen — the exploratory mode."""
+    # Which detectors this corpus can actually feed, from the lanes the API says it yields.
+    # Hardcoding the telemetry lane here was correct only while every corpus was telemetry:
+    # once ADR-0026 shipped a flow corpus and a trimodal one, it hid the only detectors that
+    # could judge them and offered ones guaranteed to score zero. Both sides of this
+    # intersection arrive decoded from /eval, so the page never parses a `lane:` prefix.
+    eligible = [item.name for item in detectors if set(item.lanes) & set(corpus.lanes)]
+    if not eligible:
+        return [], [
+            f"No registered detector consumes this corpus's lane(s): "
+            f"{', '.join(corpus.lanes) or 'none'}."
+        ]
+
+    st.subheader("Entries")
+    st.caption(
+        "One entry is one row of the comparison. Put a single detector in each to compare "
+        "them head to head; put several in one to run them **together** in a single "
+        "pipeline, which is how alerts come to cite more than one lane."
+    )
+    entry_count = int(
+        st.number_input(
+            "How many entries?",
+            min_value=1,
+            max_value=6,
+            value=min(2, len(eligible)),
+            step=1,
+            key="eval_entry_n",
+        )
+    )
+    summaries = {item.name: item for item in detectors}
+    entries: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for index in range(entry_count):
+        entry, entry_problems = _entry_widgets(index, eligible, summaries, protocol)
+        entries.append(entry)
+        problems.extend(entry_problems)
+    plan = _labelled(entries)
+
+    fittable = {item.name for item in detectors if item.fittable}
+    picked = {detector["name"] for entry in plan for detector in entry["detectors"]}
+    if protocol != "none" and picked and not picked & fittable:
+        st.info(
+            "None of the selected detectors can be trained; they will be evaluated as "
+            "configured and the report will say so."
+        )
+    return [
+        {
+            "label": entry["label"],
+            "spec": _composed_spec(entry["detectors"], engine, corpus.source_formats, normalizers),
+            "sweep": entry["sweep"],
+        }
+        for entry in plan
+    ], problems
+
+
 @st.cache_data(show_spinner=False)
 def _parse_report(payload: str) -> "EvaluationReport":
     """Parse a cached benchmark payload — cached too, since reruns re-read the same string.
@@ -879,37 +1005,27 @@ def _parse_report(payload: str) -> "EvaluationReport":
 
 
 @st.cache_data(show_spinner=False)
-def _run_benchmark(
-    corpus: str, plan_json: str, engine: str, protocol: str, formats_json: str
-) -> str:
+def _run_benchmark(corpus: str, specs_json: str, protocol: str) -> str:
     """Run a benchmark through the API and return its JSON.
 
     Cached on the arguments, which is what makes running one from a Streamlit page safe:
     the script re-executes on *every* interaction, so uncached work here would re-run the
     benchmark on each click. With the cache, it runs on the button press and every later
     interaction (switch spec, switch case) replays instantly. Returns JSON rather than a
-    model because the cache wants a serializable value — and takes the plan as JSON for
-    the same reason, since it is the cache key as well as the request.
+    model because the cache wants a serializable value.
 
-    Sweeps are expanded *server-side* (ADR-0022): the plan carries the values, the API
+    ``specs_json`` is the **finished request body**, not a plan to be turned into one. Composing
+    the spec in here made the cache key a description of a spec rather than the spec, so two
+    different specs could collide on one entry and — worse — nothing on screen could show what
+    actually ran. It is now literally the payload, which makes the key exact and the echo free.
+
+    Sweeps are expanded *server-side* (ADR-0022): the payload carries the values, the API
     cross-products them into labelled specs, and this page never has to know that four
     rows in the report came from one entry.
     """
-    plan = json.loads(plan_json)
-    # The corpus's input shape is part of the cache key, not looked up here: two corpora with
-    # different shapes must never share a cached result, and the catalogue is a live fetch.
-    source_formats = json.loads(formats_json)
-    normalizers = {info.name: info for info in get_control_client().modules().normalizers}
     report = get_control_client().evaluate(
         corpus=corpus,
-        specs=[
-            {
-                "label": entry["label"],
-                "spec": _bench_spec(entry["detectors"], engine, source_formats, normalizers),
-                "sweep": entry["sweep"],
-            }
-            for entry in plan
-        ],
+        specs=json.loads(specs_json),
         fit_protocol=protocol,
         include_timeline=True,
     )
@@ -1068,7 +1184,7 @@ def evaluate_page(report_path: Path) -> None:
     )
 
     try:
-        catalogue, detectors = _eval_catalogue()
+        catalogue, detectors, bench_specs, normalizers = _eval_catalogue()
     except _API_ERRORS:
         _saved_report_fallback(report_path)
         return
@@ -1080,11 +1196,18 @@ def evaluate_page(report_path: Path) -> None:
             st.caption(hint)
         return
 
+    # A bundle that cannot be loaded is shown as broken rather than hidden — it is listed with
+    # its reason (which names the fix) and kept out of the picker, so "my corpus vanished" is
+    # never the only feedback.
+    for broken in [item for item in catalogue.corpora if item.error]:
+        st.error(f"`{broken.name}` cannot be loaded: {broken.error}")
+    usable = [item for item in catalogue.corpora if not item.error]
+    if not usable:
+        return
+
     columns = st.columns([2, 2, 3])
-    corpus_name = columns[0].selectbox(
-        "Corpus", [item.name for item in catalogue.corpora], key="eval_corpus"
-    )
-    corpus = next(item for item in catalogue.corpora if item.name == corpus_name)
+    corpus_name = columns[0].selectbox("Corpus", [item.name for item in usable], key="eval_corpus")
+    corpus = next(item for item in usable if item.name == corpus_name)
     engine = columns[1].selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
     protocol = columns[2].radio(
         "Fit protocol", list(PROTOCOL_HELP), key="eval_protocol", horizontal=True
@@ -1095,56 +1218,27 @@ def evaluate_page(report_path: Path) -> None:
 
     st.caption(PROTOCOL_HELP[protocol])
 
-    # Which detectors this corpus can actually feed, from the lanes the API says it yields.
-    # Hardcoding the telemetry lane here was correct only while every corpus was telemetry:
-    # once ADR-0026 shipped a flow corpus and a trimodal one, it hid the only detectors that
-    # could judge them and offered ones guaranteed to score zero. Both sides of this
-    # intersection arrive decoded from /eval, so the page never parses a `lane:` prefix.
-    eligible = [item.name for item in detectors if set(item.lanes) & set(corpus.lanes)]
-    if not eligible:
-        st.warning(
-            f"No registered detector consumes this corpus's lane(s): "
-            f"{', '.join(corpus.lanes) or 'none'}."
-        )
-        return
-
-    st.subheader("Entries")
-    st.caption(
-        "One entry is one row of the comparison. Put a single detector in each to compare "
-        "them head to head; put several in one to run them **together** in a single "
-        "pipeline, which is how alerts come to cite more than one lane."
+    mode = st.radio(
+        "Specs", [_SHIPPED_SPECS, _COMPOSE_SPECS], key="eval_spec_mode", horizontal=True
     )
-    entry_count = int(
-        st.number_input(
-            "How many entries?",
-            min_value=1,
-            max_value=6,
-            value=min(2, len(eligible)),
-            step=1,
-            key="eval_entry_n",
-        )
-    )
-    summaries = {item.name: item for item in detectors}
-    entries: list[dict[str, Any]] = []
-    problems: list[str] = []
-    for index in range(entry_count):
-        entry, entry_problems = _entry_widgets(index, eligible, summaries, protocol)
-        entries.append(entry)
-        problems.extend(entry_problems)
-    plan = _labelled(entries)
+    if mode == _SHIPPED_SPECS:
+        request_specs, problems = _shipped_widgets(bench_specs, corpus_name)
+    else:
+        request_specs, problems = _compose_widgets(detectors, corpus, engine, normalizers, protocol)
 
-    fittable = {item.name for item in detectors if item.fittable}
-    picked = {detector["name"] for entry in plan for detector in entry["detectors"]}
-    if protocol != "none" and picked and not picked & fittable:
-        st.info(
-            "None of the selected detectors can be trained; they will be evaluated as "
-            "configured and the report will say so."
-        )
     for problem in problems:
         st.error(problem)
+    if request_specs:
+        # The exact request, on the page that made it. Neither surface used to display the
+        # spec it ran, so a dashboard number and a CLI number that disagreed could only be
+        # reconciled by reading the page's source.
+        with st.expander(
+            f"Spec sent to the API ({len(request_specs)} entr(y/ies))", expanded=False
+        ):
+            st.json(request_specs)
 
-    total = sum(_run_count(entry["sweep"]) for entry in plan)
-    if total > len(plan):
+    total = sum(_run_count(entry["sweep"]) for entry in request_specs)
+    if total > len(request_specs):
         st.caption(f"This will run **{total}** benchmark(s) — one per swept value.")
 
     # Latch the run into session state rather than rendering only on the click. A bare
@@ -1152,23 +1246,16 @@ def evaluate_page(report_path: Path) -> None:
     # first touch of a selectbox inside it (the timeline's spec/case pickers) reruns with
     # the button False and wipes the page. Latching is what lets the cache below pay off:
     # exploring a finished report replays from cache instead of clearing it.
-    # The plan is carried as JSON so the whole selection stays a hashable cache key.
-    selection = (
-        corpus_name,
-        json.dumps(plan, sort_keys=True),
-        engine,
-        protocol,
-        # The corpus's input shape rides in the cache key: two corpora of different shapes
-        # produce different specs, so a shared cache entry would replay the wrong run.
-        json.dumps(list(corpus.source_formats)),
-    )
-    blocked = not plan or bool(problems)
+    # The request rides as JSON so the whole selection stays a hashable cache key — and since
+    # it IS the request body, two different specs can no longer collide on one entry.
+    selection = (corpus_name, json.dumps(request_specs, sort_keys=True), protocol)
+    blocked = not request_specs or bool(problems)
     if st.button("Run benchmark", type="primary", disabled=blocked):
         st.session_state[_EVAL_RUN_KEY] = selection
 
     latched = st.session_state.get(_EVAL_RUN_KEY)
     if latched is None:
-        st.caption("Pick detectors and run — results are cached, so exploring them is instant.")
+        st.caption("Pick specs and run — results are cached, so exploring them is instant.")
         return
 
     # Changing a control after a run leaves the latched report on screen, which reads as
@@ -1179,7 +1266,7 @@ def evaluate_page(report_path: Path) -> None:
         previous = ", ".join(entry["label"] for entry in json.loads(latched[1]))
         st.warning(
             f"Showing the previous run (corpus **{latched[0]}**, {previous}, "
-            f"fit protocol **{latched[3]}**). "
+            f"fit protocol **{latched[2]}**). "
             "Press **Run benchmark** to apply the settings above."
         )
 

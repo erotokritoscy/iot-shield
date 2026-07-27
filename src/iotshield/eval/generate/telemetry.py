@@ -80,7 +80,11 @@ class SensorRig:
             channel: streams(channel).normal(mean, spread, clock.steps)
             for channel, (mean, spread) in _NORMAL.items()
         }
-        expressed = {fault.fault_id for fault in faults if self._apply(series, fault, clock.steps)}
+        expressed = {
+            fault.fault_id: perturbed
+            for fault in faults
+            if (perturbed := self._apply(series, fault, clock))
+        }
 
         # Hoisted out of the comprehension, for the reason `to_stub_csv` documents: per-cell
         # numpy indexing and a per-cell clock call were measured far more expensive than
@@ -100,17 +104,35 @@ class SensorRig:
             for index, moment in enumerate(stamps)
             for channel, column in columns
         )
-        return Observed(events=events, expressed=frozenset(expressed))
+        return Observed(events=events, expressed=expressed)
 
-    def _apply(self, series: _Series, fault: FaultSpec, steps: int) -> bool:
-        """Damage the span in place; return whether this lane expressed the fault at all."""
+    def _apply(self, series: _Series, fault: FaultSpec, clock: Clock) -> frozenset[datetime]:
+        """Damage the span in place; return the instants whose **rendered values changed**.
+
+        Measured, not assumed. This used to return ``True`` whenever a handler existed for the
+        fault kind, which answers "can this lane model this shape?" rather than "did anything
+        happen?" — so a fault scaled to nothing by ``intensity=0.0`` shipped labelled over
+        output identical to a clean recording.
+
+        The comparison is against the **rounded** series, because ``_DECIMALS`` is applied
+        before rendering: a perturbation smaller than the sixth decimal never reaches the file,
+        so the answer key must not claim it did. Rounding also serves as the copy.
+
+        The span is clamped into the recording here and nowhere else. Deriving the label from
+        the instants this returns is what removed the second, unclamped computation of the same
+        window in ``build._incident``, which could place a label past the last row.
+        """
         handler = self._handlers.get(fault.kind)
         if handler is None:
-            return False
-        start = max(0, min(fault.start_step, steps - 1))
-        length = max(1, min(fault.length_steps, steps - start))
+            return frozenset()
+        before = {channel: np.round(values, _DECIMALS) for channel, values in series.items()}
+        start = max(0, min(fault.start_step, clock.steps - 1))
+        length = max(1, min(fault.length_steps, clock.steps - start))
         handler(series, fault, slice(start, start + length), length)
-        return True
+        changed = np.zeros(clock.steps, dtype=bool)
+        for channel, values in series.items():
+            changed |= np.round(values, _DECIMALS) != before[channel]
+        return frozenset(clock.at(int(index)) for index in np.flatnonzero(changed))
 
     def _spike(self, series: _Series, fault: FaultSpec, span: slice, length: int) -> None:
         # A violent excursion peaking mid-span, well past any sane threshold. The floor: every

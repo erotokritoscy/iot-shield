@@ -21,13 +21,14 @@ actually ingest, so a benchmark exercises normalization too and measures the *pi
 rather than a detector in isolation. Gzip because the corpora are repetitive numeric text
 (measured 4.4x on SKAB) and a repository is a bad place for megabytes that compress away.
 
-**Labels are intervals plus the row clock, per asset.** See ``AssetTruth.from_incidents``.
-Storing the clock alongside the intervals costs a little duplication and buys a labels file
-that is a complete answer key on its own — the reader never has to parse readings to learn
-the truth, so it needs no knowledge of their format. Per *asset* because a recording's
-devices do not share a clock, and because the set of assets listed is the corpus's roster:
-one with an empty ``incidents`` list is *asserted clean*, and one absent entirely is out of
-scope (ADR-0026; see ``truth`` for why those must not be conflated).
+**Labels are intervals plus the row clock, per asset and lane.** See
+``AssetTruth.from_incidents``. Storing the clock alongside the intervals costs a little
+duplication and buys a labels file that is a complete answer key on its own — the reader
+never has to parse readings to learn the truth, so it needs no knowledge of their format. Per
+*asset* because a recording's devices do not share a clock, per *lane* because one device's
+modalities do not either, and because the set of assets listed is the corpus's roster: one
+with an empty ``incidents`` list is *asserted clean*, and one absent entirely is out of scope
+(ADR-0026; see ``truth`` for why those must not be conflated).
 
 Provenance and licence are *required* manifest fields, because the first thing this format
 had to solve was which datasets we may redistribute at all: SKAB is GPLv3, so it ships as a
@@ -60,14 +61,18 @@ labels were *larger* than the compressed readings they annotate (264 KB vs 220 K
 one by hand with ``gzip -dc``.
 """
 
-LABELS_VERSION = 2
+LABELS_VERSION = 3
 """On-disk answer-key schema.
 
-v1 was one global clock plus bare ``(start, end)`` pairs, with no asset dimension. v2 is per
-asset (ADR-0026). A v1 file is *rejected* with the command to regenerate rather than
-upgraded, for the same reason a v1 team3 artifact is: an upgrade would have to invent an
-asset id, and the only place to find one is the readings — which is precisely what this
-format exists to avoid needing. A guessed asset id is a number nobody measured.
+v1 was one global clock plus bare ``(start, end)`` pairs, with no asset dimension. v2 added
+the asset (ADR-0026). v3 adds the **lane**: a clock per ``(asset, lane)`` rather than one per
+asset, because pooling a device's modalities into a single clock hands it to whichever lane
+samples fastest and charges that lane's rows against every other lane's detections.
+
+An older file is *rejected* with the command to regenerate rather than upgraded, for the same
+reason a v1 team3 artifact is: an upgrade would have to invent the missing dimension, and the
+only place to find it is the readings — which is precisely what this format exists to avoid
+needing. A guessed lane is a number nobody measured.
 """
 
 # Extension per source format, so a bundle's readings are recognisable on sight rather than
@@ -86,8 +91,16 @@ _EXTENSIONS = {
 }
 
 
-class BundleError(RuntimeError):
-    """A bundle directory is missing, malformed, or internally inconsistent."""
+class BundleError(ValueError):
+    """A bundle directory is missing, malformed, or internally inconsistent.
+
+    A ``ValueError`` so that every caller already handles it. As a bare ``RuntimeError`` it was
+    caught by *nothing*: the CLI and the API both map ``ValueError``, the listing functions
+    swallowed it into ``continue``, and so a bundle with a stale answer key was listed
+    normally and then raised uncaught when selected — CLI traceback, API 500 — while every
+    carefully worded message in this module, including the ones naming the exact regenerate
+    command, was unreachable.
+    """
 
 
 class _Model(BaseModel):
@@ -135,28 +148,56 @@ class IncidentLabel(_Model):
 
 
 class AssetLabel(_Model):
-    """One asset's answer key: its own row clock, plus its faults.
+    """One asset's answer key: its row clock **per lane**, plus its faults.
 
     An empty ``incidents`` list is not missing data — it is the corpus **asserting this
     asset was clean throughout**, which is what makes a detection on it an unambiguous false
     alarm. An asset that is simply out of scope is omitted from the file entirely.
+
+    ``clocks`` is keyed by lane value because a device's modalities do not share a clock and
+    point metrics are scored per lane (``truth.AssetTruth``). A single-lane corpus has one
+    entry, which is the v2 shape with its lane written down.
     """
 
     asset_id: str = Field(min_length=1)
-    clock: list[datetime] = Field(min_length=1)
+    clocks: dict[str, list[datetime]] = Field(min_length=1)
     incidents: list[IncidentLabel] = Field(default_factory=list)
 
 
 class Labels(_Model):
     """A case's answer key: one entry per asset the corpus has an opinion about.
 
-    ``schema_version`` is pinned rather than merely present, so a future v3 fails at
+    ``schema_version`` is pinned rather than merely present, so a future v4 fails at
     validation with a legible message instead of silently dropping fields it does not
     recognise (``extra="forbid"`` would otherwise reject them one at a time).
     """
 
-    schema_version: Literal[2] = LABELS_VERSION
+    schema_version: Literal[3] = LABELS_VERSION
     assets: list[AssetLabel] = Field(min_length=1)
+
+
+def contained(directory: Path, relative: str) -> Path:
+    """Resolve a manifest path inside its bundle, refusing anything that escapes it.
+
+    A bundle is **untrusted data**. That is the whole premise of "discovered, not registered":
+    corpora are a drop-in a third party supplies, ``data/eval`` is a bind mount in
+    docker-compose, and the eval API will load whatever is under the corpus root. Joining a
+    manifest's ``path`` to the bundle directory without this check made ``"../secret.txt"`` —
+    or a plain absolute path — a way to read any file the server can, and return its contents
+    inside a benchmark report.
+
+    Enforced here rather than in the callers so every entry point inherits it and a future one
+    cannot forget. ``resolve`` first, because the traversal may be spelled with symlinks or
+    ``..`` segments that only normalize away on a real path.
+    """
+    base = directory.resolve()
+    target = (base / relative).resolve()
+    if target != base and base not in target.parents:
+        raise BundleError(
+            f"manifest path {relative!r} resolves outside its bundle ({base}); a bundle may "
+            "only reference files it contains"
+        )
+    return target
 
 
 def read_payload(path: Path) -> str:
@@ -202,8 +243,8 @@ def read_labels(path: Path) -> Labels:
     version = found.get("schema_version", 1) if isinstance(found, dict) else None
     if version != LABELS_VERSION:
         raise BundleError(
-            f"{path} is a v{version} answer key; this build reads v{LABELS_VERSION}, which is "
-            f"per asset rather than one global clock (ADR-0026). {REGENERATE_HINT}"
+            f"{path} is a v{version} answer key; this build reads v{LABELS_VERSION}, which "
+            f"holds a row clock per (asset, lane) rather than one per asset. {REGENERATE_HINT}"
         )
     try:
         return Labels.model_validate(found)

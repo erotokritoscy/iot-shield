@@ -30,8 +30,9 @@ Neither is a fifth pipeline port. Ports are the *product's* runtime joints; noth
 at product runtime, which is the same argument ``corpus`` makes about ``Corpus`` itself.
 """
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol, TypeAlias
 
 import numpy as np
@@ -65,15 +66,29 @@ class Calibration:
 class Observed:
     """One device's contribution to one lane of one recording.
 
-    ``expressed`` holds the ``fault_id``s this behaviour actually perturbed — and it is what
-    makes an incident's ``lanes`` a *derived fact*. A behaviour with no vocabulary for a fault
-    returns without expressing it, and that is not a gap: a compromised camera really does
+    ``expressed`` maps each ``fault_id`` this behaviour actually perturbed to **the instants
+    at which its output differs from the unfaulted world**. It is what makes both an
+    incident's ``lanes`` and its *interval* derived facts. A behaviour with no vocabulary for
+    a fault reports nothing for it, and that is not a gap: a compromised camera really does
     still read 22 degrees (ADR-0024 D2). The answer key therefore records which modalities
-    carried the signal because the generator observed it, never because someone typed it.
+    carried the signal, and when, because the generator observed it — never because someone
+    typed it.
+
+    Instants rather than a bare ``True``, because the boolean was answering the wrong
+    question. It was set when a *handler existed* for the fault kind, which is a statement
+    about the code; the label needs a statement about the data. With only the boolean, a
+    fault of ``intensity=0.0`` produced byte-identical output and still shipped labelled, and
+    a fault clamped into range by the handler was labelled at its unclamped declared window —
+    two computations of one interval, only one of which touched a byte. Reporting the
+    perturbed instants collapses them into one.
+
+    Every behaviour already computes this at the line where it used to discard it: the
+    telemetry rig knows the span it damaged, and the flow and log sources hold the exact
+    steps they injected records at.
     """
 
     events: tuple[NormalizedEvent, ...]
-    expressed: frozenset[str] = frozenset()
+    expressed: Mapping[str, frozenset[datetime]] = field(default_factory=dict)
 
 
 Streams: TypeAlias = Callable[..., np.random.Generator]

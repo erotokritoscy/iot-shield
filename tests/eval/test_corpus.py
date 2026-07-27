@@ -5,6 +5,7 @@ only, so a researcher who clones it must get working corpora with no other setup
 here runs against data that ships in the repository.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,7 @@ class TestCommittedCorpus:
             # Every case names its roster, and every listed asset carries its own row clock
             # to score point metrics over (ADR-0026).
             assert case.truth.assets
-            assert all(asset.timeline for asset in case.truth.assets)
+            assert all(asset.clock for asset in case.truth.assets)
 
     def test_it_carries_provenance_and_licence(self) -> None:
         # A bundle that cannot say where it came from is one nobody can safely reuse — the
@@ -80,12 +81,30 @@ class TestDiscovery:
         with pytest.raises(CorpusUnavailable, match="fetch skab"):
             load_corpus("skab_valve1", tmp_path)
 
-    def test_a_broken_manifest_does_not_break_the_listing(self, tmp_path: Path) -> None:
+    def test_a_broken_bundle_is_listed_with_its_reason_rather_than_hidden(
+        self, tmp_path: Path
+    ) -> None:
+        """Listed-but-unloadable, because vanishing is worse than being visibly broken.
+
+        A broken bundle used to be skipped by every listing, so it was absent from `eval
+        list`, from `/eval/corpora` and from the dashboard picker — and the only feedback was
+        a later "unknown corpus" error that never mentioned the directory sitting on disk.
+        """
         (tmp_path / "broken").mkdir()
         (tmp_path / "broken" / MANIFEST_NAME).write_text("{not json", encoding="utf-8")
-        assert list_corpora(tmp_path) == []
+        (info,) = list_corpora(tmp_path)
+        assert info.name == "broken" and info.cases == 0
+        assert "invalid" in info.error
         with pytest.raises(BundleError):
             read_manifest(tmp_path / "broken")
+
+    def test_asking_for_a_broken_bundle_by_name_raises_rather_than_saying_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "broken").mkdir()
+        (tmp_path / "broken" / MANIFEST_NAME).write_text("{not json", encoding="utf-8")
+        with pytest.raises(BundleError):
+            load_corpus("broken", tmp_path)
 
 
 class TestRoundTrip:
@@ -167,3 +186,56 @@ def test_a_corpus_can_be_dropped_in_without_touching_code(tmp_path: Path) -> Non
 
     assert "my-dataset" in {info.name for info in list_corpora(tmp_path)}
     assert len(load_corpus("my-dataset", tmp_path).cases) == 2
+
+
+class TestBundlesAreUntrustedData:
+    """A bundle is a drop-in a third party supplies, so it may only read itself.
+
+    That is the premise of "discovered, not registered": `data/eval` is a bind mount in
+    docker-compose, and the eval API loads whatever is under the corpus root. Joining a
+    manifest's `path` to the bundle directory without a containment check made `../secret.txt`
+    a way to read any file the server can and return it inside a benchmark report.
+    """
+
+    def _bundle_naming(self, tmp_path: Path, payload_path: str) -> Path:
+        directory = tmp_path / "hostile"
+        (directory / "cases").mkdir(parents=True)
+        (directory / MANIFEST_NAME).write_text(
+            json.dumps(
+                {
+                    "name": "hostile",
+                    "description": "d",
+                    "provenance": "p",
+                    "licence": "l",
+                    "cases": [
+                        {
+                            "name": "c",
+                            "inputs": [{"source_format": "stub-csv", "path": payload_path}],
+                            "labels": "cases/c.labels.json",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return directory
+
+    def test_a_relative_escape_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "SECRET.txt").write_text("host secret", encoding="utf-8")
+        directory = self._bundle_naming(tmp_path, "../SECRET.txt")
+        with pytest.raises(BundleError, match="outside its bundle"):
+            load_bundle(directory)
+
+    def test_an_absolute_path_is_refused(self, tmp_path: Path) -> None:
+        secret = tmp_path / "SECRET.txt"
+        secret.write_text("host secret", encoding="utf-8")
+        directory = self._bundle_naming(tmp_path, str(secret))
+        with pytest.raises(BundleError, match="outside its bundle"):
+            load_bundle(directory)
+
+    def test_an_ordinary_payload_path_still_loads(self, tmp_path: Path) -> None:
+        # Guard the guard: a containment check that refused everything would pass the two
+        # tests above while breaking every real bundle.
+        original = load_corpus(COMMITTED)
+        write_bundle(tmp_path / "copy", original)
+        assert load_bundle(tmp_path / "copy").cases

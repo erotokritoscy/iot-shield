@@ -81,9 +81,13 @@ format, and **per-asset** interval labels. They are *discovered*, not registered
 the root with a manifest is a corpus, so adding one is dropping in data, not writing code. The
 root is `IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
 
-**Truth is per asset, and the roster is a declaration (ADR-0026).** An answer key lists one
-entry per device it has an opinion about, each with its own row clock; a finding is matched to an
-incident on **(asset, time)**, never time alone. Three states, and the middle one is the point:
+**Truth is per asset and per lane, and the roster is a declaration (ADR-0026, ADR-0027 D2).**
+An answer key lists one entry per device it has an opinion about, each with **a row clock per
+lane**, and a lane's detections are scored against that lane's rows only. Pooling a device's
+modalities into one clock hands it to whichever samples fastest: on `device_trimodal` (900
+telemetry instants, ~275 flow, ~25 log) a single flow detection covering a minute was charged
+sixty telemetry false positives. A finding is matched to an incident on **(asset, time)**, never
+time alone. Three states, and the middle one is the point:
 listed *with* incidents is faulty in those windows; listed with `"incidents": []` is **asserted
 clean**, so every detection on it is a false alarm; **absent entirely** is out of scope and its
 findings are counted but never scored. Conflating the last two would publish a precision number
@@ -97,25 +101,46 @@ Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shape
 `device_trimodal` (one device on all three lanes, for the corroboration A/B). SKAB is
 **GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
 bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
-clone. **Labels are v2**; a v1 bundle is rejected with the command to regenerate, because an
-upgrade would have to invent an asset id.
+clone — but an **unknown** corpus name is exit 2, because a typo in a CI job must not pass green
+having measured nothing. **Labels are v3**; an older bundle is rejected with the command to
+regenerate, because an upgrade would have to invent the missing dimension.
+
+`--corpus` and `--spec` are **required and have no defaults**. Which pairs are legal is derived
+from both sides' declared shapes (`eval/bench.py`), and `eval list` prints the table; omitting
+either flag prints it too. The old defaults benchmarked `synthetic` with team3 — the one pairing
+that cannot work — and printed a table of zeros.
 
 The generator (`eval/generate/`) is a **world** (devices + a clock + declared faults, no
 formats) rendered through two ports: a `Behaviour` per lane (what normal looks like, and what a
-fault does to it) and a `Renderer` per wire format (events → text). Labels are *derived* from
-which behaviours actually perturbed their output, never annotated. Adding a lane is one
-behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A renderer is
-the **inverse of a normalizer**, and the meta-test that composes the two (emit → parse → compare)
-is what caught an RFC 3164 corpus silently scoring zero after New Year. Streams are seeded by
+fault does to it) and a `Renderer` per wire format (events → text). **A label is made of the
+instants a behaviour actually perturbed** (`Observed.expressed`), never of the declared fault
+window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1). A
+fault that changes nothing is refused at generation time rather than shipped labelled. Adding a
+lane is one behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A
+renderer is the **inverse of a normalizer**, and the meta-test that composes the two (emit →
+parse → compare, every field) is what caught an RFC 3164 corpus silently scoring zero after New
+Year; a companion test refuses a bundle-storable format with no renderer. Streams are seeded by
 *name*, so adding a device leaves every other device's bytes untouched.
+
+**Corpus-level rates are pooled from counts, not averaged from per-case rates** (ADR-0027 D4).
+A rate is undefined on a clean recording and averaging skips undefined values, so a spec that
+false-alarmed on the clean recordings used to score identically to one that stayed quiet. `ovl`
+is the width column: of a true detection's window, how much was actually fault — a
+recording-wide detection scores evP 1.00 and ovl 0.04.
+
+`--fit-protocol prefix` reserves the first 20% of each asset's clock (capped at its first
+fault) for training and **does not score it**. There is no `holdout`: no bundle format can
+carry a holdout recording, so the option was removed rather than left as a table of zeros.
 
 Note `team3_zscore`'s committed artifact is trained on SKAB's channels, so it cannot judge
 the synthetic corpus (the channel-coverage guard skips it; `--fit-protocol prefix` reports
 why). Compare detectors on `synthetic` with `stub_threshold`, on SKAB with `team3_zscore`.
 
 A bench spec for a corpus must declare **one source per input position, in the corpus's order**
-— `CorpusInfo.source_formats` (and `/eval/corpora`) publish that shape, which is how the
-dashboard composes a spec that fits rather than assuming telemetry. `/eval/corpora` also
+— `CorpusInfo.source_formats` (and `/eval/corpora`) publish that shape, and `/eval/specs`
+publishes each committed `config/bench/*.yaml` with the corpora it fits, so the Evaluate page
+can run the *committed file verbatim* rather than composing a lookalike that silently drops
+`assets:` and every source and engine param. `/eval/corpora` also
 publishes `lanes` (which detector lanes those formats feed, decoded server-side so no client
 parses a `lane:` prefix), which is how the Evaluate page offers only detectors the corpus can
 actually feed. Flow and trimodal bench specs deliberately register **no `assets:`**, because
@@ -124,10 +149,12 @@ improvement (ADR-0021 D7).
 
 A benchmark can be *aligned* and still incoherent one joint further along — ingest the FLOW lane,
 hand it to a TELEMETRY detector, and every input matches while the detector is handed nothing.
-`evaluate` therefore consults the compatibility guard and carries its warnings into the report's
-per-case `notes` (rendered as `! …`), so a row of zeros always arrives with its reason instead of
-reading like a bad detector. Reported, not refused: a deliberately silent detector is a real
-measurement (ADR-0026 amendment).
+`evaluate` therefore consults the compatibility guard and carries its warnings — **and the
+ingest warnings `normalize_sources` computes**, including "this normalizer rejected 100% of
+input", which catches a normalizer misconfigured by *params* that alignment cannot see — into
+the report's per-case `notes` (rendered as `! …`), so a row of zeros always arrives with its
+reason instead of reading like a bad detector. Reported, not refused: a deliberately silent
+detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
@@ -283,7 +310,7 @@ declare neither field and are unaffected.
 
 `config/bench/team3.yaml` names an artifact (fixed hyperparameters, sweepable only across
 *detectors*); `config/bench/team3_scratch.yaml` names hyperparameters and no artifact, so it
-is the one to `--sweep` — and it requires `--fit-protocol prefix|holdout`, since an
+is the one to `--sweep` — and it requires `--fit-protocol prefix`, since an
 untrained model has nothing to judge with.
 
 A swept key is `[<detector>.]<param>`. Bare (`window_size`) reaches every detector in the spec

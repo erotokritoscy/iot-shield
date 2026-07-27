@@ -89,10 +89,7 @@ class TestReproducibility:
         # A wall-clock start would make every regeneration a diff and every stored result
         # incomparable with the next.
         first, second = build(scenario_of(CAMERA)), build(scenario_of(CAMERA))
-        assert (
-            first.cases[0].truth.assets[0].timeline[0][0]
-            == second.cases[0].truth.assets[0].timeline[0][0]
-        )
+        assert first.cases[0].truth.assets[0].clock[0] == second.cases[0].truth.assets[0].clock[0]
 
 
 class TestInsertionStability:
@@ -132,13 +129,24 @@ class TestInsertionStability:
 class TestDerivedLabels:
     """Labels come from what was injected and expressed — never from annotation."""
 
-    def test_the_labelled_interval_is_the_injected_span(self) -> None:
+    def test_the_labelled_interval_is_the_span_that_actually_changed(self) -> None:
+        """Read off the perturbed instants, not off the declared window.
+
+        `SPIKE` is declared at step 5 for 4 steps, and the label is **6..7**. A spike is a
+        half-sine over its span, `sin(linspace(0, pi, 4))` = `[0, .87, .87, 0]`, so the first
+        and last samples add exactly nothing: steps 5 and 8 render byte-identical to the
+        unfaulted world. Labelling them anyway claims an anomaly no detector can see and no
+        reader can diagnose — an unwinnable recall miss baked into a committed corpus.
+
+        This is the whole reason the interval comes from `Observed.expressed` rather than from
+        `FaultSpec`: intent and effect are different things, and only one of them is in the
+        file the detector reads.
+        """
         scenario = scenario_of(CAMERA, faults=(SPIKE,))
         (case,) = build(scenario).cases
         (found,) = case.truth.incidents
-        # Closed interval: steps 5..8 inclusive, not 5..9.
-        assert found.start == CLOCK.at(5)
-        assert found.end == CLOCK.at(8)
+        assert found.start == CLOCK.at(6)
+        assert found.end == CLOCK.at(7)  # closed interval: the last affected instant
         assert found.kind == "spike"
         assert found.fault_id == f"{CAMERA.asset_id}:spike:5"
 

@@ -6,7 +6,9 @@ broke the equipment on purpose. Everything else in this package is machinery aro
 comparing our output to it (ADR-0021 D1).
 
 Truth arrives as a **row timeline** — one ``(timestamp, is_anomalous)`` per source row, the
-shape SKAB's ``anomaly`` column and our labels JSON both have — and is used two ways:
+shape SKAB's ``anomaly`` column and our labels JSON both have, held per ``(asset, lane)``
+because a fleet's devices do not share a clock and neither do one device's modalities
+(``AssetTruth``) — and is used two ways:
 
 - the timeline itself scores **point** metrics ("of the anomalous rows, how many did we
   cover?"), which is what published benchmarks report;
@@ -51,7 +53,7 @@ which is exactly what makes "that gateway should have stayed quiet" a *measurabl
 """
 
 from bisect import bisect_left, bisect_right
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -93,6 +95,19 @@ class Incident:
     fault_id: str = ""
     lanes: frozenset[Lane] = frozenset()
 
+    def affects(self, lane: Lane) -> bool:
+        """Whether this fault is visible on ``lane`` — the rule point scoring reads per row.
+
+        **An incident that declares no lanes affects every lane.** That is the honest reading
+        of an empty set: a converted corpus (SKAB) records that a fault happened and never
+        which modality carried it, so claiming it perturbed nothing would flag no row at all
+        and report recall against an empty answer key. A generated corpus always declares,
+        because ``Observed.expressed`` measures it — so this fallback only ever governs the
+        corpora that genuinely do not know, and on a single-lane corpus the two readings are
+        indistinguishable anyway.
+        """
+        return not self.lanes or lane in self.lanes
+
     def overlaps(self, window_start: datetime, window_end: datetime) -> bool:
         """Whether a detection/alert window touches this incident *in time*.
 
@@ -105,18 +120,51 @@ class Incident:
         return overlaps(window_start, window_end, self.start, self.end)
 
 
+def _flagged(
+    moments: Sequence[datetime], incidents: Sequence[Incident], lane: Lane
+) -> tuple[tuple[datetime, bool], ...]:
+    """One lane's rows, each marked with whether a fault *this lane expressed* covers it."""
+    ordered = sorted(moments)
+    # The clock is sorted, so each incident marks one contiguous slice — found by bisection
+    # rather than by testing every row against every incident, which was measured at 7-16x
+    # slower and is the larger cost in loading a corpus.
+    flags = [False] * len(ordered)
+    for incident in incidents:
+        if not incident.affects(lane):
+            continue
+        low = bisect_left(ordered, incident.start)
+        high = bisect_right(ordered, incident.end)
+        flags[low:high] = [True] * (high - low)
+    return tuple(zip(ordered, flags, strict=True))
+
+
 @dataclass(frozen=True)
 class AssetTruth:
-    """One asset's answer key: its own row clock, and its own faults.
+    """One asset's answer key: its row clock **per lane**, and its own faults.
 
     The clock is per asset because the devices in one recording genuinely do not share one.
     A rig samples every second; a network host emits a flow when it happens to talk. Scoring
     point metrics against a single pooled clock would credit or blame a device for instants
     at which it was never observed.
+
+    ## Why per *lane* as well
+
+    The same argument, one dimension further, and it is not a refinement — a pooled clock
+    makes multi-lane point metrics meaningless. On ``device_trimodal`` each device is sampled
+    at ~900 telemetry instants, ~275 flow records and ~25 log lines. Union them into one
+    clock and the fastest lane owns it: a single flow detection covering sixty seconds is
+    charged sixty *telemetry* false positives, for rows it was never asked about and could
+    not have covered. Point precision on the compromise case read 0.041, and adding lanes to
+    the corroboration A/B — the entire reason that corpus exists — showed as a collapse from
+    0.83 to 0.11.
+
+    So a lane's detections are scored against that lane's rows and no others, and a row is
+    anomalous when a fault *that lane expressed* covers it (``Incident.affects``). Which
+    lanes an incident reached is measured by the generator, never declared.
     """
 
     asset_id: str
-    timeline: tuple[tuple[datetime, bool], ...]
+    timelines: Mapping[Lane, tuple[tuple[datetime, bool], ...]]
     incidents: tuple[Incident, ...]
 
     @property
@@ -124,13 +172,33 @@ class AssetTruth:
         """Asserted clean: observed throughout, and nothing was ever wrong."""
         return not self.incidents
 
+    @property
+    def clock(self) -> tuple[datetime, ...]:
+        """Every instant this asset was observed at, on any lane, sorted and deduplicated.
+
+        For the questions that are genuinely lane-agnostic — "when does this device's history
+        start", which is what a fit protocol reserves against, and what a bundle stores. Never
+        for scoring: that is the pooled clock this class exists to stop using.
+        """
+        return tuple(sorted({moment for rows in self.timelines.values() for moment, _ in rows}))
+
     @classmethod
-    def from_timeline(cls, asset_id: str, rows: Sequence[tuple[datetime, bool]]) -> "AssetTruth":
+    def from_timeline(
+        cls,
+        asset_id: str,
+        rows: Sequence[tuple[datetime, bool]],
+        *,
+        lane: Lane = Lane.TELEMETRY,
+    ) -> "AssetTruth":
         """Build one asset's truth from per-row labels, collapsing runs into incidents.
 
         Rows are sorted by timestamp first: a corpus file is normally already in order, but
         the incident boundaries would be silently wrong if it were not, and a wrong answer
         key is worse than a loud failure.
+
+        The single-lane entry point, for a converter whose dataset is one modality of one rig
+        (SKAB). ``lane`` defaults to TELEMETRY because a per-row anomaly column is a sensor
+        dataset's shape; a converter for another modality names its own.
         """
         ordered = tuple(sorted(rows, key=lambda row: row[0]))
         flags = [flagged for _, flagged in ordered]
@@ -138,16 +206,16 @@ class AssetTruth:
             Incident(asset_id=asset_id, start=ordered[start][0], end=ordered[end][0])
             for start, end in merge_runs(flags)
         )
-        return cls(asset_id=asset_id, timeline=ordered, incidents=incidents)
+        return cls(asset_id=asset_id, timelines={lane: ordered}, incidents=incidents)
 
     @classmethod
     def from_incidents(
         cls,
         asset_id: str,
-        timestamps: Sequence[datetime],
+        clocks: Mapping[Lane, Sequence[datetime]],
         incidents: Sequence[Incident],
     ) -> "AssetTruth":
-        """Build one asset's truth from *intervals* plus its clock — the storage form.
+        """Build one asset's truth from *intervals* plus its per-lane clocks — the storage form.
 
         The inverse of ``from_timeline``, and the form a corpus bundle records, for two
         reasons. It is far smaller: per-row booleans spend ~50 bytes to say "normal" about
@@ -156,18 +224,11 @@ class AssetTruth:
         intervals, a distinction per-row labels cannot represent and a synthetic corpus can
         legitimately produce.
         """
-        ordered = sorted(timestamps)
-        # The clock is sorted, so each incident marks one contiguous slice — found by
-        # bisection rather than by testing every row against every incident, which was
-        # measured at 7-16x slower and is the larger cost in loading a corpus.
-        flags = [False] * len(ordered)
-        for incident in incidents:
-            low = bisect_left(ordered, incident.start)
-            high = bisect_right(ordered, incident.end)
-            flags[low:high] = [True] * (high - low)
         return cls(
             asset_id=asset_id,
-            timeline=tuple(zip(ordered, flags, strict=True)),
+            timelines={
+                lane: _flagged(moments, incidents, lane) for lane, moments in clocks.items()
+            },
             incidents=tuple(incidents),
         )
 
@@ -188,14 +249,18 @@ class GroundTruth:
 
     @classmethod
     def from_timeline(
-        cls, rows: Sequence[tuple[datetime, bool]], *, asset_id: str
+        cls,
+        rows: Sequence[tuple[datetime, bool]],
+        *,
+        asset_id: str,
+        lane: Lane = Lane.TELEMETRY,
     ) -> "GroundTruth":
         """The single-asset shortcut, for a converter whose corpus has exactly one device.
 
         Keyword-only ``asset_id`` because it is not optional information: a timeline nobody
         can attribute is a timeline nothing can be scored against.
         """
-        return cls.from_assets([AssetTruth.from_timeline(asset_id, rows)])
+        return cls.from_assets([AssetTruth.from_timeline(asset_id, rows, lane=lane)])
 
     @property
     def incidents(self) -> tuple[Incident, ...]:
@@ -214,7 +279,18 @@ class GroundTruth:
 
     @property
     def anomalous_rows(self) -> int:
-        return sum(1 for asset in self.assets for _, flagged in asset.timeline if flagged)
+        """Rows a fault covers, counted per lane — the point level's denominator.
+
+        A row of the flow lane and a row of the telemetry lane at the same instant are two
+        observations and count twice, because point scoring judges them separately.
+        """
+        return sum(
+            1
+            for asset in self.assets
+            for rows in asset.timelines.values()
+            for _, flagged in rows
+            if flagged
+        )
 
     @property
     def is_clean(self) -> bool:

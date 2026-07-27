@@ -49,13 +49,12 @@ class Clock:
     def at(self, index: int) -> datetime:
         return self.epoch + self.step * index
 
-    def span(self, start: int, length: int) -> tuple[datetime, datetime]:
-        """The closed interval a fault occupies: ``length`` steps from ``start``.
-
-        Closed on both ends, matching ``truth.overlaps``: the last *affected* instant, not the
-        first unaffected one. An off-by-one here would shift every label in the corpus.
-        """
-        return self.at(start), self.at(start + max(length, 1) - 1)
+    # There is deliberately no `span(start, length)` here any more. It computed a fault's
+    # interval from the *declared* window, which is what let a label describe a stretch of time
+    # the data never showed anything at: it clamped nothing while the telemetry handler clamped
+    # its damage, so the two disagreed. A fault's interval is now read off the instants the
+    # behaviours reported perturbing (`build._incident`), which is the only version that cannot
+    # drift from the bytes.
 
     def spread(self, start: int, length: int, count: int) -> list[int]:
         """``count`` steps spaced evenly across ``length`` from ``start``.

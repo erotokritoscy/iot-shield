@@ -20,7 +20,7 @@ from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.eval.generate.port import Calibration, Observed, Streams
 from iotshield.eval.generate.world import Clock, Device, FaultSpec
 from iotshield.flow import METADATA_KEY, METRIC, Direction, FlowRecord, orient
-from iotshield.normalize.flow import FLOW_CSV, MISSING
+from iotshield.normalize.flow import FLOW_CSV, MISSING, ZEEK_CONN
 
 SOURCE_FORMAT = FLOW_CSV.name
 
@@ -143,19 +143,25 @@ class NetworkHost:
             for index, step in enumerate(range(0, clock.steps, profile.every_steps))
         ]
 
-        expressed: set[str] = set()
+        expressed: dict[str, frozenset[datetime]] = {}
         for fault in faults:
             handler = self._handlers.get(fault.kind)
             if handler is None:
                 continue
             steps = clock.spread(fault.start_step, fault.length_steps, int(fault.intensity))
-            flows.extend(zip(steps, handler(device, fault, steps), strict=True))
-            expressed.add(fault.fault_id)
+            # The instants come from the records the handler actually produced, not from the
+            # steps it was offered: a fault expresses itself here by *adding flows*, so those
+            # rows are the perturbation, and a handler that emitted fewer must not be labelled
+            # over steps that carry nothing (see `port.Observed`).
+            injected = list(zip(steps, handler(device, fault, steps), strict=True))
+            flows.extend(injected)
+            if injected:
+                expressed[fault.fault_id] = frozenset(clock.at(step) for step, _ in injected)
 
         events = tuple(
             self._event(device, clock.at(step), record, source_format) for step, record in flows
         )
-        return Observed(events=events, expressed=frozenset(expressed))
+        return Observed(events=events, expressed=expressed)
 
     def _normal(
         self,
@@ -253,14 +259,52 @@ class NetworkHost:
         )
 
 
-class FlowCsvRenderer:
-    """Inverts ``flow.orient``: an asset-relative record back into two endpoints.
+@dataclass(frozen=True)
+class _Endpoints:
+    """One flow written back as the wire sees it: who opened it, who answered, and the counters.
 
-    Orientation is the one genuinely lossy-looking step on the reading side — it decides which
-    endpoint is "the asset" from the monitored networks and re-expresses every counter relative
-    to it. Writing it back out means undoing that choice: for an inbound flow the asset is the
-    *destination*, so ``bytes_out`` (which left the asset) is the destination's byte count. The
-    round-trip test is what proves this inversion is exact rather than approximately right.
+    Undoing ``flow.orient``. Orientation is the one genuinely lossy-looking step on the reading
+    side — it decides which endpoint is "the asset" from the monitored networks and re-expresses
+    every counter relative to it. Writing it back out means undoing that choice: for an inbound
+    flow the asset is the *destination*, so ``bytes_out`` (which left the asset) is the
+    destination's byte count.
+
+    A named record rather than a tuple both dialects unpack, because the whole hazard here is
+    getting one of eight positions wrong and both dialects are writing the same eight.
+    """
+
+    record: FlowRecord
+    source_ip: str
+    source_port: int | None
+    destination_ip: str
+    destination_port: int | None
+    source_bytes: int
+    destination_bytes: int
+    source_packets: int
+    destination_packets: int
+
+    @classmethod
+    def of(cls, event: NormalizedEvent) -> "_Endpoints":
+        record = FlowRecord.from_metadata(event.metadata.get(METADATA_KEY))
+        inbound = record.direction is Direction.INBOUND
+        return cls(
+            record=record,
+            source_ip=record.peer_ip if inbound else record.asset_ip,
+            source_port=record.peer_port if inbound else record.asset_port,
+            destination_ip=record.asset_ip if inbound else record.peer_ip,
+            destination_port=record.asset_port if inbound else record.peer_port,
+            source_bytes=record.bytes_in if inbound else record.bytes_out,
+            destination_bytes=record.bytes_out if inbound else record.bytes_in,
+            source_packets=record.packets_in if inbound else record.packets_out,
+            destination_packets=record.packets_out if inbound else record.packets_in,
+        )
+
+
+class FlowCsvRenderer:
+    """``flow-csv``: ISO timestamps, comma separated, a header row of column names.
+
+    The round-trip test is what proves ``_endpoints``' inversion is exact rather than
+    approximately right.
     """
 
     lane = Lane.FLOW
@@ -273,33 +317,90 @@ class FlowCsvRenderer:
         return tuple(self._line(event) for event in events)
 
     def _line(self, event: NormalizedEvent) -> str:
-        record = FlowRecord.from_metadata(event.metadata.get(METADATA_KEY))
-        if record.direction is Direction.INBOUND:
-            source, destination = record.peer_ip, record.asset_ip
-            source_port, destination_port = record.peer_port, record.asset_port
-            source_bytes, destination_bytes = record.bytes_in, record.bytes_out
-            source_packets, destination_packets = record.packets_in, record.packets_out
-        else:
-            source, destination = record.asset_ip, record.peer_ip
-            source_port, destination_port = record.asset_port, record.peer_port
-            source_bytes, destination_bytes = record.bytes_out, record.bytes_in
-            source_packets, destination_packets = record.packets_out, record.packets_in
+        flow = _Endpoints.of(event)
         fields = (
             event.timestamp.isoformat(),
-            source,
-            _optional(source_port),
-            destination,
-            _optional(destination_port),
-            record.protocol,
-            _optional(record.service),
-            f"{record.duration_s:g}",
-            str(source_bytes),
-            str(destination_bytes),
-            str(source_packets),
-            str(destination_packets),
-            _optional(record.state),
+            flow.source_ip,
+            _optional(flow.source_port),
+            flow.destination_ip,
+            _optional(flow.destination_port),
+            flow.record.protocol,
+            _optional(flow.record.service),
+            f"{flow.record.duration_s:g}",
+            str(flow.source_bytes),
+            str(flow.destination_bytes),
+            str(flow.source_packets),
+            str(flow.destination_packets),
+            _optional(flow.record.state),
         )
         return ",".join(fields)
+
+
+class ZeekConnRenderer:
+    """``zeek-conn``: epoch timestamps, tab separated, ``#``-prefixed directives.
+
+    The dialect the flagship demo ingests, and until now the one accepted bundle format with no
+    renderer — so a corpus could never be *generated* in the format the product is demonstrated
+    on, and nothing anywhere said so. A meta-test now asserts every normalizer-consumable
+    format has a renderer, which is what made the hole visible.
+
+    The column order is read from ``ZEEK_CONN.columns`` rather than restated, so the writer
+    cannot drift from the reader: a renamed column changes both sides at once. ``#separator``
+    is written first and escaped the way Zeek writes it, because the reader honours that
+    directive over its own default.
+    """
+
+    lane = Lane.FLOW
+    source_format = ZEEK_CONN.name
+
+    # Canonical field -> Zeek column, in the order the header declares them. Taken from the
+    # dialect's own mapping so the two cannot disagree about a name.
+    _ORDER = (
+        "ts",
+        "src_ip",
+        "src_port",
+        "dst_ip",
+        "dst_port",
+        "protocol",
+        "service",
+        "duration",
+        "src_bytes",
+        "dst_bytes",
+        "src_packets",
+        "dst_packets",
+        "state",
+    )
+
+    def header(self) -> tuple[str, ...]:
+        return (
+            "#separator \\x09",
+            "#path\tconn",
+            "#fields\t" + "\t".join(ZEEK_CONN.columns[name] for name in self._ORDER),
+        )
+
+    def render(self, events: Sequence[NormalizedEvent]) -> tuple[str, ...]:
+        return tuple(self._line(event) for event in events)
+
+    def _line(self, event: NormalizedEvent) -> str:
+        flow = _Endpoints.of(event)
+        fields = {
+            # Epoch seconds, which is what `_parse_epoch` reads. Six decimals is Zeek's own
+            # precision and enough to round-trip a microsecond clock exactly.
+            "ts": f"{event.timestamp.timestamp():.6f}",
+            "src_ip": flow.source_ip,
+            "src_port": _optional(flow.source_port),
+            "dst_ip": flow.destination_ip,
+            "dst_port": _optional(flow.destination_port),
+            "protocol": flow.record.protocol,
+            "service": _optional(flow.record.service),
+            "duration": f"{flow.record.duration_s:g}",
+            "src_bytes": str(flow.source_bytes),
+            "dst_bytes": str(flow.destination_bytes),
+            "src_packets": str(flow.source_packets),
+            "dst_packets": str(flow.destination_packets),
+            "state": _optional(flow.record.state),
+        }
+        return "\t".join(fields[name] for name in self._ORDER)
 
 
 _UNSET = next(marker for marker in MISSING if marker)

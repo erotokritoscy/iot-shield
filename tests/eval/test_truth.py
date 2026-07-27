@@ -121,8 +121,9 @@ class TestStorageForm:
 
     def test_intervals_and_a_clock_rebuild_the_row_flags(self) -> None:
         clock = [at(second) for second in range(5)]
-        asset = AssetTruth.from_incidents(ASSET, clock, [incident(1, 2)])
-        assert [flagged for _, flagged in asset.timeline] == [False, True, True, False, False]
+        asset = AssetTruth.from_incidents(ASSET, {Lane.TELEMETRY: clock}, [incident(1, 2)])
+        flags = [flagged for _, flagged in asset.timelines[Lane.TELEMETRY]]
+        assert flags == [False, True, True, False, False]
 
     def test_two_touching_incidents_stay_two(self) -> None:
         """Strictly more expressive than per-row flags, which is why intervals are stored.
@@ -132,14 +133,17 @@ class TestStorageForm:
         labels cannot represent.
         """
         clock = [at(second) for second in range(6)]
-        asset = AssetTruth.from_incidents(ASSET, clock, [incident(1, 2), incident(3, 4)])
+        asset = AssetTruth.from_incidents(
+            ASSET, {Lane.TELEMETRY: clock}, [incident(1, 2), incident(3, 4)]
+        )
         assert len(asset.incidents) == 2
-        assert [flagged for _, flagged in asset.timeline] == [False, True, True, True, True, False]
+        flags = [flagged for _, flagged in asset.timelines[Lane.TELEMETRY]]
+        assert flags == [False, True, True, True, True, False]
 
     def test_a_clock_with_no_incidents_is_a_clean_asset(self) -> None:
-        asset = AssetTruth.from_incidents(ASSET, [at(0), at(1)], [])
+        asset = AssetTruth.from_incidents(ASSET, {Lane.TELEMETRY: [at(0), at(1)]}, [])
         assert asset.is_clean
-        assert asset.timeline == ((at(0), False), (at(1), False))
+        assert asset.timelines[Lane.TELEMETRY] == ((at(0), False), (at(1), False))
 
     def test_descriptive_fields_survive_a_round_trip_in_memory(self) -> None:
         # kind/fault_id/lanes are what a generated corpus knows and a converted one does not;
@@ -152,7 +156,7 @@ class TestStorageForm:
             fault_id=f"{ASSET}:compromise:1",
             lanes=frozenset({Lane.FLOW, Lane.LOG}),
         )
-        asset = AssetTruth.from_incidents(ASSET, [at(s) for s in range(4)], [rich])
+        asset = AssetTruth.from_incidents(ASSET, {Lane.FLOW: [at(s) for s in range(4)]}, [rich])
         assert asset.incidents == (rich,)
 
 

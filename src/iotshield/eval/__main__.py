@@ -7,14 +7,17 @@ That symmetry is the point: the port suite already tells someone their adapter i
 nothing told them whether it was any good. Both halves of the extensibility contract are now
 one command each (ADR-0021).
 
-    uv run python -m iotshield.eval --corpus synthetic --spec config/bench/team3.yaml
-    uv run python -m iotshield.eval --fit-protocol prefix --sweep window_size=20,60,120
+    uv run python -m iotshield.eval --corpus synthetic --spec config/bench/stub.yaml
+    uv run python -m iotshield.eval --corpus skab_valve1 --spec config/bench/team3.yaml \
+        --fit-protocol prefix --sweep window_size=20,60,120
     uv run python -m iotshield.eval list
     uv run python -m iotshield.eval fetch skab
     uv run python -m iotshield.eval generate
 
 Benchmarking is the default verb: bare flags with no subcommand run one, so the command a
-researcher types most often is the shortest.
+researcher types most often is the shortest. ``--corpus`` and ``--spec`` are both **required**
+and neither has a default — ``list`` prints the pairs that fit, derived rather than declared
+(``eval.bench``).
 """
 
 import argparse
@@ -22,21 +25,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from iotshield.eval.bench import render_pairings
+from iotshield.eval.bundle import BundleError
 from iotshield.eval.corpus import (
     CorpusUnavailable,
+    UnknownCorpus,
     corpus_root,
     fetchable,
     list_corpora,
     load_corpus,
 )
 from iotshield.eval.fit import FitProtocol
-from iotshield.eval.generate import DEFAULT_SCENARIO, SCENARIOS
+from iotshield.eval.generate import SCENARIOS
 from iotshield.eval.report import render
 from iotshield.eval.runner import evaluate
 from iotshield.eval.sweep import expand, values
 from iotshield.pipeline import load_spec
-
-_DEFAULT_SPEC = Path("config/bench/team3.yaml")
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -73,15 +77,20 @@ def corpus_path_of(args: argparse.Namespace) -> Path | None:
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--corpus", default=DEFAULT_SCENARIO, help="corpus name (default: synthetic)"
-    )
+    # No defaults, on purpose. The pair used to default to `synthetic` + `team3.yaml` — the
+    # one combination CLAUDE.md explicitly says cannot work, because team3's shipped artifact
+    # is fitted to SKAB's channels and the synthetic rig has none of them. So the shortest
+    # command in the documentation printed eleven rows of 0.00 with no note attached, which is
+    # exactly the "row of zeros indistinguishable from a bad detector" failure the rest of the
+    # harness is built to prevent. Which pairs are legal is derivable (`bench.pairings`), so
+    # the answer to a missing flag is the table, not a guess.
+    parser.add_argument("--corpus", default=None, help="corpus name; omit to list legal pairings")
     parser.add_argument(
         "--spec",
         type=Path,
         action="append",
         dest="specs",
-        help="pipeline spec YAML to benchmark; repeat to compare (default: bench/team3.yaml)",
+        help="pipeline spec YAML to benchmark; repeat to compare head to head",
     )
     parser.add_argument(
         "--fit-protocol",
@@ -145,7 +154,12 @@ def _list(args: argparse.Namespace) -> int:
     print(f"Corpora in {root}:")
     infos = list_corpora(corpus_path_of(args))
     for info in infos:
-        print(f"  {info.name:<16} {info.cases:>3} case(s)  {info.description}")
+        # A bundle that cannot be loaded is listed with its reason rather than hidden; the
+        # reason already names the command that fixes it (`bundle.read_labels`).
+        if info.error:
+            print(f"  {info.name:<16}   !  {info.error}")
+        else:
+            print(f"  {info.name:<16} {info.cases:>3} recording(s)  {info.description}")
     if not infos:
         print("  (none — run: python -m iotshield.eval generate)")
     # fetchable() is keyed by corpus so load_corpus can match exactly; one dataset yields
@@ -153,6 +167,8 @@ def _list(args: argparse.Namespace) -> int:
     print("\nAvailable to convert locally (not redistributed):")
     for hint in sorted(set(fetchable().values())):
         print(f"  {hint}")
+    print()
+    print(_legal_pairings(args))
     return 0
 
 
@@ -194,18 +210,42 @@ def _parse_sweeps(raw: list[str] | None) -> dict[str, list[Any]]:
     return parsed
 
 
+def _legal_pairings(args: argparse.Namespace) -> str:
+    infos = [info for info in list_corpora(corpus_path_of(args)) if not info.error]
+    return render_pairings([(info.name, info.source_formats) for info in infos])
+
+
 def _run(args: argparse.Namespace) -> int:
+    if args.corpus is None or not args.specs:
+        print(
+            "error: --corpus and --spec are both required.\n\n" + _legal_pairings(args),
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         corpus = load_corpus(args.corpus, corpus_path_of(args))
+    except UnknownCorpus as exc:
+        # A name that exists nowhere is a typo, and a typo must not pass. This used to share
+        # the skip path below, so a mistyped corpus in a CI benchmark job exited 0 with empty
+        # output and the job went green having measured nothing.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except CorpusUnavailable as exc:
         # Not a usage error — the dataset simply is not on this machine. Exit 0 so a CI job
         # that benchmarks over optional corpora stays green on a fresh clone.
         print(f"skipped: {exc}", file=sys.stderr)
         return 0
+    except BundleError as exc:
+        # The bundle is there and will not load. Reachable at last: this was a bare
+        # RuntimeError nothing caught, so it surfaced as a traceback.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
-    paths = args.specs or [_DEFAULT_SPEC]
     try:
-        specs = expand([(path.stem, load_spec(path)) for path in paths], _parse_sweeps(args.sweeps))
+        specs = expand(
+            [(path.stem, load_spec(path)) for path in args.specs], _parse_sweeps(args.sweeps)
+        )
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -8,6 +8,7 @@ that, in words, and the eval plane simply never asked it (ADR-0026).
 """
 
 from iotshield.eval import evaluate, load_corpus
+from iotshield.eval.fit import FitProtocol
 from iotshield.eval.runner import _compatibility_notes
 from iotshield.pipeline import PipelineSpec
 
@@ -54,3 +55,57 @@ def test_a_deliberately_silent_detector_is_measured_not_refused() -> None:
     """
     report = evaluate(load_corpus("fleet_scan"), [("mismatched", spec_with("stub_threshold"))])
     assert report.specs[0].cases  # it ran; a refusal would have raised
+
+
+def test_a_normalizer_that_quarantined_everything_says_so() -> None:
+    """The other silent zero, one layer up from the compatibility guard.
+
+    `normalize_sources` already computes "this normalizer rejected 100% of input" and the
+    runner threw it away, so a flow spec whose `home_networks` does not cover the corpus
+    quarantined every record and reported zeros with an EMPTY note list. `_check_alignment`
+    cannot catch it either: it compares declared *format* strings, and this is a mismatch in
+    the normalizer's params.
+    """
+    misconfigured = PipelineSpec.model_validate(
+        {
+            "sources": [
+                {
+                    "normalizer": "flow",
+                    "source_format": "flow-csv",
+                    # The corpus is 10.0.0.0/24; nothing here is local, so orientation
+                    # attributes every record to a peer and the whole file is quarantined.
+                    "params": {"home_networks": ["192.0.2.0/24"]},
+                }
+            ],
+            "detectors": [{"name": "flow_burst"}],
+            "alert_engine": {"name": "weighted"},
+        }
+    )
+    report = evaluate(load_corpus("fleet_scan"), [("misconfigured", misconfigured)])
+    case = report.specs[0].cases[0]
+    assert case.detections == 0
+    assert any("rejected 100% of input" in note for note in case.notes), case.notes
+
+
+def test_one_unfittable_detector_does_not_zero_the_runs_fit_count() -> None:
+    """`fitted` counts the detectors the protocol ASKED to fit, not every detector.
+
+    Adding a rule-based control beside a learning detector is the shape `sweep._applied`'s own
+    docstring recommends, and it used to report `0/N fitted` beside a score only a successful
+    fit could produce — so the reader concluded the protocol had done nothing.
+    """
+    spec = PipelineSpec.model_validate(
+        {
+            "sources": [{"normalizer": "stub", "source_format": "stub-csv"}],
+            "detectors": [
+                {"name": "team3_zscore", "params": {"window_size": 20}},
+                {"name": "stub_threshold", "params": {"threshold": 80.0}},
+            ],
+            "alert_engine": {"name": "weighted"},
+        }
+    )
+    report = evaluate(load_corpus("synthetic"), [("mixed", spec)], protocol=FitProtocol.PREFIX)
+    fitted = report.specs[0].cases_fitted
+    assert fitted == len(report.specs[0].cases), f"only {fitted} case(s) counted as fitted"
+    # The unfittable one still explains itself; it simply does not vote on the count.
+    assert any("not fittable" in note for case in report.specs[0].cases for note in case.notes)

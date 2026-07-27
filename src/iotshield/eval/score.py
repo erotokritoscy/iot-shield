@@ -57,7 +57,7 @@ from iotshield.eval.truth import GroundTruth, Incident
 PRECISION_AT_K = (1, 5, 10)
 
 
-def _ratio(numerator: float, denominator: float) -> float | None:
+def ratio(numerator: float, denominator: float) -> float | None:
     """The rate, or ``None`` when the denominator makes it *undefined* rather than zero.
 
     Load-bearing, not defensive. On a clean recording a detector that correctly emits
@@ -70,7 +70,7 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator if denominator else None
 
 
-def _f1(precision: float | None, recall: float | None) -> float | None:
+def f1(precision: float | None, recall: float | None) -> float | None:
     """Harmonic mean, propagating undefined-ness from recall.
 
     Undefined only when there was nothing to find: with no incidents there is no F1 to
@@ -86,7 +86,7 @@ def _f1(precision: float | None, recall: float | None) -> float | None:
 
 
 def mean(values: Sequence[float]) -> float | None:
-    """The mean, or ``None`` when there is nothing to average — the same rule as ``_ratio``.
+    """The mean, or ``None`` when there is nothing to average — the same rule as ``ratio``.
 
     Public because ``report`` needs the identical rule when it averages a metric across
     cases; a second copy there would be a third spelling of "undefined is not zero".
@@ -126,6 +126,17 @@ class DetectorMetrics:
     clean_assets: int
     clean_assets_detected: int
     lane_recall: dict[Lane, float | None]
+    # The counts every rate above was divided from. Reported, not just used, because a
+    # *corpus-level* number cannot be recovered from per-case rates: on a clean recording
+    # every rate is undefined and averaging skips it, so four false alarms there reached no
+    # headline at all. Pooling these instead makes the clean cases count (``SpecReport``).
+    mean_true_detection_overlap: float | None
+    scoreable_detections: int
+    true_detections: int
+    incidents_caught: int
+    point_true_positive: int
+    point_false_positive: int
+    point_false_negative: int
 
 
 @dataclass(frozen=True)
@@ -142,6 +153,10 @@ class AlertMetrics:
     mean_true_priority: float | None
     mean_false_priority: float | None
     mean_lanes_per_true_alert: float | None
+    # The counts, for the same reason ``DetectorMetrics`` carries them.
+    scoreable_alerts: int
+    true_alerts: int
+    incidents_covered: int
 
 
 class _Spans:
@@ -185,17 +200,42 @@ class _Spans:
         index = bisect.bisect_right(self._starts, end) - 1
         return index >= 0 and start <= self._ends[index]
 
+    def covered_seconds(self, start: datetime, end: datetime) -> float:
+        """How much of ``[start, end]`` these spans actually cover, in seconds.
+
+        The quantitative form of ``overlaps``, and the one thing event matching could not
+        ask. Walks left from the last span starting at or before ``end`` and stops at the
+        first that ends before ``start``; the spans are disjoint and sorted, so everything
+        earlier ends earlier still.
+        """
+        total = 0.0
+        index = bisect.bisect_right(self._starts, end) - 1
+        while index >= 0 and self._ends[index] >= start:
+            low = max(start, self._starts[index])
+            high = min(end, self._ends[index])
+            if high >= low:
+                total += (high - low).total_seconds()
+            index -= 1
+        return total
+
 
 def _coverage(
     timeline: Sequence[tuple[datetime, bool]], detections: Sequence[DetectionResult]
 ) -> Iterator[tuple[bool, bool]]:
-    """Yield ``(is_anomalous, is_covered)`` per labelled row of ONE asset's clock."""
+    """Yield ``(is_anomalous, is_covered)`` per labelled row of ONE asset's ONE lane."""
     spans = _Spans((d.window_start, d.window_end) for d in detections)
     for moment, flagged in timeline:
         yield flagged, spans.covers(moment)
 
 
-class _Finding(Protocol):
+def _by_lane(detections: Sequence[DetectionResult]) -> dict[Lane, list[DetectionResult]]:
+    grouped: dict[Lane, list[DetectionResult]] = {}
+    for detection in detections:
+        grouped.setdefault(detection.lane, []).append(detection)
+    return grouped
+
+
+class Finding(Protocol):
     """The shape both levels score: something about one asset over one window.
 
     ``DetectionResult`` and ``PrioritizedAlert`` share it through ``_WindowedContract``, so
@@ -211,11 +251,11 @@ class _Finding(Protocol):
     def window_end(self) -> datetime: ...
 
 
-_FindingT = TypeVar("_FindingT", bound=_Finding)
+FindingT = TypeVar("FindingT", bound=Finding)
 
 
-def _by_asset(findings: Sequence[_FindingT]) -> dict[str, list[_FindingT]]:
-    grouped: dict[str, list[_FindingT]] = {}
+def _by_asset(findings: Sequence[FindingT]) -> dict[str, list[FindingT]]:
+    grouped: dict[str, list[FindingT]] = {}
     for finding in findings:
         grouped.setdefault(finding.asset_id, []).append(finding)
     return grouped
@@ -232,7 +272,7 @@ def _incidents_of(truth: GroundTruth) -> dict[str, tuple[Incident, ...]]:
 
 
 def _verdicts(
-    findings: Sequence[_FindingT], incidents_of: Mapping[str, Sequence[Incident]]
+    findings: Sequence[FindingT], incidents_of: Mapping[str, Sequence[Incident]]
 ) -> list[bool]:
     """Per finding, whether it overlaps an incident **on its own asset** — the matching rule.
 
@@ -250,7 +290,7 @@ def _verdicts(
 
 
 def _caught(
-    truth: GroundTruth, grouped: Mapping[str, Sequence[_Finding]]
+    truth: GroundTruth, grouped: Mapping[str, Sequence[Finding]]
 ) -> tuple[int, float | None]:
     """How many incidents were caught, and the mean seconds until the first finding on each.
 
@@ -279,6 +319,27 @@ def _caught(
                 hits += 1
                 latencies.append(max(0.0, (first - incident.start).total_seconds()))
     return hits, mean(latencies)
+
+
+def _window_overlap(finding: Finding, incidents: _Spans) -> float:
+    """How much of a detection's window sits inside a real fault, as a fraction of its width.
+
+    The dimension pure interval matching is blind to. Event precision asks only *whether* a
+    detection touches an incident, so one window spanning the whole recording scores a perfect
+    row — precision 1.00, recall 1.00, latency 0s, one detection per incident — while carrying
+    no information at all. This is what separates that from a detector whose windows land on
+    the fault: 40 seconds of real fault inside a 900-second window is 0.04.
+
+    Measured, not refused. A wide window is sometimes the honest output of a detector that
+    genuinely cannot localize better, so the harness reports the width rather than rejecting
+    it — the same stance ``runner._compatibility_notes`` takes on a silent detector.
+
+    A zero-width window is 1.0 when it lands inside one, because a point detection that hits is
+    entirely inside by definition; dividing by its width would be 0/0.
+    """
+    width = (finding.window_end - finding.window_start).total_seconds()
+    covered = incidents.covered_seconds(finding.window_start, finding.window_end)
+    return covered / width if width > 0 else 1.0
 
 
 def _lane_recall(
@@ -314,7 +375,7 @@ def _lane_recall(
             expected[lane].append(incident)
 
     return {
-        lane: _ratio(
+        lane: ratio(
             sum(
                 1
                 for incident in lane_incidents
@@ -344,20 +405,24 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
     unlabelled = len(detections) - len(scoreable)
     grouped = _by_asset(scoreable)
 
-    # Point level: per labelled row of each asset's OWN clock, is it inside any detection
-    # window for THAT asset? A pooled clock would credit a device for instants at which it
-    # was never observed.
+    # Point level: per labelled row of each asset's own clock FOR ONE LANE, is it inside any
+    # detection window on that asset in THAT LANE? Neither dimension is optional. A pooled
+    # asset clock credits a device for instants it was never observed at; a pooled *lane*
+    # clock hands every lane to whichever samples fastest, so one flow detection covering a
+    # minute is charged sixty telemetry false positives (``truth.AssetTruth``).
     true_positive = false_positive = false_negative = 0
     for asset in truth.assets:
-        for flagged, covered in _coverage(asset.timeline, grouped.get(asset.asset_id, [])):
-            if flagged and covered:
-                true_positive += 1
-            elif flagged:
-                false_negative += 1
-            elif covered:
-                false_positive += 1
-    point_precision = _ratio(true_positive, true_positive + false_positive)
-    point_recall = _ratio(true_positive, true_positive + false_negative)
+        by_lane = _by_lane(grouped.get(asset.asset_id, []))
+        for lane, timeline in asset.timelines.items():
+            for flagged, covered in _coverage(timeline, by_lane.get(lane, [])):
+                if flagged and covered:
+                    true_positive += 1
+                elif flagged:
+                    false_negative += 1
+                elif covered:
+                    false_positive += 1
+    point_precision = ratio(true_positive, true_positive + false_positive)
+    point_recall = ratio(true_positive, true_positive + false_negative)
 
     # Event level: an incident is hit if any detection ON ITS ASSET overlaps it; a detection
     # is true if it overlaps an incident on its OWN asset.
@@ -372,8 +437,22 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
         for detection, truthful in zip(scoreable, verdicts, strict=True)
         if not truthful and elsewhere.overlaps(detection.window_start, detection.window_end)
     )
-    event_precision = _ratio(sum(verdicts), len(scoreable))
-    event_recall = _ratio(hits, len(incidents))
+    event_precision = ratio(sum(verdicts), len(scoreable))
+    event_recall = ratio(hits, len(incidents))
+
+    # How tightly the true detections sat on their faults. Per asset, because a window must be
+    # measured against its own device's incidents — the merged corpus-wide index above would
+    # credit a detection for overlapping some other device's fault.
+    incidents_of = _incidents_of(truth)
+    spans_of = {
+        asset_id: _Spans((incident.start, incident.end) for incident in asset_incidents)
+        for asset_id, asset_incidents in incidents_of.items()
+    }
+    overlaps = [
+        _window_overlap(detection, spans_of[detection.asset_id])
+        for detection, truthful in zip(scoreable, verdicts, strict=True)
+        if truthful
+    ]
 
     clean = truth.clean_assets
 
@@ -382,17 +461,28 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
         detections=len(detections),
         point_precision=point_precision,
         point_recall=point_recall,
-        point_f1=_f1(point_precision, point_recall),
+        point_f1=f1(point_precision, point_recall),
         event_precision=event_precision,
         event_recall=event_recall,
-        event_f1=_f1(event_precision, event_recall),
-        detections_per_incident=_ratio(len(detections), len(incidents)),
+        event_f1=f1(event_precision, event_recall),
+        # Over the SCOREABLE detections, like every other rate here. Counting all of them made
+        # this the one number a partially labelled corpus could not justify: 24 detections on
+        # an unlabelled host turned one correct catch into "25 detections per incident", on the
+        # same page as a line promising those findings were excluded from every rate.
+        detections_per_incident=ratio(len(scoreable), len(incidents)),
         mean_latency_seconds=latency,
         misattributed_detections=misattributed,
         unlabelled_detections=unlabelled,
         clean_assets=len(clean),
         clean_assets_detected=sum(1 for asset_id in clean if grouped.get(asset_id)),
         lane_recall=_lane_recall(truth, scoreable),
+        mean_true_detection_overlap=mean(overlaps),
+        scoreable_detections=len(scoreable),
+        true_detections=sum(verdicts),
+        incidents_caught=hits,
+        point_true_positive=true_positive,
+        point_false_positive=false_positive,
+        point_false_negative=false_negative,
     )
 
 
@@ -453,8 +543,10 @@ def score_alerts(
 
     return AlertMetrics(
         alerts=len(alerts),
-        alerts_per_incident=_ratio(len(alerts), len(incidents)),
-        incident_coverage=_ratio(covered, len(incidents)),
+        # Scoreable, for the reason ``detections_per_incident`` is: a queue length per incident
+        # computed over alerts the corpus cannot adjudicate is not a queue anyone measured.
+        alerts_per_incident=ratio(len(scoreable), len(incidents)),
+        incident_coverage=ratio(covered, len(incidents)),
         precision_at_k=precision_at_k,
         mean_rank_of_true=mean(
             [rank for rank, truthful in enumerate(is_true, start=1) if truthful]
@@ -464,4 +556,7 @@ def score_alerts(
         mean_true_priority=mean([a.priority_score for a in true_alerts]),
         mean_false_priority=mean([a.priority_score for a in false_alerts]),
         mean_lanes_per_true_alert=mean(lanes_per_true),
+        scoreable_alerts=len(scoreable),
+        true_alerts=len(true_alerts),
+        incidents_covered=covered,
     )

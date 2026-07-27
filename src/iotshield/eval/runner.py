@@ -15,10 +15,9 @@ an operator's triage queue (ADR-0021 D1).
 from collections.abc import Sequence
 from typing import Any
 
-from iotshield.contracts import NormalizedEvent
 from iotshield.detect._fitted import is_fitted
 from iotshield.eval.corpus import Case, Corpus
-from iotshield.eval.fit import FitProtocol, prepare_detector
+from iotshield.eval.fit import FitProtocol, prepare_detector, reserve
 from iotshield.eval.report import (
     TIMELINE_SPAN_CAP,
     CaseReport,
@@ -130,8 +129,7 @@ def evaluate_case(
     *,
     protocol: FitProtocol,
     include_timeline: bool = False,
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
-    | None = None,
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
     spec_notes: Sequence[str] = (),
 ) -> CaseReport:
     """Run one spec over one labelled case and score both levels.
@@ -153,25 +151,17 @@ def evaluate_case(
     if cached is None:
         texts = [given.text for given in case.inputs]
         ingested = normalize_sources(spec, texts, origins=[case.name] * len(texts))
-        holdout_events = (
-            normalize_sources(
-                spec, [given.text for given in case.holdout], origins=[f"{case.name}:holdout"]
-            ).events
-            if case.holdout
-            else None
-        )
         if ingest_cache is not None:
-            ingest_cache[key] = (ingested, holdout_events)
+            ingest_cache[key] = ingested
     else:
-        ingested, holdout_events = cached
+        ingested = cached
 
+    # What the protocol takes for training is what scoring must not look at — one object, so
+    # the two ends cannot drift (``fit.Reservation``).
+    reservation = reserve(case.truth, protocol)
     outcomes = [
         prepare_detector(
-            detector,
-            protocol=protocol,
-            events=ingested.events,
-            truth=case.truth,
-            holdout_events=holdout_events,
+            detector, protocol=protocol, training=reservation.training(ingested.events)
         )
         for detector in build_detectors(spec)
     ]
@@ -180,19 +170,35 @@ def evaluate_case(
     # reader needs is this case scored honestly at zero with the reason attached
     # (ADR-0022). Every other outcome judges, fitted or as-configured.
     judging = [o.detector for o in outcomes if is_fitted(o.detector)]
+    # Detection runs over the WHOLE recording — a windowed detector needs its warm-up — and
+    # only the findings that reach the scored region are judged.
     result = compute_result(spec, ingested, judging)
+    detections = reservation.scoreable(result.detections)
+    alerts = reservation.scoreable(result.alerts)
 
+    attempted = [outcome for outcome in outcomes if outcome.attempted]
     return CaseReport.build(
         case=case.name,
-        detector_metrics=score_detections(case.truth, result.detections),
+        detector_metrics=score_detections(reservation.truth, detections),
         # The engine ranks its output, and precision@k reads positions in that ranking. The
         # detections ride along so the alert level can report how many lanes backed each
         # true alert — the direct evidence that cross-lane corroboration fired.
-        alert_metrics=score_alerts(case.truth, result.alerts, result.detections),
-        # "Fitted" only if every detector that was asked to fit actually did — a partially
-        # fitted chain must not read as a clean fitted run.
-        fitted=all(o.fitted for o in outcomes) and protocol is not FitProtocol.NONE,
-        notes=sorted({o.note for o in outcomes if o.note} | set(spec_notes)),
+        alert_metrics=score_alerts(reservation.truth, alerts, detections),
+        # "Fitted" only if every detector the protocol *asked* to fit actually did. Asking it
+        # of every detector instead made one rule-based control zero the count for the whole
+        # run, so a report reading `0/11` sat beside a score only a successful fit could
+        # produce (``fit.FitOutcome.attempted``).
+        fitted=bool(attempted) and all(outcome.fitted for outcome in attempted),
+        # Ingest warnings ride with the compatibility ones. ``normalize_sources`` already
+        # computes "this normalizer rejected 100% of input", and dropping it was how a spec
+        # whose params quarantined every record reported zeros with an empty note list:
+        # ``_check_alignment`` compares declared *formats*, so a params-level mismatch passes
+        # it and then silently ingests nothing.
+        notes=sorted(
+            {outcome.note for outcome in outcomes if outcome.note}
+            | set(spec_notes)
+            | set(ingested.warnings)
+        ),
         timeline=_timeline(case, result) if include_timeline else None,
     )
 
@@ -204,8 +210,7 @@ def evaluate_spec(
     label: str,
     protocol: FitProtocol,
     include_timeline: bool = False,
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
-    | None = None,
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
 ) -> SpecReport:
     # Once per spec, not once per case: the guard reads the spec's shape and nothing about
     # the data, so its verdict is identical for every recording in the corpus.
@@ -242,7 +247,7 @@ def evaluate(
     than module-level so nothing outlives the benchmark that asked for it — a corpus's
     events are large, and a process-wide cache would pin every corpus ever benchmarked.
     """
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]] = {}
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] = {}
     return EvaluationReport(
         corpus=corpus.name,
         corpus_description=corpus.description,

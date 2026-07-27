@@ -374,3 +374,47 @@ def test_importing_the_control_app_does_not_import_the_eval_plane() -> None:
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "False"
+
+
+class TestBenchSpecCatalogue:
+    """`/eval/specs` publishes the committed specs, so a UI runs one instead of a lookalike.
+
+    The dashboard used to compose its own `PipelineSpec` from the detectors on screen, which
+    dropped the `assets:` block and every source and engine parameter — so the page and the
+    CLI published different numbers for what read as the same benchmark. Publishing the spec
+    itself removes the second implementation rather than trying to keep two in sync.
+    """
+
+    def test_it_publishes_the_committed_specs_with_their_detectors(
+        self, client: TestClient
+    ) -> None:
+        payload = client.get("/eval/specs").json()
+        by_name = {item["name"]: item for item in payload}
+        assert "stub" in by_name and "flow" in by_name
+        assert by_name["stub"]["detectors"] == ["stub_threshold"]
+        # The whole spec, not a description of it: a client forwards this untouched.
+        assert by_name["stub"]["spec"]["sources"][0]["source_format"] == "stub-csv"
+
+    def test_each_spec_names_the_corpora_it_fits(self, client: TestClient) -> None:
+        """The pairing nothing recorded: six specs, six corpora, ~7 legal cells, and the map
+        lived only in YAML comments. Derived from both sides' declared shapes, so it cannot
+        drift from the thing it describes."""
+        payload = client.get("/eval/specs").json()
+        by_name = {item["name"]: item for item in payload}
+        assert "synthetic" in by_name["stub"]["corpora"]
+        assert "fleet_scan" in by_name["flow"]["corpora"]
+        # ... and a spec never claims a corpus whose input shape it cannot ingest.
+        assert "fleet_scan" not in by_name["stub"]["corpora"]
+
+    def test_a_published_spec_actually_runs(self, client: TestClient) -> None:
+        # The point of publishing it: what a client forwards must be a legal request.
+        spec = next(item for item in client.get("/eval/specs").json() if item["name"] == "stub")
+        response = client.post(
+            "/eval/run",
+            json={
+                "corpus": "synthetic",
+                "specs": [{"label": "stub", "spec": spec["spec"]}],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["specs"][0]["spec"] == "stub"

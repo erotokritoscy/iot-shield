@@ -70,7 +70,7 @@ class TestConversion:
         # Still in the roster with a row clock, which is what makes it *asserted clean*
         # rather than unknown — the difference between scoring false alarms and ignoring them.
         assert case.truth.clean_assets == frozenset({"skab-testbed"})
-        assert all(asset.timeline for asset in case.truth.assets)
+        assert all(asset.clock for asset in case.truth.assets)
 
     def test_the_label_column_is_not_fed_to_the_pipeline(
         self, skab_source: Path, tmp_path: Path

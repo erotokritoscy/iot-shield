@@ -19,7 +19,7 @@ names a path is a request to read arbitrary files (ADR-0018 §9-A).
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from iotshield.contracts import Lane
@@ -32,6 +32,7 @@ from iotshield.eval.bundle import (
     IncidentLabel,
     InputManifest,
     Labels,
+    contained,
     discover,
     labels_name,
     manifest_json,
@@ -68,7 +69,23 @@ def fetchable() -> dict[str, str]:
 
 
 class CorpusUnavailable(RuntimeError):
-    """A named corpus is not present on this machine (never fetched, or wrong root)."""
+    """A named corpus is not present on this machine (never fetched, or wrong root).
+
+    Deliberately *not* an error for the CLI: a fetchable dataset nobody has fetched yet is a
+    normal state on a fresh clone, so a benchmark over it is skipped with exit 0.
+    """
+
+
+class UnknownCorpus(CorpusUnavailable):
+    """No corpus of that name exists anywhere — a typo, not a missing download.
+
+    The distinction the CLI could not make. Both raised ``CorpusUnavailable`` and the CLI
+    treats that as a skip, so ``--corpus sythetic`` printed nothing and returned **0**: a CI
+    benchmark job with a mistyped name passed green having measured nothing. The information
+    to tell them apart was already computed at the raise site (a fetchable name has a hint, an
+    unknown one does not); only the type was missing. The API maps both to 404, which is still
+    right — subclassing keeps that mapping untouched.
+    """
 
 
 @dataclass(frozen=True)
@@ -98,7 +115,9 @@ class Case:
     name: str
     inputs: list[CaseInput]
     truth: GroundTruth
-    holdout: list[CaseInput] = field(default_factory=list)
+    # There is deliberately no `holdout` here. It existed as a field with no manifest
+    # counterpart, so nothing on disk could ever populate it while three surfaces offered
+    # `--fit-protocol holdout` as a working choice (see ``eval.fit``).
 
 
 @dataclass(frozen=True)
@@ -135,6 +154,17 @@ class CorpusInfo:
     so a multi-lane corpus appeared in its picker and then failed alignment on run.
     """
 
+    error: str = ""
+    """Why this bundle cannot be loaded, when it cannot — empty for a healthy corpus.
+
+    A broken bundle used to be ``continue``d out of every listing, so a stale answer key or a
+    malformed manifest simply *vanished*: it was absent from ``eval list``, from
+    ``/eval/corpora`` and from the dashboard picker, and the follow-up error said "unknown
+    corpus" without ever mentioning the directory sitting right there. Listing it with its
+    reason turns three silent disappearances into one message, and the reason is already
+    written — see ``bundle.read_labels``, which names the exact regenerate command.
+    """
+
 
 def corpus_root(root: Path | None = None) -> Path:
     """The directory bundles live in: explicit argument, else env, else the repo's own."""
@@ -155,7 +185,7 @@ def _asset_truth(label: AssetLabel) -> AssetTruth:
     """One asset's stored labels back into truth, re-deriving its row flags from intervals."""
     return AssetTruth.from_incidents(
         label.asset_id,
-        label.clock,
+        {Lane(lane): moments for lane, moments in label.clocks.items()},
         [
             Incident(
                 asset_id=label.asset_id,
@@ -178,7 +208,12 @@ def _asset_label(asset: AssetTruth) -> AssetLabel:
     """
     return AssetLabel(
         asset_id=asset.asset_id,
-        clock=[moment for moment, _ in asset.timeline],
+        # Sorted by lane so a regenerated bundle is byte-identical, the same reason `lanes`
+        # below is sorted: a dict keyed off a set has no order gzip would forgive.
+        clocks={
+            lane.value: [moment for moment, _ in rows]
+            for lane, rows in sorted(asset.timelines.items())
+        },
         incidents=[
             IncidentLabel(
                 start=incident.start,
@@ -195,11 +230,13 @@ def _asset_label(asset: AssetTruth) -> AssetLabel:
 
 
 def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
+    # Every path a manifest names is resolved through `contained`: a bundle is untrusted data
+    # and may only reference files inside itself (see `bundle.contained`).
     inputs = [
-        CaseInput(source.source_format, read_payload(directory / source.path))
+        CaseInput(source.source_format, read_payload(contained(directory, source.path)))
         for source in entry.inputs
     ]
-    labels = read_labels(directory / entry.labels)
+    labels = read_labels(contained(directory, entry.labels))
     return Case(
         name=entry.name,
         inputs=inputs,
@@ -228,48 +265,62 @@ def load_bundle(directory: Path) -> Corpus:
     return _corpus_from(directory, read_manifest(directory))
 
 
+def _describe(directory_name: str, directory: Path) -> CorpusInfo:
+    """One bundle as a listing sees it — including one that cannot be loaded.
+
+    A broken bundle is *listed with its reason* rather than skipped. It is still a corpus
+    someone put there; hiding it means the only feedback is an "unknown corpus" error that
+    does not mention it.
+    """
+    try:
+        manifest = read_manifest(directory)
+        shape = source_formats(manifest)
+    except BundleError as exc:
+        return CorpusInfo(
+            name=directory_name,
+            description="(cannot be loaded)",
+            provenance="",
+            licence="",
+            cases=0,
+            error=str(exc),
+        )
+    return CorpusInfo(
+        name=manifest.name,
+        description=manifest.description,
+        provenance=manifest.provenance,
+        licence=manifest.licence,
+        cases=len(manifest.cases),
+        source_formats=shape,
+    )
+
+
 def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
     """Describe every bundle under the root, cheaply (manifests only, no readings)."""
-    infos: list[CorpusInfo] = []
-    for _, directory in discover(corpus_root(root)):
-        try:
-            manifest = read_manifest(directory)
-        except BundleError:
-            continue  # a broken manifest must not break the listing; loading it will say so
-        try:
-            shape = source_formats(manifest)
-        except BundleError:
-            continue  # unbenchmarkable; the same reason a broken manifest is skipped here
-        infos.append(
-            CorpusInfo(
-                name=manifest.name,
-                description=manifest.description,
-                provenance=manifest.provenance,
-                licence=manifest.licence,
-                cases=len(manifest.cases),
-                source_formats=shape,
-            )
-        )
-    return infos
+    return [_describe(name, directory) for name, directory in discover(corpus_root(root))]
 
 
 def load_corpus(name: str, root: Path | None = None) -> Corpus:
     """Load a corpus by name, or explain how to obtain it.
 
-    An absent corpus is ``CorpusUnavailable`` rather than a plain error because the CLI
-    treats it as a *skip* (exit 0): a fetchable dataset nobody has fetched yet is a normal
-    state on a fresh clone, not a broken invocation.
+    Three outcomes, and they are three different situations. A corpus that loads. One that is
+    *fetchable but not here*, which is ``CorpusUnavailable`` and a normal state on a fresh
+    clone. And a name that exists nowhere, which is ``UnknownCorpus`` — a typo, not a missing
+    download. A broken bundle raises its own ``BundleError`` (a ``ValueError``) rather than
+    disappearing, so the reader is told the directory is there and why it will not load.
     """
     base = corpus_root(root)
     # One pass: parse each manifest once, keep the names seen for the error message, and
-    # reuse the matched manifest rather than reading it a second time. A broken sibling
-    # bundle is skipped here for the same reason list_corpora tolerates it — one bad
-    # directory must not make every other corpus unloadable.
+    # reuse the matched manifest rather than reading it a second time. A broken *sibling*
+    # bundle is skipped — one bad directory must not make every other corpus unloadable —
+    # but a broken bundle that IS the one asked for raises, because silence there is how a
+    # stale answer key turned into "unknown corpus 'x'" with no mention of x sitting on disk.
     seen: list[str] = []
     for directory_name, directory in discover(base):
         try:
             manifest = read_manifest(directory)
         except BundleError:
+            if directory_name == name:
+                raise
             continue
         # A bundle answers to its directory name or its manifest name; they normally agree,
         # and accepting either means renaming a folder does not break a saved command line.
@@ -280,7 +331,7 @@ def load_corpus(name: str, root: Path | None = None) -> Corpus:
     hint = fetchable().get(name)
     if hint is not None:
         raise CorpusUnavailable(f"corpus {name!r} is not in {base}. {hint}")
-    raise CorpusUnavailable(
+    raise UnknownCorpus(
         f"unknown corpus {name!r} in {base}; available: {', '.join(seen) or 'none'}"
     )
 

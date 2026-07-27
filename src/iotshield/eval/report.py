@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from iotshield.contracts import Lane
-from iotshield.eval.score import AlertMetrics, DetectorMetrics, mean
+from iotshield.eval.score import AlertMetrics, DetectorMetrics, f1, mean, ratio
 
 
 def _utc_now() -> datetime:
@@ -56,7 +56,7 @@ class CaseReport(BaseModel):
 
     Flat rather than two nested metric objects, deliberately: this is the JSON a CI gate
     keys into (``cases[].event_f1``), so the shape is part of the artifact's contract.
-    ``None`` on any ratio means *undefined*, never zero — see ``score._ratio``.
+    ``None`` on any ratio means *undefined*, never zero — see ``score.ratio``.
     """
 
     case: str
@@ -89,6 +89,20 @@ class CaseReport(BaseModel):
     mean_true_priority: float | None = None
     mean_false_priority: float | None = None
     mean_lanes_per_true_alert: float | None = None
+    mean_true_detection_overlap: float | None = None
+    # The raw counts behind every rate above, so a corpus-level number can be *pooled* rather
+    # than averaged from per-case rates — the only form in which a clean recording's false
+    # alarms reach the headline (see ``SpecReport.summary``). Defaulted like the fields above
+    # so an older report still parses.
+    scoreable_detections: int = 0
+    true_detections: int = 0
+    incidents_caught: int = 0
+    point_true_positive: int = 0
+    point_false_positive: int = 0
+    point_false_negative: int = 0
+    scoreable_alerts: int = 0
+    true_alerts: int = 0
+    incidents_covered: int = 0
     timeline: CaseTimeline | None = None
 
     @classmethod
@@ -129,13 +143,14 @@ class SpecReport(BaseModel):
     def _mean(self, attribute: str) -> float | None:
         """Mean over the cases where the metric is *defined*, or None if none are.
 
-        Skipping ``None`` rather than treating it as zero is what keeps a corpus that mixes
-        clean and faulty recordings honest: the clean ones have no recall to average in, and
-        counting them as 0.0 would silently drag every rate down.
+        For the **count** columns only. Every *rate* is pooled instead — see ``summary``.
         """
         return mean(
             [value for case in self.cases if (value := getattr(case, attribute)) is not None]
         )
+
+    def _total(self, attribute: str) -> int:
+        return sum(getattr(case, attribute) for case in self.cases)
 
     @property
     def cases_fitted(self) -> int:
@@ -150,21 +165,59 @@ class SpecReport(BaseModel):
         it passed it through, and a clean detector with a ratio below 1 means the alert
         layer is *splitting* incidents rather than merging them (ADR-0021 D2).
         """
-        detections = self._mean("detections_per_incident")
-        alerts = self._mean("alerts_per_incident")
-        return detections / alerts if detections is not None and alerts else None
+        incidents = self._total("incidents")
+        alerts = self._total("scoreable_alerts")
+        return self._total("scoreable_detections") / alerts if incidents and alerts else None
 
     def summary(self) -> dict[str, float | None]:
+        """The corpus-level numbers, **pooled from counts** rather than averaged from rates.
+
+        This is the difference between a headline that can see a clean recording and one that
+        cannot. On a case with no incidents every rate is legitimately undefined, and averaging
+        skips undefined values — so a spec that stayed silent on the clean recordings and one
+        that fired four false alarms on them reported *identical* event and point F1. Every
+        shipped corpus includes clean recordings specifically to measure that, and the table was
+        structurally incapable of showing it.
+
+        Pooling fixes it because a false alarm on a clean case still lands in the *denominator*
+        of precision: there is no incident to recall, but there is a detection to be wrong
+        about. It also removes an unstated macro-average — a 3-case recording used to weigh as
+        much as a 300-case one — and it is the same rule ``score`` already applies within a
+        case, now applied one level up rather than approximated.
+
+        The per-case table keeps its own rates and its ``-`` where a rate does not exist; only
+        the aggregate changes. ``detections`` and ``alerts`` stay means, because those columns
+        report "per case" and always did.
+        """
+        incidents = self._total("incidents")
+        point_positive = self._total("point_true_positive")
+        event_precision = ratio(self._total("true_detections"), self._total("scoreable_detections"))
+        event_recall = ratio(self._total("incidents_caught"), incidents)
+        point_precision = ratio(
+            point_positive, point_positive + self._total("point_false_positive")
+        )
+        point_recall = ratio(point_positive, point_positive + self._total("point_false_negative"))
         return {
-            "event_f1": self._mean("event_f1"),
-            "event_precision": self._mean("event_precision"),
-            "event_recall": self._mean("event_recall"),
-            "point_f1": self._mean("point_f1"),
+            "event_f1": f1(event_precision, event_recall),
+            "event_precision": event_precision,
+            "event_recall": event_recall,
+            "point_f1": f1(point_precision, point_recall),
             "detections": self._mean("detections"),
             "alerts": self._mean("alerts"),
-            "detections_per_incident": self._mean("detections_per_incident"),
-            "alerts_per_incident": self._mean("alerts_per_incident"),
-            "incident_coverage": self._mean("incident_coverage"),
+            "detections_per_incident": ratio(self._total("scoreable_detections"), incidents),
+            "alerts_per_incident": ratio(self._total("scoreable_alerts"), incidents),
+            "incident_coverage": ratio(self._total("incidents_covered"), incidents),
+            # Weighted by how many true detections each case contributed, which is what makes
+            # it a pooled mean rather than a mean of means: `true_detections` is exactly the
+            # count `mean_true_detection_overlap` was averaged over inside the case.
+            "mean_true_detection_overlap": ratio(
+                sum(
+                    case.mean_true_detection_overlap * case.true_detections
+                    for case in self.cases
+                    if case.mean_true_detection_overlap is not None
+                ),
+                self._total("true_detections"),
+            ),
             "compression_ratio": self.compression_ratio,
         }
 
@@ -199,6 +252,10 @@ _SUMMARY_COLUMNS = (
     _Column("evF1", "event_f1"),
     _Column("evP", "event_precision"),
     _Column("evR", "event_recall"),
+    # Beside precision because it qualifies it: precision says a detection touched a fault,
+    # `ovl` says how much of the window was fault rather than padding. A recording-wide
+    # detection reads evP 1.00 / ovl 0.04.
+    _Column("ovl", "mean_true_detection_overlap", 6),
     _Column("ptF1", "point_f1"),
     _Column("det/inc", "detections_per_incident", 9),
     _Column("alt/inc", "alerts_per_incident", 9),

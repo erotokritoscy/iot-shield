@@ -18,10 +18,11 @@ STRANGER = "10.0.0.99"
 
 # The scanner is faulty over rows 20..29; the gateway is in the roster and asserted clean.
 FLEET = fleet_truth(
+    Lane.FLOW,
     **{
         SCANNER: [20 <= i < 30 for i in range(40)],
         GATEWAY: [False] * 40,
-    }
+    },
 )
 
 
@@ -122,7 +123,9 @@ class TestPerAssetClocks:
 
     def test_two_assets_faulty_at_the_same_instant_are_two_incidents(self) -> None:
         # A single pooled timeline would merge them into one run of flags and undercount.
-        both = fleet_truth(**{SCANNER: [False, True, True], GATEWAY: [False, True, True]})
+        both = fleet_truth(
+            Lane.FLOW, **{SCANNER: [False, True, True], GATEWAY: [False, True, True]}
+        )
         assert len(both.incidents) == 2
         metrics = score_detections(both, [detection(SCANNER, 1, 2, Lane.FLOW)])
         assert metrics.event_recall == 0.5  # one of the two faults found
@@ -134,7 +137,7 @@ def declaring(*lanes: Lane) -> GroundTruth:
         [
             AssetTruth.from_incidents(
                 SCANNER,
-                [at(second) for second in range(40)],
+                {lane: [at(second) for second in range(40)] for lane in lanes},
                 [
                     Incident(
                         asset_id=SCANNER,

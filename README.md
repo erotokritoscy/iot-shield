@@ -207,8 +207,8 @@ corpus: synthetic - Synthetic rig telemetry: 11 recordings, 9 injected faults
   11 case(s), 9 labelled incident(s)   fit protocol: none
 
 case                      inc   det  alerts    evF1  det/inc  alt/inc   latency
-spike-0                     1    62       1    1.00    62.00     1.00       29s
-drift-0                     1    53       1    1.00    53.00     1.00       54s
+spike-0                     1    62       1    1.00    62.00     1.00       28s
+drift-0                     1    53       1    1.00    53.00     1.00       53s
 stuck-0                     1     0       0    0.00     0.00     0.00         -
 clean-0                     0     0       0       -        -        -         -
 ```
@@ -218,6 +218,13 @@ sensor freezes at an in-range value, so only a detector that models *normal* can
 that is the shape the corpus exists to discriminate on. **`det/inc 62`** is fragmentation:
 one fault became 62 detections, which the alert layer compressed to 1. And **`-` means
 undefined, not zero** — a clean recording has no fault to recall.
+
+The corpus-wide summary above it is **pooled from counts, not averaged from these rows**: a
+rate is undefined on a clean recording, so averaging would let a spec that false-alarmed on
+`clean-0` score exactly as well as one that stayed quiet (ADR-0027). Its `ovl` column is the
+one interval matching cannot see — of a true detection's window, how much was actually fault.
+A single detection spanning the whole recording scores perfect precision, perfect recall and
+zero latency; `ovl` is what says it carried no information.
 
 ### Corpora
 
@@ -261,8 +268,14 @@ labels are then *derived* from what the behaviour actually perturbed rather than
 hand, and a meta-test holds the renderer to being the exact inverse of the matching normalizer.
 
 Add `--fit-protocol prefix` to let detectors implementing the optional `Fittable` capability
-relearn their baseline from each case's own clean history; ones that cannot are evaluated as
-configured and the report says so. `--out report.json` writes a diffable artifact.
+relearn their baseline from a reserved head of each asset's own clean history — which is then
+**not scored**, so training data and test data are disjoint by construction. Detectors that
+cannot train are evaluated as configured and the report says so. `--out report.json` writes a
+diffable artifact.
+
+`--corpus` and `--spec` are both required; `eval list` prints which pairs are legal, derived
+from the corpus's declared input shape and each spec's declared sources rather than from a
+list anyone maintains.
 
 ### Choosing hyperparameters
 

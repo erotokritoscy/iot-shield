@@ -73,10 +73,11 @@ class TestCli:
         err = capsys.readouterr().err
         assert "windo_size" in err and "threshold" in err
 
-    def test_an_unknown_corpus_skips_and_lists_what_exists(self, capsys) -> None:
-        # A skip (exit 0), not a usage error: "that corpus is not here" is an ordinary
-        # state, and the message names the ones that are.
-        assert main(["--corpus", "nope"]) == 0
+    def test_an_unknown_corpus_is_an_error_not_a_skip(self, capsys) -> None:
+        """A typo must not pass. This shared the skip path below, so a mistyped corpus name
+        in a CI benchmark job exited 0 with empty output and the job went green having
+        measured nothing."""
+        assert main(["--corpus", "nope", "--spec", str(STUB_SPEC)]) == 2
         err = capsys.readouterr().err
         assert "unknown corpus" in err and "available:" in err
 
@@ -84,10 +85,32 @@ class TestCli:
         self, tmp_path: Path, capsys
     ) -> None:
         # Exit 0 so CI benchmarking over optional corpora stays green on a fresh clone, and
-        # the message is the command rather than a dead end.
-        assert main(["--corpus", "skab_valve1", "--corpus-path", str(tmp_path)]) == 0
+        # the message is the command rather than a dead end. THIS is what exit 0 is for; a
+        # name that exists nowhere is a different situation and exits 2 above.
+        assert (
+            main(
+                [
+                    "--corpus",
+                    "skab_valve1",
+                    "--spec",
+                    str(STUB_SPEC),
+                    "--corpus-path",
+                    str(tmp_path),
+                ]
+            )
+            == 0
+        )
         err = capsys.readouterr().err
         assert "skipped" in err and "fetch skab" in err
+
+    def test_omitting_the_pair_prints_the_legal_pairings(self, capsys) -> None:
+        """The default used to be `synthetic` + `team3.yaml`, the one pairing that cannot
+        work — so the shortest command in the docs printed a table of zeros. Which pairs are
+        legal is derivable, so the answer to a missing flag is the table."""
+        assert main([]) == 2
+        err = capsys.readouterr().err
+        assert "--corpus and --spec are both required" in err
+        assert "config/bench/stub.yaml" in err
 
     def test_list_corpora(self, capsys) -> None:
         # Only `synthetic` is committed; the SKAB bundles are gitignored (GPL-3.0, ADR-0021

@@ -96,15 +96,20 @@ class LogSource:
             severity, text = _ROUTINE[int(rng.integers(0, len(_ROUTINE)))]
             lines.append((step, severity, f"[{profile.app}] {text} seq={index}"))
 
-        expressed: set[str] = set()
+        expressed: dict[str, frozenset[datetime]] = {}
         for fault in faults:
             handler = self._handlers.get(fault.kind)
             if handler is None:
                 continue
-            lines.extend(
-                handler(clock.spread(fault.start_step, fault.length_steps, int(fault.intensity)))
+            # Read off the lines the handler produced rather than the steps it was given: a
+            # fault expresses itself here by *adding log lines*, so those are the perturbation
+            # and the answer key is made of exactly their instants (see `port.Observed`).
+            injected = handler(
+                clock.spread(fault.start_step, fault.length_steps, int(fault.intensity))
             )
-            expressed.add(fault.fault_id)
+            lines.extend(injected)
+            if injected:
+                expressed[fault.fault_id] = frozenset(clock.at(step) for step, _, _ in injected)
 
         events = tuple(
             NormalizedEvent(
@@ -118,7 +123,7 @@ class LogSource:
             )
             for step, severity, message in lines
         )
-        return Observed(events=events, expressed=frozenset(expressed))
+        return Observed(events=events, expressed=expressed)
 
     def _errors(self, steps: Sequence[int]) -> list[tuple[int, Severity, str]]:
         return [

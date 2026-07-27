@@ -348,13 +348,69 @@ class TestEvaluateRun:
         monkeypatch: pytest.MonkeyPatch,
         empty_client: ApiClient,
         control_client: ControlClient,
+        mode: str = dashboard_app._COMPOSE_SPECS,
     ) -> AppTest:
+        """Open the Evaluate page, in the compose mode most of these tests exercise.
+
+        The page *opens* on "run a committed bench spec", because that is the mode whose
+        numbers a reader can reproduce from the CLI — the page composing its own lookalike
+        spec is what let the two surfaces publish different numbers for the same benchmark.
+        The entry widgets below belong to the other mode, so the switch is explicit here.
+        """
         monkeypatch.setenv(dashboard_app.EVAL_UI_ENV, "1")
         monkeypatch.setattr(dashboard_app, "get_control_client", lambda: control_client)
         at = run_app(monkeypatch, empty_client)
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception, f"page raised: {at.exception}"
+        if mode != dashboard_app._SHIPPED_SPECS:
+            at.radio(key="eval_spec_mode").set_value(mode).run()
+            assert not at.exception, f"page raised: {at.exception}"
         return at
+
+    def test_it_opens_on_a_committed_bench_spec_that_matches_the_corpus(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """The reproducibility mode, and the page's default.
+
+        The page used to compose a `PipelineSpec` from the detectors on screen and nothing
+        else, which silently dropped the `assets:` block and every source and engine
+        parameter — so `config/bench/stub.yaml` and the page's reconstruction of it published
+        different priority scores (39.46 vs 35.72) with nothing on either surface disclosing
+        which spec had run.
+        """
+        at = self._open(
+            monkeypatch, empty_client, eval_control_client, mode=dashboard_app._SHIPPED_SPECS
+        )
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        offered = at.multiselect(key="eval_bench_specs").options
+        # Only specs whose source shape matches the corpus: offering the rest would put a
+        # guaranteed alignment failure in a dropdown.
+        assert "stub" in offered and "flow" not in offered
+
+        # ... and the pairing follows the corpus rather than being a fixed list.
+        at.selectbox(key="eval_corpus").set_value("fleet_scan").run()
+        assert at.multiselect(key="eval_bench_specs").options == ["flow"]
+
+    def test_a_shipped_spec_runs_verbatim_and_the_page_shows_what_it_sent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(
+            monkeypatch, empty_client, eval_control_client, mode=dashboard_app._SHIPPED_SPECS
+        )
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        at.multiselect(key="eval_bench_specs").set_value(["stub"]).run()
+        at.button[0].click().run()
+        assert not at.exception
+        assert "stub" in str(at.dataframe[0].value)
+        # The exact request is on the page that made it, which is what makes a screenshot and
+        # a CLI number reconcilable without reading the dashboard's source.
+        assert at.json
 
     def test_the_page_offers_the_committed_corpus_and_detectors(
         self,
@@ -639,7 +695,7 @@ class TestEvaluateRun:
         eval_control_client: ControlClient,
     ) -> None:
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        assert set(at.radio(key="eval_protocol").options) == {"none", "prefix", "holdout"}
+        assert set(at.radio(key="eval_protocol").options) == {"none", "prefix"}
 
     def test_an_unreachable_api_falls_back_to_a_saved_report(
         self, monkeypatch: pytest.MonkeyPatch, empty_client: ApiClient, tmp_path: Path
@@ -688,7 +744,7 @@ class TestBenchSpecMatchesEveryCorpusShape:
         return {"name": name, "params": {}}
 
     def test_it_builds_one_source_per_declared_format(self) -> None:
-        spec = dashboard_app._bench_spec(
+        spec = dashboard_app._composed_spec(
             [self._detector("flow_burst")],
             "weighted",
             ["stub-csv", "syslog", "flow-csv"],
@@ -703,7 +759,7 @@ class TestBenchSpecMatchesEveryCorpusShape:
     def test_it_resolves_each_normalizer_from_the_registry(self) -> None:
         # By declared capability, not by name — so a newly registered normalizer works here
         # with no change, and a rename cannot silently break the page.
-        spec = dashboard_app._bench_spec(
+        spec = dashboard_app._composed_spec(
             [self._detector("flow_burst")], "weighted", ["flow-csv"], self._normalizers()
         )
         assert spec["sources"] == [{"normalizer": "flow", "source_format": "flow-csv"}]
@@ -711,7 +767,7 @@ class TestBenchSpecMatchesEveryCorpusShape:
     def test_an_entry_carries_every_detector_into_one_spec(self) -> None:
         # Several detectors in ONE spec run together, which is what lets their detections pool
         # into a single alert-engine run and corroborate across lanes.
-        spec = dashboard_app._bench_spec(
+        spec = dashboard_app._composed_spec(
             [self._detector("stub_threshold"), self._detector("flow_burst")],
             "weighted",
             ["stub-csv", "flow-csv"],
@@ -750,7 +806,7 @@ class TestBenchSpecMatchesEveryCorpusShape:
             ]
             assert eligible, f"no detector can judge {info.name!r}: the picker would be empty"
             for name in eligible:
-                payload = dashboard_app._bench_spec(
+                payload = dashboard_app._composed_spec(
                     [self._detector(name)], "weighted", formats, self._normalizers()
                 )
                 spec = PipelineSpec.model_validate(payload)

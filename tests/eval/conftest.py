@@ -26,9 +26,9 @@ def rows(flags: list[bool]) -> list[tuple[datetime, bool]]:
     return [(at(index), flag) for index, flag in enumerate(flags)]
 
 
-def truth_of(flags: list[bool], asset_id: str = ASSET) -> GroundTruth:
-    """A single-asset answer key — the shape every pre-ADR-0026 corpus has."""
-    return GroundTruth.from_timeline(rows(flags), asset_id=asset_id)
+def truth_of(flags: list[bool], asset_id: str = ASSET, lane: Lane = Lane.TELEMETRY) -> GroundTruth:
+    """A single-asset, single-lane answer key — the shape every pre-ADR-0026 corpus has."""
+    return GroundTruth.from_timeline(rows(flags), asset_id=asset_id, lane=lane)
 
 
 def detection(
@@ -74,16 +74,20 @@ def alert(
     )
 
 
-def fleet_truth(**flags_by_asset: list[bool]) -> GroundTruth:
+def fleet_truth(lane: Lane = Lane.TELEMETRY, **flags_by_asset: list[bool]) -> GroundTruth:
     """A multi-asset answer key: every named asset is in the roster, so all are adjudicated.
 
     ``fleet_truth(scanner=[...], gateway=[False] * 5)`` is the shape that matters — one
     device with a fault and one *asserted clean*, which is what makes a detection on the
     second an unambiguous false alarm rather than an unknown.
+
+    ``lane`` names the modality the rows belong to, because point metrics score a lane's
+    detections against that lane's rows and no others: a FLOW fixture judged by TELEMETRY rows
+    would measure nothing (``truth.AssetTruth``).
     """
     return GroundTruth.from_assets(
         [
-            AssetTruth.from_timeline(asset_id, rows(flags))
+            AssetTruth.from_timeline(asset_id, rows(flags), lane=lane)
             for asset_id, flags in flags_by_asset.items()
         ]
     )

@@ -113,7 +113,7 @@ class Team3ZScoreDetector:
         if self._state is None:
             raise NotFitted(
                 f"{METHOD} was built from hyperparameters with no trained baseline; name an "
-                "'artifact' in its params, or fit it first (--fit-protocol prefix|holdout)"
+                "'artifact' in its params, or fit it first (--fit-protocol prefix)"
             )
         detections: list[DetectionResult] = []
         for asset_id, asset_events in group_by_asset(events, lane=self.lane, keep=_has_reading):

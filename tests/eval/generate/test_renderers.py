@@ -14,11 +14,13 @@ that will silently stop matching the labels on a future date.
 
 import inspect
 import sys
+from collections.abc import Sequence
 
 import pytest
 
 from iotshield.capabilities import formats_in
-from iotshield.contracts import Lane
+from iotshield.contracts import Lane, NormalizedEvent
+from iotshield.eval.bundle import _EXTENSIONS
 from iotshield.eval.generate import (
     BEHAVIOURS,
     FAULTS,
@@ -29,6 +31,7 @@ from iotshield.eval.generate import (
     build,
     lanes_of,
 )
+from iotshield.eval.generate.build import _observe_lane
 from iotshield.eval.generate.port import Behaviour
 from iotshield.pipeline.registry import DETECTORS, NORMALIZERS, build_detector, build_normalizer
 from tests.eval.generate.conftest import scenario_of
@@ -76,6 +79,71 @@ class TestRegistryCompleteness:
     def test_every_renderers_lane_has_a_behaviour(self, source_format: str) -> None:
         assert RENDERERS[source_format].lane in BEHAVIOURS, source_format
 
+    def test_every_benchmarkable_format_can_be_generated(self) -> None:
+        """The other direction, and the one nothing asked.
+
+        A format a normalizer consumes is a format a bundle may declare, so it is a format the
+        product can be benchmarked on — and without a renderer, one it can never be benchmarked
+        on *with a generated corpus*. ``zeek-conn`` sat in that hole: an accepted bundle format
+        with an ``_EXTENSIONS`` entry, exercised by the flagship demo, and impossible to
+        generate. Nothing said so, because every meta-test here iterated the renderers and so
+        could only police the formats that already had one.
+        """
+        consumable = {
+            source_format
+            for spec in NORMALIZERS.values()
+            for source_format in formats_in(spec.capability({}).consumes)
+        }
+        assert consumable, "no normalizer declares a format: this test would be vacuous"
+        # Restricted to formats a bundle can actually hold. `_EXTENSIONS` is that declaration:
+        # a normalizer may consume a format no bundle names (a live wire dialect), and demanding
+        # a renderer for one would be demanding a corpus nobody can store.
+        missing = sorted(
+            source_format
+            for source_format in consumable & set(_EXTENSIONS)
+            if source_format not in RENDERERS
+        )
+        assert not missing, f"benchmarkable but ungeneratable: {missing}"
+
+
+_BOOKKEEPING = frozenset(
+    {
+        # The normalizer's own record-keeping, which a renderer neither knows nor should
+        # reproduce: the source line it parsed, a fresh identity, and where the text came from.
+        "raw",
+        "event_id",
+        "origin",
+        "ingested_at",
+        # Refined on the way in rather than echoed: the syslog reader consumes `syslog` and
+        # stamps the *dialect* it recognised (`syslog-rfc5424`), so the two sides legitimately
+        # disagree. The lane is asserted separately, which is the routing claim that matters.
+        "source_format",
+    }
+)
+
+
+def _payloads(events: Sequence[NormalizedEvent]) -> list[str]:
+    """Every meaningful field of each event, as comparable text.
+
+    Whole events, deliberately. Comparing the three routing fields left an event's entire
+    *content* unpinned — value, metric, severity, message, the flow record — so a renderer
+    could write the wrong magnitude and the law would still pass.
+    """
+    fields = [name for name in NormalizedEvent.model_fields if name not in _BOOKKEEPING]
+    return [repr(tuple(getattr(event, name) for name in fields)) for event in events]
+
+
+def _generated(source_format: str) -> Sequence[NormalizedEvent]:
+    """What the behaviour claimed to write, before any renderer touched it.
+
+    The private builder is the right thing to reach for here: this is a meta-test *of* the
+    generator, and the whole question is whether what goes in comes back out.
+    """
+    scenario = one_lane_scenario(source_format)
+    (recording,) = scenario.recordings
+    _, events, _, _ = _observe_lane(scenario, recording, source_format)
+    return events
+
 
 class TestTheInverseOfANormalizer:
     @pytest.mark.parametrize("source_format", _RENDERER_IDS)
@@ -95,6 +163,15 @@ class TestTheInverseOfANormalizer:
     def test_generated_text_round_trips_through_the_real_normalizer(
         self, source_format: str
     ) -> None:
+        """The generator's central law: a renderer is the **inverse** of a normalizer.
+
+        Every payload field is compared, not just the routing ones. This used to check the
+        *sets* of lane, asset id and timestamp and nothing else, which left the entire content
+        of an event unpinned — a renderer that wrote the wrong metric value, dropped a channel,
+        swapped ``src_bytes`` and ``dst_bytes`` or rounded a float passed cleanly. The corpus
+        would then label a fault whose magnitude no longer matched what the detector sees, and
+        the recall drop would be blamed on the detector.
+        """
         name = normalizer_for(source_format)
         assert name is not None
         (case,) = build(one_lane_scenario(source_format)).cases
@@ -104,16 +181,20 @@ class TestTheInverseOfANormalizer:
 
         assert not result.malformed, [reject.error for reject in result.malformed[:3]]
         assert result.events, "the generated text parsed to nothing at all"
-        # The lane the renderer declares is the lane the pipeline actually derives.
-        assert {event.source_type for event in result.events} == {RENDERERS[source_format].lane}
+
+        # Compared as sorted lists rather than sets: a row emitted twice and parsed once is a
+        # real defect that set equality forgives.
+        assert sorted(_payloads(result.events)) == sorted(_payloads(_generated(source_format)))
+
         # The device the scenario named is the device the pipeline attributes events to. For
         # the flow lane this is a real hazard rather than a formality: orientation picks the
         # asset from `home_networks`, so a badly chosen asset id lands on the peer instead.
         assert {event.asset_id for event in result.events} == {DEVICE.asset_id}
         # And the answer key's clock is exactly the instants the pipeline sees, so point
         # metrics are scored over rows that genuinely exist.
+        lane = RENDERERS[source_format].lane
         assert {event.timestamp for event in result.events} == {
-            moment for moment, _ in case.truth.assets[0].timeline
+            moment for moment, _ in case.truth.assets[0].timelines[lane]
         }
 
     @pytest.mark.parametrize("source_format", _RENDERER_IDS)
