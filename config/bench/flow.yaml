@@ -5,12 +5,17 @@
 # `data/demo/demo_flow.log` — a file we wrote, in which the camera contacts 43 peers. A demo
 # you author yourself cannot falsify you. `fleet_scan` can: most of it is innocent devices.
 #
-# `threshold` is the one parameter worth sweeping, and this spec deliberately contains exactly
-# ONE detector that accepts it, because a sweep is refused when two detectors in a spec share
-# a parameter name (it would vary both under a single label):
+# `threshold` is the one parameter worth sweeping, and this spec holds exactly ONE detector, so
+# the bare name is unambiguous:
 #
 #   uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
 #       --sweep threshold=8,12,20,30,40
+#
+# In a spec holding several detectors, `threshold` no longer identifies one knob (it means 80.0
+# on the telemetry lane and 20 distinct peers here), so qualify it by detector:
+#
+#   uv run python -m iotshield.eval --corpus device_trimodal \
+#       --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
 #
 # NOTE THE MISSING `assets:` BLOCK. It is absent on purpose. ADR-0021 D7 records that
 # `asset_weight` is circular — criticality is something we type into a config, so "did it rank

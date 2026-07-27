@@ -222,7 +222,63 @@ and `fit()`, and this ADR is what makes those two mean the same thing for every 
 surface, and `sweep_curve` recovers the swept parameter by parsing the report's spec label
 rather than reading structured data — cheap and safely degrading, but the label format is
 an undeclared contract between `eval/sweep.py` and the dashboard; a `SpecReport.sweep`
-field is the deeper fix. `_bench_spec` still hardcodes the `stub` normalizer (the wall a
-log corpus will hit), and the dashboard prefills a per-detector default artifact id from a
-small table because `/eval/detectors` does not yet enumerate each adapter's shipped
-artifacts — the same class of gap, and both are UI convenience rather than contract.
+field is the deeper fix. ~~`_bench_spec` still hardcodes the `stub` normalizer (the wall a
+log corpus will hit)~~ — resolved by ADR-0026, which derives the whole source chain from the
+corpus's declared shape. The dashboard still prefills a per-detector default artifact id from
+a small table because `/eval/detectors` does not yet enumerate each adapter's shipped
+artifacts — UI convenience rather than contract.
+
+## Amendment — a swept key names a detector, not only a parameter
+
+The sweep vocabulary assumed a parameter name identifies one knob. That held while a spec
+composed from the UI held exactly one detector, and stopped holding the moment an entry could
+hold several (ADR-0026 amendment): `threshold` is 80.0 on the telemetry lane and 20 distinct
+peers on the flow lane.
+
+The original response was a refusal — sweeping a name two detectors in one spec accept was
+rejected, because applying it to both under a single label reporting one change would make the
+label a lie. That refusal is still right and still fires. What was missing was a way to say
+which one you meant, so the restriction had no remedy: the CLI printed "sweep a parameter
+unique to one detector", and the dashboard silently dropped the name from its menu, which is
+how a four-option dropdown became a one-option dropdown with no explanation.
+
+**A swept key is now `[<detector>.]<param>`.**
+
+| key | reaches |
+|---|---|
+| `window_size` | every detector in the spec that declares it (unchanged) |
+| `flow_burst.threshold` | exactly that detector |
+
+Four properties this was designed around:
+
+- **Nothing on the wire changes shape.** The key was already a plain string in the CLI's
+  `--sweep`, the API's `sweep: dict[str, list]` and the dashboard's values box, so the grammar
+  is confined to `eval/sweep.py`. No change to `PipelineSpec`, the API schema or the report.
+- **Unqualified usage is byte-identical.** Every committed spec, every published label
+  (`stub_threshold[threshold=40]`) and every measured number in the README and the ADRs stays
+  valid, because the dashboard qualifies only when an entry holds more than one detector. A
+  test pins this at both ends.
+- **The refusal keeps working and now carries the remedy**, naming
+  `stub_threshold.threshold, flow_burst.threshold` instead of telling the caller to pick a
+  different parameter.
+- **`sweep_curve` survives**, and improves: its axis title becomes `flow_burst.threshold`.
+  That parser is the undeclared label contract this ADR already flagged as a deferral, so a
+  test now pins the qualified form against it rather than trusting the regex.
+
+**Still refused: a repeated adapter.** Two instances of one adapter in one spec is legal and
+deliberate (two presets in one run, ADR-0023 D9), and a *name* cannot separate them, so
+`log_burst.min_count` over such a spec is refused with a pointer to using two specs. An indexed
+form (`log_burst[1].min_count`) is deferred; trigger: the first experiment that must vary one
+knob across two instances of one adapter in a single pipeline. It is not reachable from the
+dashboard at all today, since a multiselect yields unique names.
+
+**Two UI defects fixed alongside**, both consequences of entries that qualification does not
+address:
+
+- Editing an entry could strip the swept key from the menu, and Streamlit resets a selectbox
+  whose stored value is gone *silently* (unlike a multiselect, which raises). A configured
+  sweep therefore vanished with no message and the run measured an unswept spec — a number the
+  user did not ask for. It now warns and clears deliberately.
+- Trained mode contributes no sweepable knobs, which follows directly from an artifact being
+  atomic. Correct but invisible, because the radio controlling it sits inside a collapsed
+  expander, so the menu appeared to gain three options for no reason. It now says so.

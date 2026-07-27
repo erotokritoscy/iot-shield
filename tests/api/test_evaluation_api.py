@@ -240,6 +240,57 @@ class TestRun:
         labels = [spec["spec"] for spec in response.json()["specs"]]
         assert labels == ["stub[threshold=40.0]", "stub[threshold=80.0]"]
 
+    def _shared_threshold_run(self, sweep: dict[str, list[Any]]) -> dict[str, Any]:
+        """A trimodal spec whose two detectors BOTH declare `threshold`.
+
+        The configuration that had no expressible sweep before: unqualified `threshold` is
+        refused as ambiguous, and there was no other way to name one of them.
+        """
+        return {
+            "corpus": "device_trimodal",
+            "specs": [
+                {
+                    "label": "mix",
+                    "spec": {
+                        "sources": [
+                            {"normalizer": "stub", "source_format": "stub-csv"},
+                            {"normalizer": "syslog", "source_format": "syslog"},
+                            {"normalizer": "flow", "source_format": "flow-csv"},
+                        ],
+                        "detectors": [
+                            {"name": "stub_threshold", "params": {"threshold": 80.0}},
+                            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+                        ],
+                        "alert_engine": {"name": "weighted"},
+                    },
+                    "sweep": sweep,
+                }
+            ],
+        }
+
+    def test_a_qualified_sweep_expands_into_one_labelled_spec_per_value(
+        self, client: TestClient
+    ) -> None:
+        # `detector.param` travels over the wire with no schema change: the sweep key was
+        # already a string, so the grammar stayed confined to eval/sweep.py.
+        body = self._shared_threshold_run({"flow_burst.threshold": [10, 30]})
+        payload = client.post("/eval/run", json=body).json()
+        assert [report["spec"] for report in payload["specs"]] == [
+            "mix[flow_burst.threshold=10]",
+            "mix[flow_burst.threshold=30]",
+        ]
+
+    def test_an_ambiguous_unqualified_sweep_is_422_and_names_the_qualified_form(
+        self, client: TestClient
+    ) -> None:
+        # Still refused, because one label reporting two incomparable knobs would be a lie.
+        # The difference is that the error now carries a remedy the caller can act on.
+        response = client.post(
+            "/eval/run", json=self._shared_threshold_run({"threshold": [10, 30]})
+        )
+        assert response.status_code == 422
+        assert "flow_burst.threshold" in response.json()["detail"]
+
     def test_an_incoherent_sweep_is_422_not_a_500(self, client: TestClient) -> None:
         response = client.post(
             "/eval/run",

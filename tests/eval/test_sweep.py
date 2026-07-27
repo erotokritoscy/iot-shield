@@ -93,6 +93,62 @@ class TestExpansion:
         ]
 
 
+class TestQualifiedNames:
+    """``detector.param`` addresses one detector, because a param name is unique only inside one.
+
+    Once a spec could hold several detectors, `threshold` stopped identifying anything: it is
+    80.0 on the telemetry lane and 20 distinct peers on the flow lane. Qualifying resolves that
+    rather than routing around it, which is what makes every knob of every detector in a
+    multi-detector spec reachable.
+    """
+
+    def mixed(self) -> PipelineSpec:
+        return spec(
+            {"name": "stub_threshold", "params": {"threshold": 80.0}},
+            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+        )
+
+    def test_a_qualified_name_reaches_only_the_named_detector(self) -> None:
+        # The whole point: both detectors declare `threshold`, and exactly one moves.
+        _, swept = expand([("mix", self.mixed())], {"flow_burst.threshold": [30]})[0]
+        assert swept.detectors[0].params == {"threshold": 80.0}  # untouched control
+        assert swept.detectors[1].params == {"preset": "fan_out", "threshold": 30}
+
+    def test_the_other_detectors_knob_is_reachable_too(self) -> None:
+        _, swept = expand([("mix", self.mixed())], {"stub_threshold.threshold": [10]})[0]
+        assert swept.detectors[0].params == {"threshold": 10}
+        assert swept.detectors[1].params == {"preset": "fan_out"}
+
+    def test_the_label_quotes_the_key_so_a_row_says_which_detector_moved(self) -> None:
+        expanded = expand([("mix", self.mixed())], {"flow_burst.threshold": [10, 30]})
+        assert [label for label, _ in expanded] == [
+            "mix[flow_burst.threshold=10]",
+            "mix[flow_burst.threshold=30]",
+        ]
+
+    def test_unqualified_names_are_completely_unchanged(self) -> None:
+        """The compatibility pin: qualification is additive.
+
+        Every committed spec, CLI invocation and published label uses the bare form, so if this
+        drifts, measured numbers in the README and the ADRs stop being reproducible.
+        """
+        expanded = expand([("team3", spec())], {"window_size": [20, 60]})
+        assert [label for label, _ in expanded] == [
+            "team3[window_size=20]",
+            "team3[window_size=60]",
+        ]
+
+    def test_a_qualified_name_a_spec_lacks_leaves_that_spec_as_the_control(self) -> None:
+        # Same rule the unqualified form already had: a spec without the detector rides along
+        # once, unlabelled, rather than expanding into N identical rows.
+        pairs = [("mix", self.mixed()), ("team3", spec())]
+        assert [label for label, _ in expand(pairs, {"flow_burst.threshold": [10, 30]})] == [
+            "mix[flow_burst.threshold=10]",
+            "mix[flow_burst.threshold=30]",
+            "team3",
+        ]
+
+
 class TestRefusals:
     def test_a_parameter_no_spec_accepts_names_the_alternatives(self) -> None:
         # Still a typo if NO spec has it — validated over the union, so a control spec
@@ -104,16 +160,42 @@ class TestRefusals:
         with pytest.raises(ValueError, match="no values"):
             expand([("t", spec())], {"window_size": []})
 
-    def test_a_name_two_detectors_in_one_spec_accept_is_refused(self) -> None:
+    def test_an_unqualified_name_two_detectors_accept_is_refused_with_the_remedy(self) -> None:
         # `threshold` is declared by both stub_threshold and flow_burst, so sweeping it over
-        # a spec holding both would vary two knobs (different units) under one label. Fail
-        # loud rather than silently — the FLOW lane made this collision reachable.
+        # a spec holding both would vary two knobs (different units) under one label. Still
+        # refused — but the message now names the qualified form, which is a real way out
+        # rather than "pick a different parameter".
         base = spec(
             {"name": "stub_threshold", "params": {"threshold": 80.0}},
             {"name": "flow_burst", "params": {"preset": "fan_out"}},
         )
-        with pytest.raises(ValueError, match="more than one detector"):
+        with pytest.raises(ValueError, match="more than one detector") as raised:
             expand([("mix", base)], {"threshold": [10, 20]})
+        assert "stub_threshold.threshold" in str(raised.value)
+        assert "flow_burst.threshold" in str(raised.value)
+
+    def test_a_qualified_name_for_an_absent_detector_names_the_ones_present(self) -> None:
+        with pytest.raises(ValueError, match=r"nosuch.*not in any spec"):
+            expand([("t", spec())], {"nosuch.window_size": [20]})
+
+    def test_a_detector_that_does_not_accept_the_parameter_is_refused(self) -> None:
+        # Distinct from a typo'd parameter: the detector is real, the knob is not its.
+        with pytest.raises(ValueError, match=r"'flow_burst' does not accept.*'window_size'"):
+            expand(
+                [("f", spec({"name": "flow_burst", "params": {}}))],
+                {"flow_burst.window_size": [20]},
+            )
+
+    def test_a_repeated_adapter_cannot_be_separated_by_name(self) -> None:
+        """Two instances of one adapter in one spec is legal and deliberate (ADR-0023 D9) —
+        two presets in a single run. A *name* cannot tell them apart, so a qualified sweep is
+        still ambiguous and is refused rather than varying both under one label."""
+        base = spec(
+            {"name": "log_burst", "params": {"preset": "auth_failure"}},
+            {"name": "log_burst", "params": {"preset": "severity_spike"}},
+        )
+        with pytest.raises(ValueError, match=r"ambiguous.*appears 2 times"):
+            expand([("two-presets", base)], {"log_burst.min_count": [3, 5]})
 
     def test_an_oversized_cross_product_is_refused_before_running(self) -> None:
         # The cap exists because the caller is often a button: a stray comma must not

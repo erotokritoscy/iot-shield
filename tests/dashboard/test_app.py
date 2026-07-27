@@ -530,6 +530,108 @@ class TestEvaluateRun:
         assert "stub_threshold[threshold=40" in rendered
         assert "stub_threshold[threshold=80" in rendered
 
+    def test_a_multi_detector_entry_offers_every_knob_qualified_by_detector(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """Both detectors declare `threshold`, and both are now reachable.
+
+        The menu used to *hide* any name two of the entry's detectors shared, mirroring a
+        server refusal, so it silently shrank from four options to one. Qualifying by detector
+        removes the ambiguity instead of routing around it.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("device_trimodal").run()
+        at.number_input(key="eval_entry_n").set_value(1).run()
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold", "flow_burst"]).run()
+        assert at.selectbox(key="eval_e0_sw").options == [
+            dashboard_app._NO_SWEEP,
+            "stub_threshold.threshold",
+            "flow_burst.window_minutes",
+            "flow_burst.threshold",
+        ]
+
+    def test_a_single_detector_entry_keeps_bare_names(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        # The compatibility pin, at the UI end: labels like `stub_threshold[threshold=40]` are
+        # quoted in the README and the ADRs, so the common case must not gain a qualifier.
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        at.number_input(key="eval_entry_n").set_value(1).run()
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold"]).run()
+        assert at.selectbox(key="eval_e0_sw").options == [dashboard_app._NO_SWEEP, "threshold"]
+
+    def test_invalidating_a_sweep_warns_instead_of_silently_clearing_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """Editing an entry can strip the swept key from the menu.
+
+        Streamlit resets a selectbox whose stored value is gone — silently, unlike a
+        multiselect, which raises. So a configured sweep vanished with no message and the run
+        then measured an *unswept* spec: the user gets a number they did not ask for.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("device_trimodal").run()
+        at.number_input(key="eval_entry_n").set_value(1).run()
+        at.multiselect(key="eval_e0_dets").set_value(["flow_burst"]).run()
+        at.selectbox(key="eval_e0_sw").set_value("threshold").run()
+        at.text_input(key="eval_e0_swv").set_value("10, 20").run()
+
+        # Adding a detector re-keys the menu to qualified names, so bare `threshold` is gone.
+        at.multiselect(key="eval_e0_dets").set_value(["flow_burst", "stub_threshold"]).run()
+        assert not at.exception
+        assert any("no longer applies" in str(w.value) for w in at.warning)
+        assert at.selectbox(key="eval_e0_sw").value == dashboard_app._NO_SWEEP
+
+    def test_a_qualified_sweep_runs_and_labels_each_row_by_detector(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("device_trimodal").run()
+        at.number_input(key="eval_entry_n").set_value(1).run()
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold", "flow_burst"]).run()
+        at.selectbox(key="eval_e0_sw").set_value("flow_burst.threshold").run()
+        at.text_input(key="eval_e0_swv").set_value("10, 30").run()
+        at.button[0].click().run()
+        assert not at.exception
+        # The column, not the frame's repr: these labels are long enough that pandas elides
+        # them, which would make the assertion pass on truncated text.
+        assert list(at.dataframe[0].value["spec"]) == [
+            "stub_threshold + flow_burst[flow_burst.threshold=10]",
+            "stub_threshold + flow_burst[flow_burst.threshold=30]",
+        ]
+
+    def test_trained_mode_says_why_it_offers_no_knobs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """An artifact is atomic, so trained mode contributes nothing to the sweep menu.
+
+        Correct, and previously invisible: the radio that controls it sits inside a collapsed
+        expander, so the menu appeared to gain three options for no reason.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
+        assert any("atomic" in str(c.value) for c in at.caption)
+        # And switching to scratch mode makes its hyperparameters sweepable.
+        at.radio(key="eval_e0_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
+        assert "window_size" in at.selectbox(key="eval_e0_sw").options
+
     def test_the_fit_protocol_is_offered(
         self,
         monkeypatch: pytest.MonkeyPatch,

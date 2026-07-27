@@ -29,6 +29,20 @@ class TestSweepCurve:
         rows = self._rows("team3[window_size=20]", "team3[window_size=60]")
         assert sweep_curve(rows) is not None
 
+    def test_a_detector_qualified_sweep_still_becomes_a_curve(self) -> None:
+        """The label format is an undeclared contract between `eval/sweep.py` and this parser.
+
+        ADR-0022 records that as a known deferral (the deep fix is a structured
+        `SpecReport.sweep` field), which makes it worth pinning: a qualified key puts a dot in
+        the parameter name and the entry label contains spaces and a `+`, so a curve that
+        worked for `team3[window_size=20]` could silently degrade to bars here.
+        """
+        rows = self._rows(
+            "stub_threshold + flow_burst[flow_burst.threshold=10]",
+            "stub_threshold + flow_burst[flow_burst.threshold=30]",
+        )
+        assert sweep_curve(rows) is not None
+
     def test_ordinary_head_to_head_labels_are_not_a_sweep(self) -> None:
         assert sweep_curve(self._rows("team3", "stub")) is None
 

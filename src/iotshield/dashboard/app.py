@@ -618,8 +618,16 @@ listed beside ``_bench_spec``'s hardcoded normalizer as a known deferral.
 """
 
 
-def _sweep_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, list[Any]]:
+_NO_SWEEP = "(no sweep)"
+
+
+def _sweep_widgets(prefix: str, offered: dict[str, ParamInfo]) -> dict[str, list[Any]]:
     """Pick one numeric hyperparameter and the values to vary it across.
+
+    ``offered`` is keyed by the *swept key* — the qualified ``flow_burst.threshold`` when the
+    entry holds several detectors, the bare ``threshold`` when it holds one (see
+    ``_offered_knobs``). The key is what the server parses and what the report's label quotes,
+    so the menu shows exactly the text that will identify the run.
 
     One parameter, not many: a 2-D sweep is a surface, and a head-to-head table of 24 rows
     is not how anyone reads one. The server cross-products anyway (the CLI can sweep two),
@@ -629,18 +637,33 @@ def _sweep_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, list[Any]]
     # cannot disagree about whitespace, empty items or value types.
     from iotshield.eval.sweep import values as parse_values
 
-    numeric = [param.name for param in params if param.type in ("int", "float")]
-    if not numeric:
+    if not offered:
         return {}
-    chosen = st.selectbox("Sweep a hyperparameter", ["(no sweep)", *numeric], key=f"{prefix}_sw")
-    if chosen == "(no sweep)":
+    key = f"{prefix}_sw"
+    options = [_NO_SWEEP, *offered]
+    # Editing an entry changes which keys exist, and Streamlit keeps a selectbox's value across
+    # that change — but *silently resets it to the first option* when the value is gone, unlike
+    # a multiselect, which raises. So a configured sweep would vanish with no message and the
+    # run would quietly measure an unswept spec. Say so instead, and reset deliberately.
+    stale = st.session_state.get(key)
+    if stale is not None and stale not in options:
+        st.warning(
+            f"The **{stale}** sweep no longer applies to this entry's detectors and has been "
+            "cleared. Pick one below if you still want a sweep."
+        )
+        st.session_state[key] = _NO_SWEEP
+    chosen = st.selectbox("Sweep a hyperparameter", options, key=key)
+    if chosen == _NO_SWEEP:
         return {}
-    default = next((p.default for p in params if p.name == chosen), None)
+    default = offered[chosen].default
     raw = st.text_input(
         f"{chosen} values (comma-separated)", value=str(default or ""), key=f"{prefix}_swv"
     )
     swept = parse_values(raw)
     if not swept:
+        # Reachable and not an error: several params default to None because their real value
+        # comes from a preset, so the box opens empty and there is nothing to sweep yet.
+        st.caption(f"Enter comma-separated values to sweep {chosen}.")
         return {}
     st.caption(f"-> {len(swept)} run(s), one per value, compared head to head")
     return {chosen: swept}
@@ -660,7 +683,7 @@ def _eval_catalogue() -> tuple["CorporaResponse", list["DetectorSummary"]]:
 
 
 def _run_count(sweep: dict[str, list[Any]]) -> int:
-    """How many benchmarks one detector's plan costs: one per swept value, else one."""
+    """How many benchmarks one entry costs: one per swept value, else one."""
     return math.prod(len(values) for values in sweep.values()) if sweep else 1
 
 
@@ -719,6 +742,14 @@ def _detector_plan(
                 ),
             )
             params = {summary.artifact_param: chosen}
+            # Why this detector contributes nothing to the entry's sweep menu. Without it the
+            # menu silently gains three options when this radio moves, and the radio lives
+            # inside a collapsed expander, so the cause is invisible.
+            st.caption(
+                f"Trained weights are atomic: the artifact supplies **{summary.name}**'s "
+                "hyperparameters too, so there is nothing here to edit or sweep. Switch to "
+                f"*{_SCRATCH}* to choose them yourself."
+            )
             if not chosen:
                 problem = (
                     f"**{summary.name}** is set to use trained weights but no artifact is "
@@ -737,17 +768,28 @@ def _detector_plan(
     return {"name": summary.name, "params": params}, problem, sweepable
 
 
-def _unambiguous(offered: list[ParamInfo]) -> list[ParamInfo]:
-    """Params safe to sweep in one entry: those exactly one of its detectors accepts.
+def _offered_knobs(by_detector: list[tuple[str, list[ParamInfo]]]) -> dict[str, ParamInfo]:
+    """The entry's sweepable knobs, keyed by the text the server will parse.
 
-    The client-side mirror of ``eval/sweep.py``'s ambiguity guard, which refuses a name
-    several detectors in ONE spec accept because it would vary all of them under a single
-    label that reports one change. That guard is the authority and stays where it is; this
-    only keeps the menu from offering a choice the server is going to reject. ``threshold``
-    on an entry holding both ``stub_threshold`` and ``flow_burst`` is the live case.
+    Numeric only, because a sweep draws a curve: a preset or a channel list has no axis to
+    vary along.
+
+    Qualified with the detector name as soon as an entry holds more than one, which is what
+    makes every knob reachable. This menu used to *hide* any name two of the entry's detectors
+    shared — ``threshold`` on ``stub_threshold + flow_burst`` — mirroring a server refusal, so
+    the dropdown shrank from four entries to one with no explanation. Naming the detector
+    removes the ambiguity instead of routing around it.
+
+    A single-detector entry keeps bare names, so the common head-to-head case reads
+    ``stub_threshold[threshold=40]`` exactly as it always has and no published label moves.
     """
-    seen = Counter(param.name for param in offered)
-    return [param for param in offered if seen[param.name] == 1]
+    qualify = len(by_detector) > 1
+    return {
+        f"{name}.{param.name}" if qualify else param.name: param
+        for name, params in by_detector
+        for param in params
+        if param.type in ("int", "float")
+    }
 
 
 def _entry_widgets(
@@ -789,7 +831,7 @@ def _entry_widgets(
 
     detectors: list[dict[str, Any]] = []
     problems: list[str] = []
-    offered: list[ParamInfo] = []
+    offered: list[tuple[str, list[ParamInfo]]] = []
     for name in chosen:
         with st.expander(f"{name} — hyperparameters", expanded=False):
             plan, problem, sweepable = _detector_plan(
@@ -798,9 +840,9 @@ def _entry_widgets(
         detectors.append(plan)
         if problem is not None:
             problems.append(problem)
-        offered.extend(sweepable)
+        offered.append((name, sweepable))
 
-    sweep = _sweep_widgets(f"eval_e{index}", _unambiguous(offered)) if detectors else {}
+    sweep = _sweep_widgets(f"eval_e{index}", _offered_knobs(offered)) if detectors else {}
     return {"label": " + ".join(chosen), "detectors": detectors, "sweep": sweep}, problems
 
 

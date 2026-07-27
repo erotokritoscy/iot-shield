@@ -71,6 +71,9 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
     --spec config/bench/team3_scratch.yaml --spec config/bench/stub.yaml \
     --sweep window_size=20,60,120
+# In a spec with several detectors a bare name may not identify one knob — qualify it.
+uv run python -m iotshield.eval --corpus device_trimodal \
+    --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
 ```
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
@@ -282,6 +285,14 @@ declare neither field and are unaffected.
 *detectors*); `config/bench/team3_scratch.yaml` names hyperparameters and no artifact, so it
 is the one to `--sweep` — and it requires `--fit-protocol prefix|holdout`, since an
 untrained model has nothing to judge with.
+
+A swept key is `[<detector>.]<param>`. Bare (`window_size`) reaches every detector in the spec
+that declares it, which is the right default when one does. Qualified
+(`flow_burst.threshold`) reaches exactly that detector, and exists because a parameter name is
+unique only *inside* a detector: `threshold` is 80.0 on the telemetry lane and 20 distinct
+peers on the flow lane, so a bare sweep of it across a spec holding both is refused (the error
+names the qualified alternatives). The grammar lives only in `eval/sweep.py` — the key is a
+plain string in the CLI flag, the API request and the dashboard alike (ADR-0022 amendment).
 
 ## Conventions
 
