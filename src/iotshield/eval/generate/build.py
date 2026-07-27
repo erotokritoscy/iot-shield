@@ -79,7 +79,7 @@ def _incident(fault: FaultSpec, perturbed: Mapping[Lane, frozenset[datetime]]) -
 
 def _observe_lane(
     scenario: Scenario, recording: Recording, source_format: str
-) -> tuple[CaseInput, list[NormalizedEvent], Lane, dict[str, frozenset[datetime]]]:
+) -> tuple[CaseInput, list[NormalizedEvent], Lane, dict[FaultSpec, frozenset[datetime]]]:
     """Every device's events for one lane, rendered into one file's text.
 
     Streams are scoped by the renderer's **lane**, not by its format. Keying on the format
@@ -90,7 +90,7 @@ def _observe_lane(
     """
     renderer, behaviour = _resolve(source_format)
     pooled: list[NormalizedEvent] = []
-    expressed: dict[str, frozenset[datetime]] = {}
+    expressed: dict[FaultSpec, frozenset[datetime]] = {}
 
     for device in recording.devices:
         observed = behaviour.observe(
@@ -111,7 +111,7 @@ def _observe_lane(
                 f"observing {device.asset_id!r}: a behaviour speaks only for its own device"
             )
         pooled.extend(observed.events)
-        # A fault_id is unique to its device, so no two devices contribute to the same key
+        # Faults are pre-filtered to this device, so no two devices contribute the same key
         # and a plain update cannot lose instants.
         expressed |= observed.expressed
 
@@ -127,7 +127,7 @@ def _validate(
     scenario: Scenario,
     recording: Recording,
     clocks: Mapping[str, dict[Lane, set[datetime]]],
-    expressed: Mapping[str, dict[Lane, frozenset[datetime]]],
+    expressed: Mapping[FaultSpec, dict[Lane, frozenset[datetime]]],
 ) -> None:
     """Refuse a recording that would ship as a corpus scoring wrongly but looking fine.
 
@@ -152,9 +152,7 @@ def _validate(
             f"{list(scenario.formats)}, so they cannot be in the roster — findings on them "
             "would be unscoreable rather than false alarms"
         )
-    unexpressed = [
-        fault.fault_id for fault in recording.faults if not expressed.get(fault.fault_id)
-    ]
+    unexpressed = [fault.fault_id for fault in recording.faults if not expressed.get(fault)]
     if unexpressed:
         raise GenerationError(
             f"case {recording.name!r}: no lane in {list(scenario.formats)} expressed "
@@ -169,15 +167,15 @@ def _case(scenario: Scenario, recording: Recording) -> Case:
     # rates, and pooling them lets the fastest one own the clock every lane is scored on
     # (``truth.AssetTruth``).
     clocks: dict[str, dict[Lane, set[datetime]]] = {}
-    expressed: dict[str, dict[Lane, frozenset[datetime]]] = {}
+    expressed: dict[FaultSpec, dict[Lane, frozenset[datetime]]] = {}
 
     for source_format in scenario.formats:
         case_input, events, lane, expressed_here = _observe_lane(scenario, recording, source_format)
         inputs.append(case_input)
         for event in events:
             clocks.setdefault(event.asset_id, {}).setdefault(lane, set()).add(event.timestamp)
-        for fault_id, instants in expressed_here.items():
-            expressed.setdefault(fault_id, {})[lane] = instants
+        for fault, instants in expressed_here.items():
+            expressed.setdefault(fault, {})[lane] = instants
 
     _validate(scenario, recording, clocks, expressed)
 
@@ -191,10 +189,7 @@ def _case(scenario: Scenario, recording: Recording) -> Case:
                 AssetTruth.from_incidents(
                     asset_id,
                     {lane: sorted(instants) for lane, instants in lanes.items()},
-                    [
-                        _incident(fault, expressed[fault.fault_id])
-                        for fault in recording.faults_on(asset_id)
-                    ],
+                    [_incident(fault, expressed[fault]) for fault in recording.faults_on(asset_id)],
                 )
                 for asset_id, lanes in clocks.items()
             ]

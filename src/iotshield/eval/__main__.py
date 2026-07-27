@@ -82,8 +82,8 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     # is fitted to SKAB's channels and the synthetic rig has none of them. So the shortest
     # command in the documentation printed eleven rows of 0.00 with no note attached, which is
     # exactly the "row of zeros indistinguishable from a bad detector" failure the rest of the
-    # harness is built to prevent. Which pairs are legal is derivable (`bench.pairings`), so
-    # the answer to a missing flag is the table, not a guess.
+    # harness is built to prevent. Which pairs are legal is derivable (`bench.render_pairings`),
+    # so the answer to a missing flag is the table, not a guess.
     parser.add_argument("--corpus", default=None, help="corpus name; omit to list legal pairings")
     parser.add_argument(
         "--spec",
@@ -168,7 +168,9 @@ def _list(args: argparse.Namespace) -> int:
     for hint in sorted(set(fetchable().values())):
         print(f"  {hint}")
     print()
-    print(_legal_pairings(args))
+    # `infos` is passed rather than re-listed: `render_pairings` needs the same discovery this
+    # function already paid for, and scanning the corpus root twice in one command is silly.
+    print(render_pairings(infos))
     return 0
 
 
@@ -210,17 +212,10 @@ def _parse_sweeps(raw: list[str] | None) -> dict[str, list[Any]]:
     return parsed
 
 
-def _legal_pairings(args: argparse.Namespace) -> str:
-    infos = [info for info in list_corpora(corpus_path_of(args)) if not info.error]
-    return render_pairings([(info.name, info.source_formats) for info in infos])
-
-
 def _run(args: argparse.Namespace) -> int:
     if args.corpus is None or not args.specs:
-        print(
-            "error: --corpus and --spec are both required.\n\n" + _legal_pairings(args),
-            file=sys.stderr,
-        )
+        pairings = render_pairings(list_corpora(corpus_path_of(args)))
+        print(f"error: --corpus and --spec are both required.\n\n{pairings}", file=sys.stderr)
         return 2
 
     try:

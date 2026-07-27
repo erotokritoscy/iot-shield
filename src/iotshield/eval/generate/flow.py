@@ -143,7 +143,7 @@ class NetworkHost:
             for index, step in enumerate(range(0, clock.steps, profile.every_steps))
         ]
 
-        expressed: dict[str, frozenset[datetime]] = {}
+        expressed: dict[FaultSpec, frozenset[datetime]] = {}
         for fault in faults:
             handler = self._handlers.get(fault.kind)
             if handler is None:
@@ -156,7 +156,7 @@ class NetworkHost:
             injected = list(zip(steps, handler(device, fault, steps), strict=True))
             flows.extend(injected)
             if injected:
-                expressed[fault.fault_id] = frozenset(clock.at(step) for step, _ in injected)
+                expressed[fault] = frozenset(clock.at(step) for step, _ in injected)
 
         events = tuple(
             self._event(device, clock.at(step), record, source_format) for step, record in flows
@@ -299,11 +299,37 @@ class _Endpoints:
             destination_packets=record.packets_out if inbound else record.packets_in,
         )
 
+    def wire(self, timestamp: str) -> dict[str, str]:
+        """Every canonical field as the text a flow file carries, keyed by canonical name.
+
+        The dialects differ in **three** things: how a timestamp is spelled, what separates
+        the fields, and what the header looks like. Everything else — the missing-value
+        marker, the duration format, which counter is the source's — is a property of the
+        lane, so it is written once here rather than once per renderer. Twelve of thirteen
+        expressions were previously character-identical in two classes, free to disagree
+        because each round-trips only against its own dialect.
+        """
+        return {
+            "ts": timestamp,
+            "src_ip": self.source_ip,
+            "src_port": _optional(self.source_port),
+            "dst_ip": self.destination_ip,
+            "dst_port": _optional(self.destination_port),
+            "protocol": self.record.protocol,
+            "service": _optional(self.record.service),
+            "duration": f"{self.record.duration_s:g}",
+            "src_bytes": str(self.source_bytes),
+            "dst_bytes": str(self.destination_bytes),
+            "src_packets": str(self.source_packets),
+            "dst_packets": str(self.destination_packets),
+            "state": _optional(self.record.state),
+        }
+
 
 class FlowCsvRenderer:
     """``flow-csv``: ISO timestamps, comma separated, a header row of column names.
 
-    The round-trip test is what proves ``_endpoints``' inversion is exact rather than
+    The round-trip test is what proves ``_Endpoints``' inversion is exact rather than
     approximately right.
     """
 
@@ -317,23 +343,8 @@ class FlowCsvRenderer:
         return tuple(self._line(event) for event in events)
 
     def _line(self, event: NormalizedEvent) -> str:
-        flow = _Endpoints.of(event)
-        fields = (
-            event.timestamp.isoformat(),
-            flow.source_ip,
-            _optional(flow.source_port),
-            flow.destination_ip,
-            _optional(flow.destination_port),
-            flow.record.protocol,
-            _optional(flow.record.service),
-            f"{flow.record.duration_s:g}",
-            str(flow.source_bytes),
-            str(flow.destination_bytes),
-            str(flow.source_packets),
-            str(flow.destination_packets),
-            _optional(flow.record.state),
-        )
-        return ",".join(fields)
+        fields = _Endpoints.of(event).wire(event.timestamp.isoformat())
+        return ",".join(fields[name] for name in FLOW_CSV.columns)
 
 
 class ZeekConnRenderer:
@@ -344,63 +355,30 @@ class ZeekConnRenderer:
     on, and nothing anywhere said so. A meta-test now asserts every normalizer-consumable
     format has a renderer, which is what made the hole visible.
 
-    The column order is read from ``ZEEK_CONN.columns`` rather than restated, so the writer
-    cannot drift from the reader: a renamed column changes both sides at once. ``#separator``
-    is written first and escaped the way Zeek writes it, because the reader honours that
-    directive over its own default.
+    The column order and the headings are both read from ``ZEEK_CONN.columns``, so the writer
+    cannot drift from the reader: a renamed or added column changes both sides at once.
+    ``#separator`` is written first and escaped the way Zeek writes it, because the reader
+    honours that directive over its own default.
     """
 
     lane = Lane.FLOW
     source_format = ZEEK_CONN.name
 
-    # Canonical field -> Zeek column, in the order the header declares them. Taken from the
-    # dialect's own mapping so the two cannot disagree about a name.
-    _ORDER = (
-        "ts",
-        "src_ip",
-        "src_port",
-        "dst_ip",
-        "dst_port",
-        "protocol",
-        "service",
-        "duration",
-        "src_bytes",
-        "dst_bytes",
-        "src_packets",
-        "dst_packets",
-        "state",
-    )
-
     def header(self) -> tuple[str, ...]:
         return (
             "#separator \\x09",
             "#path\tconn",
-            "#fields\t" + "\t".join(ZEEK_CONN.columns[name] for name in self._ORDER),
+            "#fields\t" + "\t".join(ZEEK_CONN.columns.values()),
         )
 
     def render(self, events: Sequence[NormalizedEvent]) -> tuple[str, ...]:
         return tuple(self._line(event) for event in events)
 
     def _line(self, event: NormalizedEvent) -> str:
-        flow = _Endpoints.of(event)
-        fields = {
-            # Epoch seconds, which is what `_parse_epoch` reads. Six decimals is Zeek's own
-            # precision and enough to round-trip a microsecond clock exactly.
-            "ts": f"{event.timestamp.timestamp():.6f}",
-            "src_ip": flow.source_ip,
-            "src_port": _optional(flow.source_port),
-            "dst_ip": flow.destination_ip,
-            "dst_port": _optional(flow.destination_port),
-            "protocol": flow.record.protocol,
-            "service": _optional(flow.record.service),
-            "duration": f"{flow.record.duration_s:g}",
-            "src_bytes": str(flow.source_bytes),
-            "dst_bytes": str(flow.destination_bytes),
-            "src_packets": str(flow.source_packets),
-            "dst_packets": str(flow.destination_packets),
-            "state": _optional(flow.record.state),
-        }
-        return "\t".join(fields[name] for name in self._ORDER)
+        # Epoch seconds, which is what `_parse_epoch` reads. Six decimals is Zeek's own
+        # precision and enough to round-trip a microsecond clock exactly.
+        fields = _Endpoints.of(event).wire(f"{event.timestamp.timestamp():.6f}")
+        return "\t".join(fields[name] for name in ZEEK_CONN.columns)
 
 
 _UNSET = next(marker for marker in MISSING if marker)

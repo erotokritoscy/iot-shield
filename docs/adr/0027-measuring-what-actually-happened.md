@@ -132,6 +132,13 @@ by where a fault happened to land.
 `true_detections`, `incidents_caught`, the three point counts, `scoreable_alerts`,
 `incidents_covered`).
 
+The rates themselves are defined **once**, on `score.Counts`, which both `score_detections`
+(one case's counts) and `SpecReport.summary` (the sum of them) ask. Transcribing the
+compositions into `report.py` would have recreated the failure this decision fixes one level
+along: this very ADR changes `detections_per_incident`'s denominator, and with two copies the
+per-case column and the headline would silently disagree. `Counts` adds, so pooling is
+addition and nothing else.
+
 A false alarm on a clean recording has no recall to spoil but does land in the *denominator* of
 precision — which is why pooling makes it visible where averaging could not. It also removes an
 unstated macro-average: a 3-case recording used to weigh as much as a 300-case one. It is the
@@ -263,3 +270,28 @@ type level rather than silently mislabelling.
   `sweep.py`, `__main__.py` and the dashboard.
 - Asset ids are still hand-copied from `scenarios.py` into three bench specs' `assets:` blocks
   with no check, and those blocks contradict ADR-0021 D7's own rule.
+
+**Raised by the cleanup pass and deliberately left.** Each is a real gap; none is a change this
+record's decisions require, and each would move numbers or add schema.
+
+- **`_incident` collapses the perturbed instants to their convex hull.** So D1's guarantee holds
+  up to that hull rather than absolutely: a fault whose injected steps straddle a quiet stretch
+  labels the gap too. Audited across all 17 expressed faults in the shipped corpora — zero rows
+  are over-labelled today, but that is a parameter coincidence, not a property. The deeper form
+  needs no schema change: `merge_runs` already turns an instant set into contiguous runs, and
+  the bundle format already stores a *list* of intervals, so `_incident` could emit one incident
+  per run. It changes incident counts and therefore every rate again.
+- **No `unlabelled_lane_detections`.** A detection on a lane the corpus has no clock for is
+  invisible to point metrics and still counted in event precision, with nothing disclosing how
+  much was unmeasurable. The asset dimension got exactly this counter (`unlabelled_detections`)
+  and the argument for it; the lane dimension got the loop.
+- **`summary()` is computed, not serialized.** `reports/evaluation.json` carries the per-case
+  counts but no pooled corpus-level number, so a CI gate wanting the D4 headline must re-pool
+  from `cases[].*` — which is a third place that would know how a rate is formed.
+- **`_attribution`'s per-lane recall still macro-averages** across cases, immediately below a
+  decision that says mean-of-rates is wrong. `CaseReport` carries the counts behind every rate
+  except this one, so fixing it is a schema addition.
+- **The dashboard's shipped-spec mode hardcodes `sweep: {}`.** True of a spec naming an
+  artifact, false of `config/bench/team3_scratch.yaml`, which names none precisely so it can be
+  swept — so the page is less capable than the CLI on the one experiment ADR-0022 exists for.
+  `/eval/specs` publishes the detector params a sweep menu would need.

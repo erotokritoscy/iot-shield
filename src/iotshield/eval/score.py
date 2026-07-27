@@ -45,14 +45,14 @@ Two things are deliberately NOT scored here, because no answer key exists for th
 """
 
 import bisect
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, fields
 from datetime import datetime
-from typing import Protocol, TypeVar
+from typing import TypeVar
 from uuid import UUID
 
 from iotshield.contracts import DetectionResult, Lane, PrioritizedAlert
-from iotshield.eval.truth import GroundTruth, Incident
+from iotshield.eval.truth import Finding, FindingT, GroundTruth, Incident
 
 PRECISION_AT_K = (1, 5, 10)
 
@@ -92,6 +92,64 @@ def mean(values: Sequence[float]) -> float | None:
     cases; a second copy there would be a third spelling of "undefined is not zero".
     """
     return sum(values) / len(values) if values else None
+
+
+@dataclass(frozen=True)
+class Counts:
+    """The tallies every rate is formed from, and **the one place a rate is defined**.
+
+    One case's counts or a whole corpus's — they add, and that is the point. ``SpecReport``
+    pools a run by summing these and asking the same object for its rates, so "the corpus-level
+    number is the same rule one level up" is true by construction rather than by two matching
+    transcriptions. Writing the compositions twice is how a per-case column and a headline come
+    to disagree silently: this commit's own change to ``detections_per_incident`` (all findings
+    to scoreable ones) would otherwise have had to be made in two files.
+
+    Spans both scoring levels because the report row does too (``CaseReport`` is flat for
+    exactly this reason). Each caller reads the keys it owns and ignores the rest.
+    """
+
+    incidents: int = 0
+    scoreable_detections: int = 0
+    true_detections: int = 0
+    incidents_caught: int = 0
+    point_true_positive: int = 0
+    point_false_positive: int = 0
+    point_false_negative: int = 0
+    scoreable_alerts: int = 0
+    incidents_covered: int = 0
+    overlap_total: float = 0.0
+    """Summed window overlap of the true detections — the numerator of the mean.
+
+    Stored as the sum rather than the mean so pooling is addition like every other field. The
+    per-case *mean* is what the report publishes, because that is the readable form."""
+
+    def __add__(self, other: "Counts") -> "Counts":
+        return Counts(*(getattr(self, f.name) + getattr(other, f.name) for f in fields(self)))
+
+    def rates(self) -> dict[str, float | None]:
+        """Every rate, from these counts. ``None`` means undefined, never zero."""
+        event_precision = ratio(self.true_detections, self.scoreable_detections)
+        event_recall = ratio(self.incidents_caught, self.incidents)
+        covered = self.point_true_positive
+        point_precision = ratio(covered, covered + self.point_false_positive)
+        point_recall = ratio(covered, covered + self.point_false_negative)
+        return {
+            "event_precision": event_precision,
+            "event_recall": event_recall,
+            "event_f1": f1(event_precision, event_recall),
+            "point_precision": point_precision,
+            "point_recall": point_recall,
+            "point_f1": f1(point_precision, point_recall),
+            # Over the SCOREABLE findings, like every rate above. Counting all of them made
+            # these the numbers a partially labelled corpus could not justify: 24 detections on
+            # an unlabelled host turned one correct catch into "25 detections per incident", on
+            # the same page as a line promising those findings were excluded from every rate.
+            "detections_per_incident": ratio(self.scoreable_detections, self.incidents),
+            "alerts_per_incident": ratio(self.scoreable_alerts, self.incidents),
+            "incident_coverage": ratio(self.incidents_covered, self.incidents),
+            "mean_true_detection_overlap": ratio(self.overlap_total, self.true_detections),
+        }
 
 
 @dataclass(frozen=True)
@@ -155,7 +213,6 @@ class AlertMetrics:
     mean_lanes_per_true_alert: float | None
     # The counts, for the same reason ``DetectorMetrics`` carries them.
     scoreable_alerts: int
-    true_alerts: int
     incidents_covered: int
 
 
@@ -203,20 +260,18 @@ class _Spans:
     def covered_seconds(self, start: datetime, end: datetime) -> float:
         """How much of ``[start, end]`` these spans actually cover, in seconds.
 
-        The quantitative form of ``overlaps``, and the one thing event matching could not
-        ask. Walks left from the last span starting at or before ``end`` and stops at the
-        first that ends before ``start``; the spans are disjoint and sorted, so everything
-        earlier ends earlier still.
+        The quantitative form of ``overlaps``, and the one thing event matching could not ask.
+        The spans are disjoint and sorted, so both ``_starts`` and ``_ends`` are sorted and the
+        intersecting spans are a contiguous slice: the first that ends at or after ``start``,
+        through the last that begins at or before ``end``. Every span in that slice overlaps by
+        construction, so the intersection needs no guard.
         """
-        total = 0.0
-        index = bisect.bisect_right(self._starts, end) - 1
-        while index >= 0 and self._ends[index] >= start:
-            low = max(start, self._starts[index])
-            high = min(end, self._ends[index])
-            if high >= low:
-                total += (high - low).total_seconds()
-            index -= 1
-        return total
+        first = bisect.bisect_left(self._ends, start)
+        last = bisect.bisect_right(self._starts, end)
+        return sum(
+            (min(end, self._ends[index]) - max(start, self._starts[index])).total_seconds()
+            for index in range(first, last)
+        )
 
 
 def _coverage(
@@ -228,37 +283,26 @@ def _coverage(
         yield flagged, spans.covers(moment)
 
 
-def _by_lane(detections: Sequence[DetectionResult]) -> dict[Lane, list[DetectionResult]]:
-    grouped: dict[Lane, list[DetectionResult]] = {}
-    for detection in detections:
-        grouped.setdefault(detection.lane, []).append(detection)
-    return grouped
+_KeyT = TypeVar("_KeyT")
 
 
-class Finding(Protocol):
-    """The shape both levels score: something about one asset over one window.
+def _grouped_by(
+    findings: Sequence[FindingT], key: Callable[[FindingT], _KeyT]
+) -> dict[_KeyT, list[FindingT]]:
+    """Findings bucketed by whatever identifies them here — asset, then lane.
 
-    ``DetectionResult`` and ``PrioritizedAlert`` share it through ``_WindowedContract``, so
-    the matching rules below are written once instead of once per level — which is what
-    stops the two altitudes drifting apart on the one question they must answer identically.
+    One loop rather than one per key: the module had this idiom three times (by asset, by lane,
+    and inline in ``_lane_recall`` keyed on the pair), and they had already drifted apart.
+    Insertion order is preserved, which the point loop relies on.
     """
-
-    @property
-    def asset_id(self) -> str: ...
-    @property
-    def window_start(self) -> datetime: ...
-    @property
-    def window_end(self) -> datetime: ...
-
-
-FindingT = TypeVar("FindingT", bound=Finding)
+    grouped: dict[_KeyT, list[FindingT]] = {}
+    for finding in findings:
+        grouped.setdefault(key(finding), []).append(finding)
+    return grouped
 
 
 def _by_asset(findings: Sequence[FindingT]) -> dict[str, list[FindingT]]:
-    grouped: dict[str, list[FindingT]] = {}
-    for finding in findings:
-        grouped.setdefault(finding.asset_id, []).append(finding)
-    return grouped
+    return _grouped_by(findings, lambda finding: finding.asset_id)
 
 
 def _incidents_of(truth: GroundTruth) -> dict[str, tuple[Incident, ...]]:
@@ -412,7 +456,7 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
     # minute is charged sixty telemetry false positives (``truth.AssetTruth``).
     true_positive = false_positive = false_negative = 0
     for asset in truth.assets:
-        by_lane = _by_lane(grouped.get(asset.asset_id, []))
+        by_lane = _grouped_by(grouped.get(asset.asset_id, []), lambda d: d.lane)
         for lane, timeline in asset.timelines.items():
             for flagged, covered in _coverage(timeline, by_lane.get(lane, [])):
                 if flagged and covered:
@@ -421,13 +465,13 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
                     false_negative += 1
                 elif covered:
                     false_positive += 1
-    point_precision = ratio(true_positive, true_positive + false_positive)
-    point_recall = ratio(true_positive, true_positive + false_negative)
 
     # Event level: an incident is hit if any detection ON ITS ASSET overlaps it; a detection
     # is true if it overlaps an incident on its OWN asset.
+    incidents_of = _incidents_of(truth)
     hits, latency = _caught(truth, grouped)
-    verdicts = _verdicts(scoreable, _incidents_of(truth))
+    verdicts = _verdicts(scoreable, incidents_of)
+    true_detections = sum(verdicts)
     # Misattribution: false on its own asset, yet landing on a real fault somewhere. Asked of
     # a merged index rather than by scanning every incident per detection — that scan was
     # measured at over half of this function on a 30-asset fleet.
@@ -437,52 +481,60 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
         for detection, truthful in zip(scoreable, verdicts, strict=True)
         if not truthful and elsewhere.overlaps(detection.window_start, detection.window_end)
     )
-    event_precision = ratio(sum(verdicts), len(scoreable))
-    event_recall = ratio(hits, len(incidents))
 
-    # How tightly the true detections sat on their faults. Per asset, because a window must be
-    # measured against its own device's incidents — the merged corpus-wide index above would
-    # credit a detection for overlapping some other device's fault.
-    incidents_of = _incidents_of(truth)
-    spans_of = {
-        asset_id: _Spans((incident.start, incident.end) for incident in asset_incidents)
-        for asset_id, asset_incidents in incidents_of.items()
-    }
-    overlaps = [
-        _window_overlap(detection, spans_of[detection.asset_id])
-        for detection, truthful in zip(scoreable, verdicts, strict=True)
-        if truthful
-    ]
+    # How tightly the true detections sat on their faults. Indexed per asset *lazily*, because
+    # a window must be measured against its own device's incidents — the merged corpus-wide
+    # index above would credit a detection for overlapping some other device's fault — and
+    # because on a 30-asset fleet with two faulty hosts, eagerly indexing the roster builds 28
+    # empty indexes per case.
+    spans_of: dict[str, _Spans] = {}
+    overlaps: list[float] = []
+    for detection, truthful in zip(scoreable, verdicts, strict=True):
+        if not truthful:
+            continue
+        if detection.asset_id not in spans_of:
+            spans_of[detection.asset_id] = _Spans(
+                (incident.start, incident.end)
+                for incident in incidents_of.get(detection.asset_id, ())
+            )
+        overlaps.append(_window_overlap(detection, spans_of[detection.asset_id]))
 
+    counts = Counts(
+        incidents=len(incidents),
+        scoreable_detections=len(scoreable),
+        true_detections=true_detections,
+        incidents_caught=hits,
+        point_true_positive=true_positive,
+        point_false_positive=false_positive,
+        point_false_negative=false_negative,
+        overlap_total=sum(overlaps),
+    )
+    rates = counts.rates()
     clean = truth.clean_assets
 
     return DetectorMetrics(
-        incidents=len(incidents),
+        incidents=counts.incidents,
         detections=len(detections),
-        point_precision=point_precision,
-        point_recall=point_recall,
-        point_f1=f1(point_precision, point_recall),
-        event_precision=event_precision,
-        event_recall=event_recall,
-        event_f1=f1(event_precision, event_recall),
-        # Over the SCOREABLE detections, like every other rate here. Counting all of them made
-        # this the one number a partially labelled corpus could not justify: 24 detections on
-        # an unlabelled host turned one correct catch into "25 detections per incident", on the
-        # same page as a line promising those findings were excluded from every rate.
-        detections_per_incident=ratio(len(scoreable), len(incidents)),
+        point_precision=rates["point_precision"],
+        point_recall=rates["point_recall"],
+        point_f1=rates["point_f1"],
+        event_precision=rates["event_precision"],
+        event_recall=rates["event_recall"],
+        event_f1=rates["event_f1"],
+        detections_per_incident=rates["detections_per_incident"],
         mean_latency_seconds=latency,
         misattributed_detections=misattributed,
         unlabelled_detections=unlabelled,
         clean_assets=len(clean),
         clean_assets_detected=sum(1 for asset_id in clean if grouped.get(asset_id)),
         lane_recall=_lane_recall(truth, scoreable),
-        mean_true_detection_overlap=mean(overlaps),
-        scoreable_detections=len(scoreable),
-        true_detections=sum(verdicts),
-        incidents_caught=hits,
-        point_true_positive=true_positive,
-        point_false_positive=false_positive,
-        point_false_negative=false_negative,
+        mean_true_detection_overlap=rates["mean_true_detection_overlap"],
+        scoreable_detections=counts.scoreable_detections,
+        true_detections=counts.true_detections,
+        incidents_caught=counts.incidents_caught,
+        point_true_positive=counts.point_true_positive,
+        point_false_positive=counts.point_false_positive,
+        point_false_negative=counts.point_false_negative,
     )
 
 
@@ -541,12 +593,15 @@ def score_alerts(
         if (count := float(len({lane_of[i] for i in alert.detection_ids if i in lane_of})))
     ]
 
+    counts = Counts(
+        incidents=len(incidents), scoreable_alerts=len(scoreable), incidents_covered=covered
+    )
+    rates = counts.rates()
+
     return AlertMetrics(
         alerts=len(alerts),
-        # Scoreable, for the reason ``detections_per_incident`` is: a queue length per incident
-        # computed over alerts the corpus cannot adjudicate is not a queue anyone measured.
-        alerts_per_incident=ratio(len(scoreable), len(incidents)),
-        incident_coverage=ratio(covered, len(incidents)),
+        alerts_per_incident=rates["alerts_per_incident"],
+        incident_coverage=rates["incident_coverage"],
         precision_at_k=precision_at_k,
         mean_rank_of_true=mean(
             [rank for rank, truthful in enumerate(is_true, start=1) if truthful]
@@ -556,7 +611,6 @@ def score_alerts(
         mean_true_priority=mean([a.priority_score for a in true_alerts]),
         mean_false_priority=mean([a.priority_score for a in false_alerts]),
         mean_lanes_per_true_alert=mean(lanes_per_true),
-        scoreable_alerts=len(scoreable),
-        true_alerts=len(true_alerts),
-        incidents_covered=covered,
+        scoreable_alerts=counts.scoreable_alerts,
+        incidents_covered=counts.incidents_covered,
     )

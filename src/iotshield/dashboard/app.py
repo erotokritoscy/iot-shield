@@ -32,7 +32,7 @@ from iotshield.dashboard.control_client import ControlClient
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV_FORMAT
 
 if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see load_eval_report
-    from iotshield.api.evaluation import BenchSpecSummary, CorporaResponse, DetectorSummary
+    from iotshield.api.evaluation import CorporaResponse, DetectorSummary
     from iotshield.eval.report import EvaluationReport
 
 API_URL_ENV = "IOTSHIELD_API_URL"
@@ -629,7 +629,7 @@ artifact means untrained, ADR-0022), so there is nothing on the wire to prefill 
 blank box is still a legal state — it is reported as a blocker rather than silently
 building an untrained detector. This table disappears the day ``/eval/detectors``
 enumerates each adapter's shipped artifacts, which is the real fix and is why it is
-listed beside ``_bench_spec``'s hardcoded normalizer as a known deferral.
+listed beside ``_composed_spec``'s hardcoded normalizer as a known deferral.
 """
 
 
@@ -684,24 +684,21 @@ def _sweep_widgets(prefix: str, offered: dict[str, ParamInfo]) -> dict[str, list
     return {chosen: swept}
 
 
-def _eval_catalogue() -> tuple[
-    "CorporaResponse", list["DetectorSummary"], list["BenchSpecSummary"], dict[str, Any]
-]:
-    """The Evaluate page's catalogue calls.
+def _eval_catalogue() -> tuple["CorporaResponse", list["DetectorSummary"]]:
+    """What the Evaluate page needs *before* the user has chosen a mode.
 
-    Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale
-    catalogue after the Pipeline API goes away, defeating the saved-report fallback below
-    — which is the page's whole degradation story. The server builds these responses once
-    (``api/evaluation.py``), so the per-rerun cost is local round-trips against a
-    precomputed payload, not repeated introspection.
+    Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale catalogue
+    after the Pipeline API goes away, defeating the saved-report fallback below — which is the
+    page's whole degradation story.
+
+    Only these two. The bench-spec list and the normalizer registry each serve exactly one of
+    two mutually exclusive modes, and Streamlit re-runs this whole script on every widget
+    click — so fetching both here meant one guaranteed-dead round trip per keystroke, and
+    ``/eval/specs`` in particular re-walks the corpus root and re-parses every bench YAML
+    (measured ~21 ms). Each mode fetches its own.
     """
     client = get_control_client()
-    return (
-        client.corpora(),
-        client.eval_detectors(),
-        client.eval_specs(),
-        {info.name: info for info in client.modules().normalizers},
-    )
+    return client.corpora(), client.eval_detectors()
 
 
 def _run_count(sweep: dict[str, list[Any]]) -> int:
@@ -890,9 +887,7 @@ _SHIPPED_SPECS = "Run a committed bench spec"
 _COMPOSE_SPECS = "Compose my own"
 
 
-def _shipped_widgets(
-    bench_specs: list["BenchSpecSummary"], corpus_name: str
-) -> tuple[list[dict[str, Any]], list[str]]:
+def _shipped_widgets(corpus_name: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Pick one or more committed ``config/bench/*.yaml`` and run them **verbatim**.
 
     The point of the mode: what runs is the file, not a reconstruction of it, so a number on
@@ -904,7 +899,7 @@ def _shipped_widgets(
     server derives (``eval.bench``). Offering the rest would put a guaranteed alignment failure
     in a dropdown.
     """
-    fitting = [item for item in bench_specs if corpus_name in item.corpora]
+    fitting = [item for item in get_control_client().eval_specs() if corpus_name in item.corpora]
     if not fitting:
         return [], [
             f"No committed bench spec matches `{corpus_name}`'s input shape. Compose one "
@@ -929,13 +924,14 @@ def _shipped_widgets(
 
 
 def _compose_widgets(
-    detectors: list["DetectorSummary"],
-    corpus: Any,
-    engine: str,
-    normalizers: dict[str, Any],
-    protocol: str,
+    detectors: list["DetectorSummary"], corpus: Any, protocol: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Build specs from detectors picked on screen — the exploratory mode."""
+    """Build specs from detectors picked on screen — the exploratory mode.
+
+    The alert engine is chosen here rather than beside the corpus, because it is only
+    meaningful here: a committed bench spec brings its own, so a picker outside this branch is
+    a control the user can change while nothing happens.
+    """
     # Which detectors this corpus can actually feed, from the lanes the API says it yields.
     # Hardcoding the telemetry lane here was correct only while every corpus was telemetry:
     # once ADR-0026 shipped a flow corpus and a trimodal one, it hid the only detectors that
@@ -948,6 +944,7 @@ def _compose_widgets(
             f"{', '.join(corpus.lanes) or 'none'}."
         ]
 
+    engine = st.selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
     st.subheader("Entries")
     st.caption(
         "One entry is one row of the comparison. Put a single detector in each to compare "
@@ -980,6 +977,10 @@ def _compose_widgets(
             "None of the selected detectors can be trained; they will be evaluated as "
             "configured and the report will say so."
         )
+    # The normalizer registry is fetched here rather than with the page's catalogue: only this
+    # mode composes a spec, so asking for it up front was a round trip the shipped-spec mode
+    # never used, on every widget click.
+    normalizers = {info.name: info for info in get_control_client().modules().normalizers}
     return [
         {
             "label": entry["label"],
@@ -1184,7 +1185,7 @@ def evaluate_page(report_path: Path) -> None:
     )
 
     try:
-        catalogue, detectors, bench_specs, normalizers = _eval_catalogue()
+        catalogue, detectors = _eval_catalogue()
     except _API_ERRORS:
         _saved_report_fallback(report_path)
         return
@@ -1205,11 +1206,10 @@ def evaluate_page(report_path: Path) -> None:
     if not usable:
         return
 
-    columns = st.columns([2, 2, 3])
+    columns = st.columns([2, 3])
     corpus_name = columns[0].selectbox("Corpus", [item.name for item in usable], key="eval_corpus")
     corpus = next(item for item in usable if item.name == corpus_name)
-    engine = columns[1].selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
-    protocol = columns[2].radio(
+    protocol = columns[1].radio(
         "Fit protocol", list(PROTOCOL_HELP), key="eval_protocol", horizontal=True
     )
     st.caption(f"{corpus.cases} case(s) · {corpus.description}")
@@ -1222,9 +1222,9 @@ def evaluate_page(report_path: Path) -> None:
         "Specs", [_SHIPPED_SPECS, _COMPOSE_SPECS], key="eval_spec_mode", horizontal=True
     )
     if mode == _SHIPPED_SPECS:
-        request_specs, problems = _shipped_widgets(bench_specs, corpus_name)
+        request_specs, problems = _shipped_widgets(corpus_name)
     else:
-        request_specs, problems = _compose_widgets(detectors, corpus, engine, normalizers, protocol)
+        request_specs, problems = _compose_widgets(detectors, corpus, protocol)
 
     for problem in problems:
         st.error(problem)

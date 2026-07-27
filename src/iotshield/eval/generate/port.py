@@ -66,13 +66,17 @@ class Calibration:
 class Observed:
     """One device's contribution to one lane of one recording.
 
-    ``expressed`` maps each ``fault_id`` this behaviour actually perturbed to **the instants
-    at which its output differs from the unfaulted world**. It is what makes both an
-    incident's ``lanes`` and its *interval* derived facts. A behaviour with no vocabulary for
-    a fault reports nothing for it, and that is not a gap: a compromised camera really does
-    still read 22 degrees (ADR-0024 D2). The answer key therefore records which modalities
-    carried the signal, and when, because the generator observed it — never because someone
-    typed it.
+    ``expressed`` maps each ``FaultSpec`` this behaviour actually perturbed to **the instants
+    at which its output differs from the unfaulted world**. It is what makes both an incident's
+    ``lanes`` and its *interval* derived facts. A behaviour with no vocabulary for a fault
+    reports nothing for it, and that is not a gap: a compromised camera really does still read
+    22 degrees (ADR-0024 D2). The answer key therefore records which modalities carried the
+    signal, and when, because the generator observed it — never because someone typed it.
+
+    Keyed by the spec object rather than by ``fault_id``: that id is a readable display string
+    (``asset:kind:start_step``), so two faults sharing one would silently merge into a single
+    label, with a comment in the builder asserting uniqueness as the only guard. ``FaultSpec``
+    is frozen and therefore hashable, so the structure guarantees what the comment asserted.
 
     Instants rather than a bare ``True``, because the boolean was answering the wrong
     question. It was set when a *handler existed* for the fault kind, which is a statement
@@ -88,7 +92,7 @@ class Observed:
     """
 
     events: tuple[NormalizedEvent, ...]
-    expressed: Mapping[str, frozenset[datetime]] = field(default_factory=dict)
+    expressed: Mapping[FaultSpec, frozenset[datetime]] = field(default_factory=dict)
 
 
 Streams: TypeAlias = Callable[..., np.random.Generator]

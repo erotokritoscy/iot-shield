@@ -96,7 +96,7 @@ class LogSource:
             severity, text = _ROUTINE[int(rng.integers(0, len(_ROUTINE)))]
             lines.append((step, severity, f"[{profile.app}] {text} seq={index}"))
 
-        expressed: dict[str, frozenset[datetime]] = {}
+        expressed: dict[FaultSpec, frozenset[datetime]] = {}
         for fault in faults:
             handler = self._handlers.get(fault.kind)
             if handler is None:
@@ -109,7 +109,7 @@ class LogSource:
             )
             lines.extend(injected)
             if injected:
-                expressed[fault.fault_id] = frozenset(clock.at(step) for step, _, _ in injected)
+                expressed[fault] = frozenset(clock.at(step) for step, _, _ in injected)
 
         events = tuple(
             NormalizedEvent(

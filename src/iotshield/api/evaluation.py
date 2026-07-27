@@ -34,7 +34,7 @@ from iotshield.capabilities import formats_in, lanes_in
 from iotshield.contracts import Lane
 from iotshield.detect import Fittable
 from iotshield.eval import CorpusUnavailable, EvaluationReport, FitProtocol, evaluate, load_corpus
-from iotshield.eval.bench import list_bench_specs
+from iotshield.eval.bench import benchmarkable, list_bench_specs
 from iotshield.eval.bundle import BundleError
 from iotshield.eval.corpus import corpus_root, fetchable, list_corpora
 from iotshield.eval.sweep import expand
@@ -257,7 +257,7 @@ def create_eval_router() -> APIRouter:
         can edit while the server runs, and a benchmark replaying a spec the YAML no longer
         says is the exact class of divergence this endpoint exists to close.
         """
-        shapes = [(info.name, info.source_formats) for info in list_corpora() if not info.error]
+        shapes = benchmarkable(list_corpora())
         return [
             BenchSpecSummary(
                 name=bench.name,

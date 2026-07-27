@@ -56,9 +56,34 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Protocol, TypeVar
 
 from iotshield.contracts import Lane
 from iotshield.detect import merge_runs
+
+
+class Finding(Protocol):
+    """The shape everything downstream judges: something about one asset over one window.
+
+    ``DetectionResult`` and ``PrioritizedAlert`` share it through ``_WindowedContract``, so the
+    matching rules are written once instead of once per level — which is what stops the two
+    altitudes drifting apart on the one question they must answer identically.
+
+    It lives here, beside ``Incident``, because it is the *vocabulary* both scoring and the fit
+    protocols speak: an asset-attributed window, compared against an asset-attributed window.
+    Defining it in ``score`` made ``fit`` import from ``score`` to describe what it filters — a
+    sideways arrow from training to judging, justified only by where the type happened to sit.
+    """
+
+    @property
+    def asset_id(self) -> str: ...
+    @property
+    def window_start(self) -> datetime: ...
+    @property
+    def window_end(self) -> datetime: ...
+
+
+FindingT = TypeVar("FindingT", bound=Finding)
 
 
 def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
@@ -105,6 +130,12 @@ class Incident:
         because ``Observed.expressed`` measures it — so this fallback only ever governs the
         corpora that genuinely do not know, and on a single-lane corpus the two readings are
         indistinguishable anyway.
+
+        Note ``score._lane_recall`` reads the *same* empty set the opposite way, as "this
+        corpus declares no lanes, so per-lane recall is undefined" — and both readings are
+        right for what they answer. Point metrics must flag the rows or the fault is
+        unfindable; per-lane recall must stay silent rather than invent a lane nobody claimed.
+        A third consumer of ``lanes`` has to choose deliberately rather than by default.
         """
         return not self.lanes or lane in self.lanes
 

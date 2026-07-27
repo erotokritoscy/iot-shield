@@ -129,7 +129,9 @@ is the width column: of a true detection's window, how much was actually fault â
 recording-wide detection scores evP 1.00 and ovl 0.04.
 
 `--fit-protocol prefix` reserves the first 20% of each asset's clock (capped at its first
-fault) for training and **does not score it**. There is no `holdout`: no bundle format can
+fault) for training and **does not score it**. Rates are defined once, on `score.Counts`:
+`score_detections` asks it for one case's, `SpecReport.summary` for the sum of them, so a
+per-case column and the headline cannot disagree about a denominator. There is no `holdout`: no bundle format can
 carry a holdout recording, so the option was removed rather than left as a table of zeros.
 
 Note `team3_zscore`'s committed artifact is trained on SKAB's channels, so it cannot judge

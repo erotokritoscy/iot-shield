@@ -81,9 +81,7 @@ class SensorRig:
             for channel, (mean, spread) in _NORMAL.items()
         }
         expressed = {
-            fault.fault_id: perturbed
-            for fault in faults
-            if (perturbed := self._apply(series, fault, clock))
+            fault: perturbed for fault in faults if (perturbed := self._apply(series, fault, clock))
         }
 
         # Hoisted out of the comprehension, for the reason `to_stub_csv` documents: per-cell

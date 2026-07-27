@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from iotshield.contracts import Lane
-from iotshield.eval.score import AlertMetrics, DetectorMetrics, f1, mean, ratio
+from iotshield.eval.score import AlertMetrics, Counts, DetectorMetrics, mean, ratio
 
 
 def _utc_now() -> datetime:
@@ -101,9 +101,28 @@ class CaseReport(BaseModel):
     point_false_positive: int = 0
     point_false_negative: int = 0
     scoreable_alerts: int = 0
-    true_alerts: int = 0
     incidents_covered: int = 0
     timeline: CaseTimeline | None = None
+
+    @property
+    def counts(self) -> Counts:
+        """This row's tallies, in the shape ``score`` forms rates from.
+
+        The mean overlap is turned back into its own numerator here, so pooling stays plain
+        addition: ``true_detections`` is exactly the count it was averaged over.
+        """
+        return Counts(
+            incidents=self.incidents,
+            scoreable_detections=self.scoreable_detections,
+            true_detections=self.true_detections,
+            incidents_caught=self.incidents_caught,
+            point_true_positive=self.point_true_positive,
+            point_false_positive=self.point_false_positive,
+            point_false_negative=self.point_false_negative,
+            scoreable_alerts=self.scoreable_alerts,
+            incidents_covered=self.incidents_covered,
+            overlap_total=(self.mean_true_detection_overlap or 0.0) * self.true_detections,
+        )
 
     @classmethod
     def build(
@@ -149,8 +168,10 @@ class SpecReport(BaseModel):
             [value for case in self.cases if (value := getattr(case, attribute)) is not None]
         )
 
-    def _total(self, attribute: str) -> int:
-        return sum(getattr(case, attribute) for case in self.cases)
+    @property
+    def counts(self) -> Counts:
+        """Every case's tallies, added up — the corpus-level numerator of every rate."""
+        return sum((case.counts for case in self.cases), Counts())
 
     @property
     def cases_fitted(self) -> int:
@@ -165,9 +186,12 @@ class SpecReport(BaseModel):
         it passed it through, and a clean detector with a ratio below 1 means the alert
         layer is *splitting* incidents rather than merging them (ADR-0021 D2).
         """
-        incidents = self._total("incidents")
-        alerts = self._total("scoreable_alerts")
-        return self._total("scoreable_detections") / alerts if incidents and alerts else None
+        counts = self.counts
+        return (
+            ratio(counts.scoreable_detections, counts.scoreable_alerts)
+            if counts.incidents
+            else None
+        )
 
     def summary(self) -> dict[str, float | None]:
         """The corpus-level numbers, **pooled from counts** rather than averaged from rates.
@@ -182,42 +206,20 @@ class SpecReport(BaseModel):
         Pooling fixes it because a false alarm on a clean case still lands in the *denominator*
         of precision: there is no incident to recall, but there is a detection to be wrong
         about. It also removes an unstated macro-average — a 3-case recording used to weigh as
-        much as a 300-case one — and it is the same rule ``score`` already applies within a
-        case, now applied one level up rather than approximated.
+        much as a 300-case one.
+
+        The rates themselves come from ``score.Counts``, the same object ``score_detections``
+        asks within a case, so "the same rule one level up" is literal rather than transcribed:
+        there is no second place where event precision's denominator is decided.
 
         The per-case table keeps its own rates and its ``-`` where a rate does not exist; only
         the aggregate changes. ``detections`` and ``alerts`` stay means, because those columns
         report "per case" and always did.
         """
-        incidents = self._total("incidents")
-        point_positive = self._total("point_true_positive")
-        event_precision = ratio(self._total("true_detections"), self._total("scoreable_detections"))
-        event_recall = ratio(self._total("incidents_caught"), incidents)
-        point_precision = ratio(
-            point_positive, point_positive + self._total("point_false_positive")
-        )
-        point_recall = ratio(point_positive, point_positive + self._total("point_false_negative"))
         return {
-            "event_f1": f1(event_precision, event_recall),
-            "event_precision": event_precision,
-            "event_recall": event_recall,
-            "point_f1": f1(point_precision, point_recall),
+            **self.counts.rates(),
             "detections": self._mean("detections"),
             "alerts": self._mean("alerts"),
-            "detections_per_incident": ratio(self._total("scoreable_detections"), incidents),
-            "alerts_per_incident": ratio(self._total("scoreable_alerts"), incidents),
-            "incident_coverage": ratio(self._total("incidents_covered"), incidents),
-            # Weighted by how many true detections each case contributed, which is what makes
-            # it a pooled mean rather than a mean of means: `true_detections` is exactly the
-            # count `mean_true_detection_overlap` was averaged over inside the case.
-            "mean_true_detection_overlap": ratio(
-                sum(
-                    case.mean_true_detection_overlap * case.true_detections
-                    for case in self.cases
-                    if case.mean_true_detection_overlap is not None
-                ),
-                self._total("true_detections"),
-            ),
             "compression_ratio": self.compression_ratio,
         }
 

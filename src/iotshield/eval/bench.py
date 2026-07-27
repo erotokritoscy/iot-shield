@@ -12,15 +12,23 @@ The pairing is **derived, not declared**. A spec's ``sources`` and a corpus's
 ``corpus:`` field on each spec would say the same thing while being free to drift from the
 thing it describes; this cannot.
 
-Specs are addressed by **name** (the file stem), never by path. A caller that names a path is
-a caller that can read any file on the host (ADR-0018 §9-A), and this is reached from the API.
+The root follows ``corpus.corpus_root``'s pattern exactly — explicit argument, else
+``IOTSHIELD_BENCH_PATH``, else the repository's own — because it is the same kind of fact:
+*where files live* is a deployment property. Deriving it from ``__file__`` alone happens to
+work for an editable install and a repo-shaped image, and fails silently everywhere else: a
+non-editable wheel resolves to the site-packages parent, every listing comes back empty, and
+the dashboard blames the corpus for a missing directory.
 """
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from iotshield.eval.corpus import CorpusInfo
 from iotshield.pipeline import PipelineSpec, load_spec
+
+BENCH_PATH_ENV = "IOTSHIELD_BENCH_PATH"
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BENCH_ROOT = _REPO_ROOT / "config" / "bench"
@@ -48,7 +56,11 @@ class BenchSpec:
 
 
 def bench_root(root: Path | None = None) -> Path:
-    return root if root is not None else DEFAULT_BENCH_ROOT
+    """The directory bench specs live in: explicit argument, else env, else the repo's own."""
+    if root is not None:
+        return root
+    configured = os.environ.get(BENCH_PATH_ENV, "").strip()
+    return Path(configured) if configured else DEFAULT_BENCH_ROOT
 
 
 def list_bench_specs(root: Path | None = None) -> list[BenchSpec]:
@@ -70,36 +82,30 @@ def list_bench_specs(root: Path | None = None) -> list[BenchSpec]:
     return specs
 
 
-def load_bench_spec(name: str, root: Path | None = None) -> PipelineSpec:
-    """One shipped spec by name, or a message naming the ones that exist."""
-    directory = bench_root(root)
-    path = directory / f"{name}.yaml"
-    # Resolved and contained for the reason `bundle.contained` gives: this name arrives from a
-    # CLI flag and an API request, and `../../etc/passwd` is a name too.
-    if path.resolve().parent != directory.resolve() or not path.is_file():
-        available = ", ".join(spec.name for spec in list_bench_specs(root)) or "none"
-        raise ValueError(f"unknown bench spec {name!r}; available: {available}")
-    return load_spec(path)
+# There is deliberately no `load_bench_spec(name)`. A by-name loader needs a containment check
+# and an availability message, and both already exist (`bundle.contained`, `load_corpus`) — but
+# nothing addresses a spec by name: the CLI takes `--spec <path>` through `pipeline.load_spec`,
+# and the API publishes the parsed `PipelineSpec` so a client forwards the object. A complete
+# addressing scheme with no caller is a second, differently-worded security rule that nothing
+# exercises. It arrives with its caller, if one ever appears.
 
 
-def pairings(
-    corpora: Sequence[tuple[str, Sequence[str]]], root: Path | None = None
-) -> list[tuple[str, list[str]]]:
-    """For each ``(corpus name, source formats)``, the shipped specs that can benchmark it.
+def benchmarkable(infos: Sequence[CorpusInfo]) -> list[tuple[str, Sequence[str]]]:
+    """The corpora a spec could actually run on, as ``(name, source formats)``.
 
-    Corpora arrive as pairs rather than being read here, so this module never depends on the
-    corpus root and the caller keeps whatever listing it already paid for.
+    The filter is the point: a bundle that will not load has no input shape to match against,
+    so including it would offer a pairing that cannot run. Two surfaces need this (the CLI's
+    pairing table and ``/eval/specs``), and "remember to drop the broken ones" is not a rule to
+    keep in two heads.
     """
-    specs = list_bench_specs(root)
-    return [
-        (name, [spec.name for spec in specs if spec.fits(formats)]) for name, formats in corpora
-    ]
+    return [(info.name, info.source_formats) for info in infos if not info.error]
 
 
-def render_pairings(corpora: Sequence[tuple[str, Sequence[str]]], root: Path | None = None) -> str:
+def render_pairings(infos: Sequence[CorpusInfo], root: Path | None = None) -> str:
     """The pairing table as text, for a CLI that has been asked to guess and will not."""
+    specs = list_bench_specs(root)
     lines = ["Corpora and the shipped specs that fit them:"]
-    for name, spec_names in pairings(corpora, root):
-        fits = ", ".join(f"config/bench/{spec}.yaml" for spec in spec_names) or "(none)"
-        lines.append(f"  --corpus {name:<16} --spec {fits}")
+    for name, formats in benchmarkable(infos):
+        fits = ", ".join(f"config/bench/{spec.name}.yaml" for spec in specs if spec.fits(formats))
+        lines.append(f"  --corpus {name:<16} --spec {fits or '(none)'}")
     return "\n".join(lines)

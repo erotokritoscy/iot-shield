@@ -15,9 +15,10 @@ an operator's triage queue (ADR-0021 D1).
 from collections.abc import Sequence
 from typing import Any
 
+from iotshield.contracts import DetectionResult, PrioritizedAlert
 from iotshield.detect._fitted import is_fitted
 from iotshield.eval.corpus import Case, Corpus
-from iotshield.eval.fit import FitProtocol, prepare_detector, reserve
+from iotshield.eval.fit import FitProtocol, Reservation, prepare_detector, reserve
 from iotshield.eval.report import (
     TIMELINE_SPAN_CAP,
     CaseReport,
@@ -26,6 +27,7 @@ from iotshield.eval.report import (
     SpecReport,
 )
 from iotshield.eval.score import score_alerts, score_detections
+from iotshield.eval.truth import GroundTruth
 from iotshield.pipeline import (
     NormalizedInputs,
     PipelineSpec,
@@ -35,7 +37,6 @@ from iotshield.pipeline import (
 )
 from iotshield.pipeline.compat import CompatLevel, check_compatibility
 from iotshield.pipeline.config import config_fingerprint
-from iotshield.sink import RunResult
 
 
 def _check_alignment(spec: PipelineSpec, case: Case) -> None:
@@ -88,15 +89,25 @@ def _compatibility_notes(spec: PipelineSpec) -> list[str]:
     ]
 
 
-def _timeline(case: Case, result: RunResult) -> CaseTimeline:
-    """Capture where truth, detections and alerts fell — capped, and honest about it."""
-    detections = [(d.window_start, d.window_end) for d in result.detections]
-    alerts = [(a.window_start, a.window_end) for a in result.alerts]
+def _timeline(
+    truth: GroundTruth,
+    detections: Sequence[DetectionResult],
+    alerts: Sequence[PrioritizedAlert],
+) -> CaseTimeline:
+    """Capture where truth, detections and alerts fell — capped, and honest about it.
+
+    Drawn from the **scored** truth and findings, not the raw run. A chart of spans the table
+    beside it deliberately does not count is the same misreading the notes exist to prevent,
+    and under ``--fit-protocol prefix --with-timeline`` that is exactly what an unfiltered
+    timeline would show.
+    """
+    detection_spans = [(d.window_start, d.window_end) for d in detections]
+    alert_spans = [(a.window_start, a.window_end) for a in alerts]
     return CaseTimeline(
-        truth=[(incident.start, incident.end) for incident in case.truth.incidents],
-        detections=detections[:TIMELINE_SPAN_CAP],
-        alerts=alerts[:TIMELINE_SPAN_CAP],
-        truncated=max(len(detections), len(alerts)) > TIMELINE_SPAN_CAP,
+        truth=[(incident.start, incident.end) for incident in truth.incidents],
+        detections=detection_spans[:TIMELINE_SPAN_CAP],
+        alerts=alert_spans[:TIMELINE_SPAN_CAP],
+        truncated=max(len(detection_spans), len(alert_spans)) > TIMELINE_SPAN_CAP,
     )
 
 
@@ -130,6 +141,7 @@ def evaluate_case(
     protocol: FitProtocol,
     include_timeline: bool = False,
     ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
+    reservation_cache: dict[str, Reservation] | None = None,
     spec_notes: Sequence[str] = (),
 ) -> CaseReport:
     """Run one spec over one labelled case and score both levels.
@@ -157,12 +169,21 @@ def evaluate_case(
         ingested = cached
 
     # What the protocol takes for training is what scoring must not look at — one object, so
-    # the two ends cannot drift (``fit.Reservation``).
-    reservation = reserve(case.truth, protocol)
+    # the two ends cannot drift (``fit.Reservation``). Memoized beside ingest for the same
+    # reason: it depends only on the case and the protocol, both invariant across the specs of
+    # one call, so a sweep of N values would otherwise recompute it N times (measured 0.1 s per
+    # 16-case spec-run on SKAB).
+    if reservation_cache is None:
+        reservation = reserve(case.truth, protocol)
+    else:
+        reservation = reservation_cache.setdefault(case.name, reserve(case.truth, protocol))
+    # Selected once, not once per detector: the choice depends on no detector, so calling it
+    # inside the comprehension was a full scan of the recording per detector — and under
+    # `none`, where `prepare_detector` returns on its first line, a scan whose result was
+    # always discarded (measured at 18% of a trimodal run).
+    training = reservation.training(ingested.events) if protocol is not FitProtocol.NONE else []
     outcomes = [
-        prepare_detector(
-            detector, protocol=protocol, training=reservation.training(ingested.events)
-        )
+        prepare_detector(detector, protocol=protocol, training=training)
         for detector in build_detectors(spec)
     ]
     # An untrained detector the protocol could not fit is dropped rather than called: its
@@ -199,7 +220,7 @@ def evaluate_case(
             | set(spec_notes)
             | set(ingested.warnings)
         ),
-        timeline=_timeline(case, result) if include_timeline else None,
+        timeline=(_timeline(reservation.truth, detections, alerts) if include_timeline else None),
     )
 
 
@@ -211,6 +232,7 @@ def evaluate_spec(
     protocol: FitProtocol,
     include_timeline: bool = False,
     ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
+    reservation_cache: dict[str, Reservation] | None = None,
 ) -> SpecReport:
     # Once per spec, not once per case: the guard reads the spec's shape and nothing about
     # the data, so its verdict is identical for every recording in the corpus.
@@ -226,6 +248,7 @@ def evaluate_spec(
                 protocol=protocol,
                 include_timeline=include_timeline,
                 ingest_cache=ingest_cache,
+                reservation_cache=reservation_cache,
                 spec_notes=spec_notes,
             )
             for case in corpus.cases
@@ -248,6 +271,7 @@ def evaluate(
     events are large, and a process-wide cache would pin every corpus ever benchmarked.
     """
     ingest_cache: dict[tuple[Any, ...], NormalizedInputs] = {}
+    reservation_cache: dict[str, Reservation] = {}
     return EvaluationReport(
         corpus=corpus.name,
         corpus_description=corpus.description,
@@ -262,6 +286,7 @@ def evaluate(
                 protocol=protocol,
                 include_timeline=include_timeline,
                 ingest_cache=ingest_cache,
+                reservation_cache=reservation_cache,
             )
             for label, spec in specs
         ],
