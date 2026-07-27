@@ -207,30 +207,58 @@ corpus: synthetic - Synthetic rig telemetry: 11 recordings, 9 injected faults
   11 case(s), 9 labelled incident(s)   fit protocol: none
 
 case                      inc   det  alerts    evF1  det/inc  alt/inc   latency
-spike-0                     1    60       1    1.00    60.00     1.00       31s
-drift-0                     1    56       1    1.00    56.00     1.00       47s
+spike-0                     1    62       1    1.00    62.00     1.00       29s
+drift-0                     1    53       1    1.00    53.00     1.00       54s
 stuck-0                     1     0       0    0.00     0.00     0.00         -
 clean-0                     0     0       0       -        -        -         -
 ```
 
 Three things that table is showing. **`stuck` is invisible** to a fixed threshold — the
 sensor freezes at an in-range value, so only a detector that models *normal* can see it;
-that is the shape the corpus exists to discriminate on. **`det/inc 60`** is fragmentation:
-one fault became 60 detections, which the alert layer compressed to 1. And **`-` means
+that is the shape the corpus exists to discriminate on. **`det/inc 62`** is fragmentation:
+one fault became 62 detections, which the alert layer compressed to 1. And **`-` means
 undefined, not zero** — a clean recording has no fault to recall.
 
 ### Corpora
 
 ```
 uv run python -m iotshield.eval list        # what is here
-uv run python -m iotshield.eval generate    # rebuild the committed corpus
+uv run python -m iotshield.eval generate    # rebuild every committed corpus
 uv run python -m iotshield.eval fetch skab  # convert a SKAB checkout into local bundles
 ```
 
-A corpus is a **bundle** in `data/eval/` — a manifest, gzipped readings, interval labels —
-and they are *discovered*, so **adding your own is dropping in a directory, not writing
-code**. `synthetic` ships in this repository, so a fresh clone can benchmark immediately.
-SKAB is GPLv3 and therefore converted locally rather than redistributed.
+A corpus is a **bundle** in `data/eval/` — a manifest, gzipped readings, per-asset interval
+labels — and they are *discovered*, so **adding your own is dropping in a directory, not
+writing code**. Three ship in this repository, so a fresh clone can benchmark immediately:
+`synthetic` (telemetry), `fleet_scan` (multi-device network flow) and `device_trimodal` (one
+device on all three lanes). SKAB is GPLv3 and therefore converted locally rather than
+redistributed.
+
+**A finding is judged against the incident on its own device**, never on time alone
+(ADR-0026). That is what lets a fleet corpus measure the thing worth measuring — not whether
+the scanner was caught, but whether the rest of the fleet stayed quiet. A device
+listed with no incidents is *asserted clean*, so an alert on it is an unambiguous false alarm;
+a device the corpus does not list is out of scope and its findings are counted but never
+scored. The report adds `misattributed_detections` for a detection that fired at the right
+moment on the wrong device — which, under time-only matching, counted as a correct catch.
+
+Two questions the shipped corpora answer that a demo cannot:
+
+```
+# Is the flow detector's hand-chosen 20-peer threshold defensible?
+uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
+    --sweep threshold=8,15,20,27,35
+
+# Does cross-lane corroboration improve the queue? Same bundle, same bytes, two specs
+# differing only in how many lanes are judged.
+uv run python -m iotshield.eval --corpus device_trimodal \
+    --spec config/bench/trimodal_telemetry.yaml --spec config/bench/trimodal_all.yaml
+```
+
+Writing your own corpus generator is two objects: a `Behaviour` (what a device's normal looks
+like on one lane, and what a fault does to it) and a `Renderer` (events to wire text). The
+labels are then *derived* from what the behaviour actually perturbed rather than annotated by
+hand, and a meta-test holds the renderer to being the exact inverse of the matching normalizer.
 
 Add `--fit-protocol prefix` to let detectors implementing the optional `Fittable` capability
 relearn their baseline from each case's own clean history; ones that cannot are evaluated as

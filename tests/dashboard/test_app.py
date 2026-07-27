@@ -516,3 +516,60 @@ class TestEvaluateRun:
         at.sidebar.radio[0].set_value("Evaluate").run()
         assert not at.exception
         assert any("unreachable" in str(w.value) for w in at.warning)
+
+
+class TestBenchSpecMatchesEveryCorpusShape:
+    """The Evaluate page composes a spec on the user's behalf, so it must compose a valid one.
+
+    Its sources used to be a hardcoded single stub-csv entry, which was right only while every
+    corpus was single-lane telemetry. A benchmark checks a case's inputs against the spec's
+    `sources` positionally and by format (`runner._check_alignment`), so a flow or multi-lane
+    corpus would be offered in the picker and then refused on run — worse than not shipping it
+    (ADR-0026).
+    """
+
+    def _normalizers(self) -> dict[str, object]:
+        """The catalogue exactly as the API builds it, so the page is tested against the wire
+        shape it really receives rather than a stand-in that could drift from it."""
+        from iotshield.api.control import _module_info
+        from iotshield.pipeline.registry import NORMALIZERS
+
+        return {name: _module_info("normalizer", name, spec) for name, spec in NORMALIZERS.items()}
+
+    def test_it_builds_one_source_per_declared_format(self) -> None:
+        spec = dashboard_app._bench_spec(
+            "flow_burst", {}, "weighted", ["stub-csv", "syslog", "flow-csv"], self._normalizers()
+        )
+        assert [source["source_format"] for source in spec["sources"]] == [
+            "stub-csv",
+            "syslog",
+            "flow-csv",
+        ]
+
+    def test_it_resolves_each_normalizer_from_the_registry(self) -> None:
+        # By declared capability, not by name — so a newly registered normalizer works here
+        # with no change, and a rename cannot silently break the page.
+        spec = dashboard_app._bench_spec(
+            "flow_burst", {}, "weighted", ["flow-csv"], self._normalizers()
+        )
+        assert spec["sources"] == [{"normalizer": "flow", "source_format": "flow-csv"}]
+
+    def test_every_discoverable_corpus_composes_a_spec_that_survives_alignment(self) -> None:
+        """The end-to-end guard: whatever the picker can offer, the harness must accept.
+
+        Discovered from the corpus root rather than named, so a corpus added later is covered
+        automatically.
+        """
+        from iotshield.eval import list_corpora, load_corpus
+        from iotshield.eval.runner import _check_alignment
+        from iotshield.pipeline import PipelineSpec
+
+        infos = list_corpora()
+        assert infos, "no corpora discovered: this test would be vacuous"
+        for info in infos:
+            payload = dashboard_app._bench_spec(
+                "stub_threshold", {}, "weighted", list(info.source_formats), self._normalizers()
+            )
+            spec = PipelineSpec.model_validate(payload)
+            for case in load_corpus(info.name).cases:
+                _check_alignment(spec, case)

@@ -146,12 +146,18 @@ class TestReport:
         assert spec_report.compression_ratio > 10
 
 
+RIG = "skab-testbed"
+"""The asset the inline readings below describe.
+
+One constant for the readings *and* the answer key, because they must agree: truth is matched
+per asset (ADR-0026), so labelling one device while the rows describe another scores a silent
+zero — which is exactly what this helper did on first run after the rewrite.
+"""
+
+
 def synthetic_corpus(*, flags: list[bool], values: list[float]) -> Corpus:
     """A one-case corpus from inline readings and labels — no external dataset."""
-    rows = [
-        f"{at(index).isoformat()},skab-testbed,Pressure,{value}"
-        for index, value in enumerate(values)
-    ]
+    rows = [f"{at(index).isoformat()},{RIG},Pressure,{value}" for index, value in enumerate(values)]
     return Corpus(
         name="synthetic",
         description="synthetic recording",
@@ -159,7 +165,7 @@ def synthetic_corpus(*, flags: list[bool], values: list[float]) -> Corpus:
             Case(
                 name="synthetic",
                 inputs=[CaseInput(STUB_CSV, "\n".join(rows) + "\n")],
-                truth=truth_of(flags),
+                truth=truth_of(flags, asset_id=RIG),
             )
         ],
     )

@@ -49,6 +49,13 @@ class CorpusSummary(BaseModel):
     provenance: str
     licence: str
     cases: int
+    source_formats: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The input shape a spec must declare to benchmark this corpus: one source format "
+            "per position, in order. A UI composing a spec needs it to build one that fits."
+        ),
+    )
 
 
 class CorporaResponse(BaseModel):
@@ -160,6 +167,7 @@ def create_eval_router() -> APIRouter:
                     provenance=info.provenance,
                     licence=info.licence,
                     cases=info.cases,
+                    source_formats=list(info.source_formats),
                 )
                 for info in list_corpora()
             ],

@@ -299,7 +299,20 @@ view** consumes §5.1's frozen schema, so it lands in Bucket C after the schema 
 **Touches.** A new web app (e.g. `dashboard-web/`), compose topology, the two API clients'
 JS equivalents. No contract or compute change.
 
-### 5.5 Corpus enrichment · *overlaps Panayiotis's LEAD · Buckets A+C*
+### 5.5 Corpus enrichment · *overlaps Panayiotis's LEAD · Buckets A+C* — **Bucket A SHIPPED (ADR-0026)**
+
+> **Status 2026-07-27.** The Bucket-A half is done, and it was materially larger than this
+> section assumed: not "add labelled corpora" but a breaking change to what an answer key
+> *means*. Truth is now per asset and scoring matches on (asset, time), because a fleet corpus
+> judged on time alone scores an innocent device's false alarm as a correct catch. The generator
+> was rebuilt as a world plus two ports (`Behaviour`, `Renderer`) so a lane, a dialect, a fault
+> or a corpus is each a single addition. `fleet_scan` and `device_trimodal` ship committed.
+>
+> Both gaps this section names are closed, and both measurements went somewhere useful: the
+> flow lane's shipped 20-peer threshold is **not** the best operating point on labelled data
+> (27 holds recall at precision 1.00), and corroboration is now a benchmark — true-alert
+> priority 74.95 → 86.74 over byte-identical evidence, 1 → 3 backing lanes. LEAD remains
+> Bucket C. See ADR-0026 for the full result set and its caveats.
 
 **What.** Add labelled corpora — most importantly a **flow** corpus and a **multimodal**
 corpus — using the synthetic generator the harness already has, and by converting additional
@@ -374,14 +387,20 @@ it.
 These are the artifacts that dissolve the two entanglements. They are authored now because
 their inputs (the teammate shapes) are already specified in `docs/integration/`.
 
-- **ADR-0025 (proposed) — the evidence schema + enrichment precedence.** Defines the keys
+> **Numbering correction (2026-07-27).** The provisional numbers below were claimed by work
+> that landed first: **0025** is the pass-through normalizer (§5.2) and **0026** is multi-asset
+> ground truth + the corpus generator (§5.5). So the two records here are **0027** (evidence
+> schema) and **0028** (scikit-learn). Numbers are first-come; the *content* of both is
+> unchanged.
+
+- **ADR-0027 (proposed) — the evidence schema + enrichment precedence.** Defines the keys
   every detector agrees to emit in `DetectionResult.evidence`, designed against all three
   producers (team3 z-score channel attribution, Panayiotis meter feature attribution,
   Antonia rule-match evidence). Defines the precedence for `threat_class` /
   `recommended_action`: **authored rule enrichment > heuristic shape label**; the heuristic
   is the fallback for unsupervised detectors. Frozen once the teammate shapes are pinned by
   their landed code. (Number provisional; assigned when written.)
-- **ADR-0026 (proposed) — scikit-learn in the runtime.** Records the first scikit-learn
+- **ADR-0028 (proposed) — scikit-learn in the runtime.** Records the first scikit-learn
   runtime dependency with its image-size cost, names **both** Isolation Forests as its users,
   and establishes the shared `Fittable`/artifact/attribution scaffolding both reuse. Whoever's
   code lands first is the first user; the other references it. (Number provisional.)

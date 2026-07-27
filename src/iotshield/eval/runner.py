@@ -150,8 +150,10 @@ def evaluate_case(
     return CaseReport.build(
         case=case.name,
         detector_metrics=score_detections(case.truth, result.detections),
-        # The engine ranks its output, and precision@k reads positions in that ranking.
-        alert_metrics=score_alerts(case.truth, result.alerts),
+        # The engine ranks its output, and precision@k reads positions in that ranking. The
+        # detections ride along so the alert level can report how many lanes backed each
+        # true alert — the direct evidence that cross-lane corroboration fired.
+        alert_metrics=score_alerts(case.truth, result.alerts, result.detections),
         # "Fitted" only if every detector that was asked to fit actually did — a partially
         # fitted chain must not read as a clean fitted run.
         fitted=all(o.fitted for o in outcomes) and protocol is not FitProtocol.NONE,

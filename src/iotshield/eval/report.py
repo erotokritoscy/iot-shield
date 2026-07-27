@@ -16,7 +16,8 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from iotshield.eval.score import AlertMetrics, DetectorMetrics
+from iotshield.contracts import Lane
+from iotshield.eval.score import AlertMetrics, DetectorMetrics, mean
 
 
 def _utc_now() -> datetime:
@@ -76,6 +77,18 @@ class CaseReport(BaseModel):
     mean_latency_seconds: float | None
     mean_rank_of_true: float | None
     precision_at_k: dict[int, float | None] = Field(default_factory=dict)
+    # Asset-aware fields (ADR-0026). Defaulted so an older report still parses, and so a
+    # single-asset corpus — where every one of them is 0 or empty — reads unchanged.
+    misattributed_detections: int = 0
+    unlabelled_detections: int = 0
+    unlabelled_alerts: int = 0
+    clean_assets: int = 0
+    clean_assets_detected: int = 0
+    clean_assets_alerted: int = 0
+    lane_recall: dict[Lane, float | None] = Field(default_factory=dict)
+    mean_true_priority: float | None = None
+    mean_false_priority: float | None = None
+    mean_lanes_per_true_alert: float | None = None
     timeline: CaseTimeline | None = None
 
     @classmethod
@@ -120,8 +133,9 @@ class SpecReport(BaseModel):
         clean and faulty recordings honest: the clean ones have no recall to average in, and
         counting them as 0.0 would silently drag every rate down.
         """
-        values = [value for case in self.cases if (value := getattr(case, attribute)) is not None]
-        return sum(values) / len(values) if values else None
+        return mean(
+            [value for case in self.cases if (value := getattr(case, attribute)) is not None]
+        )
 
     @property
     def cases_fitted(self) -> int:
@@ -258,5 +272,50 @@ def render(report: EvaluationReport) -> str:
             )
         notes = {note for case in spec.cases for note in case.notes}
         lines.extend(f"  ! {note}" for note in sorted(notes))
+        lines.extend(f"  * {fact}" for fact in _attribution(spec))
 
     return "\n".join(lines)
+
+
+def _attribution(spec: SpecReport) -> list[str]:
+    """Multi-asset facts the fixed-width table has no column for (ADR-0026).
+
+    Printed only when non-zero, so a single-asset corpus renders exactly as it always did.
+    They earn the space because each is a number that used to be invisible: a detection at
+    the right moment on the wrong device scored as a correct catch, an asserted-clean device
+    raising an alert was indistinguishable from a real catch elsewhere, and findings on an
+    unlabelled device were silently folded into rates the corpus could not justify.
+    """
+    facts: list[str] = []
+    misattributed = sum(case.misattributed_detections for case in spec.cases)
+    if misattributed:
+        facts.append(
+            f"{misattributed} detection(s) fired at a faulty moment on a DIFFERENT asset "
+            "(counted as false positives, not catches)"
+        )
+    alerted = sum(case.clean_assets_alerted for case in spec.cases)
+    if alerted:
+        clean = sum(case.clean_assets for case in spec.cases)
+        facts.append(f"{alerted} of {clean} asserted-clean asset(s) raised alerts")
+    unscored = sum(case.unlabelled_detections + case.unlabelled_alerts for case in spec.cases)
+    if unscored:
+        facts.append(
+            f"{unscored} finding(s) on assets the corpus does not label: excluded from "
+            "every rate, never counted as false"
+        )
+    # Averaged over the cases where each lane is defined, the same rule as every other mean
+    # in this report: a case that labelled no flow incident must not drag flow recall down.
+    lanes: dict[Lane, list[float]] = {}
+    for case in spec.cases:
+        for lane, value in case.lane_recall.items():
+            if value is not None:
+                lanes.setdefault(lane, []).append(value)
+    if lanes:
+        # Averaged inline rather than through `score.mean`: that helper's job is to return
+        # None for "nothing to average", and these lists are non-empty by construction (a
+        # lane only appears here once a defined value was appended).
+        rendered = ", ".join(
+            f"{lane}={sum(values) / len(values):.2f}" for lane, values in sorted(lanes.items())
+        )
+        facts.append(f"per-lane event recall: {rendered}")
+    return facts

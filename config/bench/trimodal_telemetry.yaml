@@ -1,0 +1,37 @@
+# Corroboration A/B, arm A: three lanes ingested, ONE lane judged (ADR-0026).
+#
+# Read this file beside config/bench/trimodal_all.yaml. They are identical except for the
+# detector list, and that is the whole experiment.
+#
+# Why both arms declare all three sources: a case's inputs align 1:1 and positionally with a
+# spec's `sources` (runner._check_alignment), so a one-source spec cannot be run against a
+# three-input corpus at all. Relaxing that guard would reintroduce exactly the ambiguity
+# explicit source tagging exists to remove ("which inputs did this number come from?").
+#
+# So the ablation belongs in the DETECTOR list instead, which is also where it belongs
+# conceptually: corroboration comes from detections across lanes, and detections come from
+# detectors. Here the log and flow streams are normalized and then judged by nobody — a
+# legitimate deployment shape (you might collect logs without a log detector), and it means
+# both arms see byte-identical evidence because they read the same bundle.
+#
+# No `assets:` block, for the same reason as config/bench/flow.yaml: a criticality we typed in
+# would be indistinguishable from a ranking improvement.
+
+sources:
+  - normalizer: stub
+    source_format: stub-csv
+  - normalizer: syslog
+    source_format: syslog
+  - normalizer: flow
+    source_format: flow-csv
+
+detectors:
+  - name: stub_threshold
+    params:
+      threshold: 80.0
+      lane: telemetry
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5

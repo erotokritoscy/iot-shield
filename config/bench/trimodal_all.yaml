@@ -1,0 +1,45 @@
+# Corroboration A/B, arm B: three lanes ingested, all THREE judged (ADR-0026).
+#
+# Identical to config/bench/trimodal_telemetry.yaml except for the detector list — read that
+# file first for why the ablation lives here rather than in `sources`.
+#
+# What the pair measures, and what it deliberately does not. The alert engine's corroboration
+# factor is 1 + 0.5 x (lanes - 1): it MULTIPLIES an alert's priority and never creates or
+# removes one. So the only metrics that can move between the arms are the ranking ones —
+# precision@k, mean_rank_of_true — plus mean_true_priority and mean_lanes_per_true_alert.
+#
+# Two honest limits, both stated here rather than discovered later:
+#
+#   - The `volume` factor rides along. Judging three lanes produces more detections on the
+#     compromised device, and volume rewards that independently of corroboration. The two
+#     cannot be separated by today's engine, so what this pair measures is the END-TO-END
+#     product claim ("judging more modalities improves the queue"), not the isolated
+#     coefficient. That is the claim we make publicly anyway.
+#   - This is discrimination, not calibration (ADR-0021 D7). We are not claiming any particular
+#     priority score is correct; we are comparing true against false alerts, and one arm's
+#     true-alert scores against the other's over identical evidence.
+
+sources:
+  - normalizer: stub
+    source_format: stub-csv
+  - normalizer: syslog
+    source_format: syslog
+  - normalizer: flow
+    source_format: flow-csv
+
+detectors:
+  - name: stub_threshold
+    params:
+      threshold: 80.0
+      lane: telemetry
+  - name: log_burst
+    params:
+      preset: severity_spike
+  - name: flow_burst
+    params:
+      preset: fan_out
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5

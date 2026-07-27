@@ -47,7 +47,10 @@ _ASSUMED_TZ = UTC
 
 # Syslog PRI severity code (PRI & 0x07) -> our Severity. Borrowed from team4
 # schema.py SEVERITY_MAP (numeric levels).
-_PRI_SEVERITY = {
+PRI_SEVERITY = {
+    # Public because the corpus generator's syslog renderer is this table's inverse: it has to
+    # write a priority that reads back as the severity it intended, and deriving that from here
+    # is what stops the writer and the reader disagreeing (ADR-0026).
     0: Severity.CRITICAL,
     1: Severity.CRITICAL,
     2: Severity.CRITICAL,
@@ -121,7 +124,7 @@ def _parse_rfc5424(m: re.Match[str]) -> dict[str, Any]:
         "asset_id": m["host"],
         "source_type": Lane.LOG,
         "source_format": "syslog-rfc5424",
-        "severity": _PRI_SEVERITY[int(m["pri"]) & 0x07],
+        "severity": PRI_SEVERITY[int(m["pri"]) & 0x07],
         "message": m["msg"],
     }
 
@@ -134,7 +137,7 @@ def _parse_rfc3164(m: re.Match[str], *, assumed_year: int) -> dict[str, Any]:
     except ValueError as exc:
         raise LineParseError(f"unparseable RFC3164 timestamp: {stamp!r}") from exc
     pri = m["pri"]
-    severity = _PRI_SEVERITY[int(pri) & 0x07] if pri is not None else _guess_severity(m["msg"])
+    severity = PRI_SEVERITY[int(pri) & 0x07] if pri is not None else _guess_severity(m["msg"])
     return {
         "timestamp": _assume_utc(timestamp),
         "asset_id": m["host"],

@@ -19,18 +19,17 @@ names a path is a request to read arbitrary files (ADR-0018 §9-A).
 """
 
 import os
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-
+from iotshield.contracts import Lane
 from iotshield.eval.bundle import (
     MANIFEST_NAME,
+    AssetLabel,
     BundleError,
     CaseManifest,
     CorpusManifest,
+    IncidentLabel,
     InputManifest,
     Labels,
     discover,
@@ -40,10 +39,10 @@ from iotshield.eval.bundle import (
     read_labels,
     read_manifest,
     read_payload,
+    source_formats,
     write_payload,
 )
-from iotshield.eval.truth import GroundTruth, Incident
-from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
+from iotshield.eval.truth import AssetTruth, GroundTruth, Incident
 
 CORPUS_PATH_ENV = "IOTSHIELD_CORPUS_PATH"
 
@@ -128,6 +127,13 @@ class CorpusInfo:
     provenance: str
     licence: str
     cases: int
+    source_formats: tuple[str, ...] = ()
+    """The input shape a spec must declare to benchmark this corpus, from the manifest.
+
+    Carried here so a caller composing a spec on someone's behalf — the dashboard's Evaluate
+    page — can build one that *fits*. Without it the page hardcoded a single stub-csv source,
+    so a multi-lane corpus appeared in its picker and then failed alignment on run.
+    """
 
 
 def corpus_root(root: Path | None = None) -> Path:
@@ -138,34 +144,54 @@ def corpus_root(root: Path | None = None) -> Path:
     return Path(configured) if configured else DEFAULT_CORPUS_ROOT
 
 
-def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: str) -> CaseInput:
-    """Render a wide channel frame as the long CSV the ``stub`` normalizer ingests.
+# Rendering readings into wire text lives with the lane that defines the format:
+# `generate.telemetry.to_stub_csv` and its `StubCsvRenderer` (ADR-0026). It sat here while the
+# generator was one file; keeping it would give stub-csv two writers free to drift apart,
+# which is exactly what a renderer being *the inverse of a normalizer* rules out. This module
+# owns the corpus container and its bundle IO, and knows nothing about formats.
 
-    The inverse of that normalizer's fan-out: one line per (timestamp, channel) reading,
-    which is the contract's one-value-per-event rule (ADR-0003 D1). Going through real CSV
-    text rather than constructing events directly is deliberate — the benchmark then
-    exercises normalization too, so a corpus measures the *pipeline*, not just a detector.
 
-    The format name comes from ``normalize.stub`` rather than a literal here, so the writer
-    is anchored to the reader that defines the dialect.
+def _asset_truth(label: AssetLabel) -> AssetTruth:
+    """One asset's stored labels back into truth, re-deriving its row flags from intervals."""
+    return AssetTruth.from_incidents(
+        label.asset_id,
+        label.clock,
+        [
+            Incident(
+                asset_id=label.asset_id,
+                start=incident.start,
+                end=incident.end,
+                kind=incident.kind,
+                fault_id=incident.fault_id,
+                lanes=frozenset(Lane(lane) for lane in incident.lanes),
+            )
+            for incident in label.incidents
+        ],
+    )
 
-    Values are materialized once via ``to_numpy``; the obvious per-cell ``frame[c].iloc[i]``
-    costs a pandas column selection *and* a scalar lookup per cell, measured at 22x slower
-    over a SKAB recording (100ms vs 4.5ms). This is the write path only — bundles are read
-    back as text — so it costs generation and conversion, not benchmarking.
+
+def _asset_label(asset: AssetTruth) -> AssetLabel:
+    """One asset's truth as stored labels — the inverse of ``_asset_truth``, beside it.
+
+    A named function rather than a comprehension nested in a write call, so the two halves of
+    one mapping read as the pair they are.
     """
-    channels = list(frame.columns)
-    values = frame.to_numpy()
-    # isoformat() once per row, not once per cell — it sat in the inner clause and was 36%
-    # of generating a corpus. Measured 1.7-2.1x; a precomputed line prefix and zip(channels,
-    # row) were both tried and were slower, so the index loop stays.
-    stamps = [moment.isoformat() for moment in timestamps]
-    lines = [
-        f"{stamp},{asset_id},{channels[column]},{row[column]}"
-        for stamp, row in zip(stamps, values, strict=True)
-        for column in range(len(channels))
-    ]
-    return CaseInput(STUB_CSV, "\n".join(lines) + "\n")
+    return AssetLabel(
+        asset_id=asset.asset_id,
+        clock=[moment for moment, _ in asset.timeline],
+        incidents=[
+            IncidentLabel(
+                start=incident.start,
+                end=incident.end,
+                kind=incident.kind,
+                fault_id=incident.fault_id,
+                # Sorted so a regenerated bundle is byte-identical: a frozenset has no order,
+                # and gzip would show the churn.
+                lanes=sorted(incident.lanes),
+            )
+            for incident in asset.incidents
+        ],
+    )
 
 
 def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
@@ -174,14 +200,16 @@ def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
         for source in entry.inputs
     ]
     labels = read_labels(directory / entry.labels)
-    truth = GroundTruth.from_incidents(
-        labels.timestamps, [Incident(start, end) for start, end in labels.incidents]
+    return Case(
+        name=entry.name,
+        inputs=inputs,
+        truth=GroundTruth.from_assets([_asset_truth(label) for label in labels.assets]),
     )
-    return Case(name=entry.name, inputs=inputs, truth=truth)
 
 
 def _corpus_from(directory: Path, manifest: CorpusManifest) -> Corpus:
     """Build a Corpus from an already-parsed manifest, so callers never re-read it."""
+    source_formats(manifest)  # refuse a mixed-shape corpus here rather than mid-benchmark
     try:
         cases = [_case_from_manifest(directory, entry) for entry in manifest.cases]
     except (OSError, BundleError) as exc:
@@ -208,6 +236,10 @@ def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
             manifest = read_manifest(directory)
         except BundleError:
             continue  # a broken manifest must not break the listing; loading it will say so
+        try:
+            shape = source_formats(manifest)
+        except BundleError:
+            continue  # unbenchmarkable; the same reason a broken manifest is skipped here
         infos.append(
             CorpusInfo(
                 name=manifest.name,
@@ -215,6 +247,7 @@ def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
                 provenance=manifest.provenance,
                 licence=manifest.licence,
                 cases=len(manifest.cases),
+                source_formats=shape,
             )
         )
     return infos
@@ -270,10 +303,9 @@ def write_bundle(directory: Path, corpus: Corpus) -> CorpusManifest:
         write_payload(
             directory,
             labels_relative,
-            Labels(
-                timestamps=[moment for moment, _ in case.truth.timeline],
-                incidents=[(i.start, i.end) for i in case.truth.incidents],
-            ).model_dump_json(indent=1),
+            Labels(assets=[_asset_label(asset) for asset in case.truth.assets]).model_dump_json(
+                indent=1
+            ),
         )
         cases.append(CaseManifest(name=case.name, inputs=inputs, labels=labels_relative))
 

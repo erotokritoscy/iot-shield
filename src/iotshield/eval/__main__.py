@@ -30,7 +30,7 @@ from iotshield.eval.corpus import (
     load_corpus,
 )
 from iotshield.eval.fit import FitProtocol
-from iotshield.eval.generate import CORPUS_NAME
+from iotshield.eval.generate import DEFAULT_SCENARIO, SCENARIOS
 from iotshield.eval.report import render
 from iotshield.eval.runner import evaluate
 from iotshield.eval.sweep import expand, values
@@ -51,7 +51,9 @@ def _common_parser() -> argparse.ArgumentParser:
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--corpus", default=CORPUS_NAME, help="corpus name (default: synthetic)")
+    parser.add_argument(
+        "--corpus", default=DEFAULT_SCENARIO, help="corpus name (default: synthetic)"
+    )
     parser.add_argument(
         "--spec",
         type=Path,
@@ -102,7 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
     fetching.add_argument("dataset", help="dataset name, e.g. skab")
     fetching.add_argument("--source", type=Path, default=None, help="local checkout to convert")
 
-    subparsers.add_parser("generate", parents=[common], help="(re)build the synthetic bundle")
+    generating = subparsers.add_parser(
+        "generate", parents=[common], help="(re)build the synthetic bundles"
+    )
+    generating.add_argument(
+        "scenario",
+        nargs="*",
+        choices=sorted(SCENARIOS),
+        # Plural, defaulting to all: a regenerate after touching shared machinery must not
+        # leave some bundles built by the old code and some by the new.
+        help="scenario(s) to build; omit for all",
+    )
     return parser
 
 
@@ -137,11 +149,15 @@ def _fetch(args: argparse.Namespace) -> int:
 
 
 def _generate(args: argparse.Namespace) -> int:
-    from iotshield.eval.generate import write
+    from iotshield.eval.generate import write, write_all
 
-    directory = corpus_root(args.corpus_path) / CORPUS_NAME
-    corpus = write(directory)
-    print(f"wrote {directory}  ({len(corpus.cases)} cases, {corpus.incidents} incidents)")
+    root = corpus_root(args.corpus_path)
+    chosen = args.scenario or None
+    corpora = [write(root, name) for name in chosen] if chosen else write_all(root)
+    for corpus in corpora:
+        print(
+            f"wrote {root / corpus.name}  ({len(corpus.cases)} cases, {corpus.incidents} incidents)"
+        )
     return 0
 
 

@@ -55,15 +55,29 @@ class FitOutcome:
 
 
 def normal_prefix(events: Sequence[NormalizedEvent], truth: GroundTruth) -> list[NormalizedEvent]:
-    """The case's events strictly before its first incident — its clean history.
+    """Each asset's events strictly before *its own* first incident — its clean history.
 
     Everything, when the recording is clean; nothing, when it opens mid-fault (there is no
     clean history to learn from, which the caller reports rather than papering over).
+
+    The cutoff is **per asset** (ADR-0026). A single corpus-wide cutoff at the earliest
+    incident anywhere would truncate every *other* device's history there too, discarding
+    clean data that has nothing to do with that fault — on a thirty-device fleet where one
+    host is compromised early, almost the entire corpus. An event on an asset outside the
+    roster is kept: no claim of a fault is no reason to withhold it from training.
     """
-    if truth.is_clean:
+    cutoff = {
+        asset.asset_id: min(incident.start for incident in asset.incidents)
+        for asset in truth.assets
+        if asset.incidents
+    }
+    if not cutoff:
         return list(events)
-    first_start = min(incident.start for incident in truth.incidents)
-    return [event for event in events if event.timestamp < first_start]
+    return [
+        event
+        for event in events
+        if (limit := cutoff.get(event.asset_id)) is None or event.timestamp < limit
+    ]
 
 
 def _unfitted(detector: Detector, why: str) -> FitOutcome:

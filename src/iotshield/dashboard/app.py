@@ -7,7 +7,7 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 import json
 import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -546,15 +546,45 @@ PROTOCOL_HELP = {
 }
 
 
-def _bench_spec(detector: str, params: dict[str, Any], engine: str) -> dict[str, Any]:
+def _normalizer_for(source_format: str, normalizers: dict[str, Any]) -> str:
+    """Which registered normalizer accepts this format — asked of the registry, not assumed.
+
+    Follows the capability declarations the same way ``_source_widgets`` does, so a new
+    normalizer becomes usable here the moment it is registered.
+    """
+    return next(
+        (name for name in sorted(normalizers) if source_format in normalizers[name].formats),
+        "",
+    )
+
+
+def _bench_spec(
+    detector: str,
+    params: dict[str, Any],
+    engine: str,
+    source_formats: Sequence[str],
+    normalizers: dict[str, Any],
+) -> dict[str, Any]:
     """One spec per detector — because several detectors in ONE spec run *together*.
 
     The researcher's mental model is "compare these detectors", but head-to-head comparison
     needs N specs of one detector each. Building them here is the difference between ticking
     two boxes and hand-writing two YAML files (ADR-0021 D6).
+
+    The sources come from **the corpus's own declared shape**, one per position. This used to
+    be a hardcoded single stub-csv source, which was correct only while every corpus was
+    single-lane telemetry: a benchmark checks a case's inputs against the spec's ``sources``
+    positionally and by format, so a flow or multi-lane corpus would appear in the picker and
+    then be refused on run (ADR-0026).
     """
     return {
-        "sources": [{"normalizer": "stub", "source_format": STUB_CSV_FORMAT}],
+        "sources": [
+            {
+                "normalizer": _normalizer_for(source_format, normalizers),
+                "source_format": source_format,
+            }
+            for source_format in source_formats
+        ],
         "detectors": [{"name": detector, "params": params}],
         "alert_engine": {"name": engine},
     }
@@ -704,7 +734,9 @@ def _parse_report(payload: str) -> "EvaluationReport":
 
 
 @st.cache_data(show_spinner=False)
-def _run_benchmark(corpus: str, plan_json: str, engine: str, protocol: str) -> str:
+def _run_benchmark(
+    corpus: str, plan_json: str, engine: str, protocol: str, formats_json: str
+) -> str:
     """Run a benchmark through the API and return its JSON.
 
     Cached on the arguments, which is what makes running one from a Streamlit page safe:
@@ -719,12 +751,18 @@ def _run_benchmark(corpus: str, plan_json: str, engine: str, protocol: str) -> s
     rows in the report came from one detector.
     """
     plan = json.loads(plan_json)
+    # The corpus's input shape is part of the cache key, not looked up here: two corpora with
+    # different shapes must never share a cached result, and the catalogue is a live fetch.
+    source_formats = json.loads(formats_json)
+    normalizers = {info.name: info for info in get_control_client().modules().normalizers}
     report = get_control_client().evaluate(
         corpus=corpus,
         specs=[
             {
                 "label": item["name"],
-                "spec": _bench_spec(item["name"], item["params"], engine),
+                "spec": _bench_spec(
+                    item["name"], item["params"], engine, source_formats, normalizers
+                ),
                 "sweep": item["sweep"],
             }
             for item in plan
@@ -950,7 +988,15 @@ def evaluate_page(report_path: Path) -> None:
     # the button False and wipes the page. Latching is what lets the cache below pay off:
     # exploring a finished report replays from cache instead of clearing it.
     # The plan is carried as JSON so the whole selection stays a hashable cache key.
-    selection = (corpus_name, json.dumps(plan, sort_keys=True), engine, protocol)
+    selection = (
+        corpus_name,
+        json.dumps(plan, sort_keys=True),
+        engine,
+        protocol,
+        # The corpus's input shape rides in the cache key: two corpora of different shapes
+        # produce different specs, so a shared cache entry would replay the wrong run.
+        json.dumps(list(corpus.source_formats)),
+    )
     blocked = not chosen or any(problems)
     if st.button("Run benchmark", type="primary", disabled=blocked):
         st.session_state[_EVAL_RUN_KEY] = selection

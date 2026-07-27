@@ -28,7 +28,10 @@ class TestCommittedCorpus:
         assert corpus.incidents > 0
         for case in corpus.cases:
             assert case.inputs and case.inputs[0].text.strip()
-            assert case.truth.timeline  # a row clock to score point metrics over
+            # Every case names its roster, and every listed asset carries its own row clock
+            # to score point metrics over (ADR-0026).
+            assert case.truth.assets
+            assert all(asset.timeline for asset in case.truth.assets)
 
     def test_it_carries_provenance_and_licence(self) -> None:
         # A bundle that cannot say where it came from is one nobody can safely reuse — the
@@ -100,10 +103,9 @@ class TestRoundTrip:
             assert [i.source_format for i in after.inputs] == [
                 i.source_format for i in before.inputs
             ]
-            # Both halves of the answer key survive: the intervals AND the row clock the
-            # point metrics are scored over.
-            assert after.truth.incidents == before.truth.incidents
-            assert after.truth.timeline == before.truth.timeline
+            # Every part of the answer key survives: the roster, each asset's own row clock,
+            # and the intervals with their descriptive kind/fault_id/lanes.
+            assert after.truth.assets == before.truth.assets
 
     def test_writing_is_reproducible(self, tmp_path: Path) -> None:
         # Byte-identical on rewrite, so regenerating a committed bundle is not a diff. Gzip

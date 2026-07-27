@@ -54,8 +54,15 @@ Run all four before considering any task done.
 # Benchmark against labelled data (ADR-0021) — the other half of the port suite:
 # pytest says whether an adapter FITS, this says whether it is GOOD.
 uv run python -m iotshield.eval list                 # what corpora exist here
-uv run python -m iotshield.eval generate             # (re)build the committed corpus
+uv run python -m iotshield.eval generate             # (re)build every committed corpus
+uv run python -m iotshield.eval generate fleet_scan  # ...or just one
 uv run python -m iotshield.eval fetch skab           # convert SKAB into local bundles
+# Is the flow detector's hand-chosen threshold defensible? (ADR-0026)
+uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
+    --sweep threshold=8,15,20,27,35
+# Does cross-lane corroboration improve the queue? Two specs, one bundle, same bytes.
+uv run python -m iotshield.eval --corpus device_trimodal \
+    --spec config/bench/trimodal_telemetry.yaml --spec config/bench/trimodal_all.yaml
 uv run python -m iotshield.eval --corpus synthetic --spec config/bench/stub.yaml \
     --with-timeline --out reports/evaluation.json
 uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
@@ -67,17 +74,47 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 ```
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
-format, and interval labels. They are *discovered*, not registered: anything under the root
-with a manifest is a corpus, so adding one is dropping in data, not writing code. The root is
-`IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
+format, and **per-asset** interval labels. They are *discovered*, not registered: anything under
+the root with a manifest is a corpus, so adding one is dropping in data, not writing code. The
+root is `IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
 
-`synthetic` is committed and always works. SKAB is **GPLv3**, so it is not redistributed —
-`fetch skab` converts a local checkout into gitignored bundles. An absent corpus is a *skip*
-(exit 0), not a failure, so CI stays green on a fresh clone.
+**Truth is per asset, and the roster is a declaration (ADR-0026).** An answer key lists one
+entry per device it has an opinion about, each with its own row clock; a finding is matched to an
+incident on **(asset, time)**, never time alone. Three states, and the middle one is the point:
+listed *with* incidents is faulty in those windows; listed with `"incidents": []` is **asserted
+clean**, so every detection on it is a false alarm; **absent entirely** is out of scope and its
+findings are counted but never scored. Conflating the last two would publish a precision number
+the corpus never justified. A generated corpus lists every device it built, which is what makes
+"that gateway should have stayed quiet" measurable. Reported alongside the usual rates:
+`misattributed_detections` (right moment, wrong device — these used to score as catches),
+`clean_assets_alerted`, `unlabelled_detections`, and `lane_recall`.
+
+Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shapes),
+`fleet_scan` (multi-device flow captures with the volume/direction/cardinality controls), and
+`device_trimodal` (one device on all three lanes, for the corroboration A/B). SKAB is
+**GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
+bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
+clone. **Labels are v2**; a v1 bundle is rejected with the command to regenerate, because an
+upgrade would have to invent an asset id.
+
+The generator (`eval/generate/`) is a **world** (devices + a clock + declared faults, no
+formats) rendered through two ports: a `Behaviour` per lane (what normal looks like, and what a
+fault does to it) and a `Renderer` per wire format (events → text). Labels are *derived* from
+which behaviours actually perturbed their output, never annotated. Adding a lane is one
+behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A renderer is
+the **inverse of a normalizer**, and the meta-test that composes the two (emit → parse → compare)
+is what caught an RFC 3164 corpus silently scoring zero after New Year. Streams are seeded by
+*name*, so adding a device leaves every other device's bytes untouched.
 
 Note `team3_zscore`'s committed artifact is trained on SKAB's channels, so it cannot judge
 the synthetic corpus (the channel-coverage guard skips it; `--fit-protocol prefix` reports
 why). Compare detectors on `synthetic` with `stub_threshold`, on SKAB with `team3_zscore`.
+
+A bench spec for a corpus must declare **one source per input position, in the corpus's order**
+— `CorpusInfo.source_formats` (and `/eval/corpora`) publish that shape, which is how the
+dashboard composes a spec that fits rather than assuming telemetry. Flow and trimodal bench
+specs deliberately register **no `assets:`**, because `asset_weight` is something we type in and
+would be indistinguishable from a real ranking improvement (ADR-0021 D7).
 
 ```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
@@ -179,6 +216,8 @@ src/iotshield/
   dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps, env-gated)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
+                truth.py/score.py = per-asset answer keys and (asset, time) matching (ADR-0026)
+                generate/ = synthetic corpora: world + Behaviour/Renderer ports + scenarios
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
