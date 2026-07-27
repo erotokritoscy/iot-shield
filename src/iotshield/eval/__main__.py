@@ -42,12 +42,34 @@ _DEFAULT_SPEC = Path("config/bench/team3.yaml")
 def _common_parser() -> argparse.ArgumentParser:
     """Flags every verb accepts, declared once and inherited via ``parents=``.
 
-    Declaring --corpus-path per subparser instead let the root-level flag be silently
-    overwritten by the subparser's own default, so `--corpus-path X list` ignored X.
+    The default is ``SUPPRESS``, and **nothing may re-supply one**. Sharing the flag through
+    ``parents=`` lets it appear on either side of the verb, but argparse parses a subcommand
+    into a *fresh* namespace and then copies every attribute of it onto the real one. So any
+    default reachable from the subparser overwrites a value the root parser already stored,
+    and `--corpus-path X list` silently used the default root while `list --corpus-path X`
+    worked. Measured on 3.13: an argument default does it, and so does ``set_defaults`` on the
+    root parser, which is why the fallback lives in ``corpus_path_of`` instead.
+
+    With ``SUPPRESS`` and no default anywhere, the attribute is simply absent unless someone
+    passed the flag, so there is nothing to overwrite and both orderings agree.
     """
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--corpus-path", type=Path, default=None, help="corpus root override")
+    common.add_argument(
+        "--corpus-path",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="corpus root override",
+    )
     return common
+
+
+def corpus_path_of(args: argparse.Namespace) -> Path | None:
+    """The requested corpus root, or None when the flag was not given anywhere.
+
+    The absence is what makes the flag position-independent (see ``_common_parser``), so the
+    fallback has to be read here rather than declared as a default.
+    """
+    return getattr(args, "corpus_path", None)
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -119,9 +141,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _list(args: argparse.Namespace) -> int:
-    root = corpus_root(args.corpus_path)
+    root = corpus_root(corpus_path_of(args))
     print(f"Corpora in {root}:")
-    infos = list_corpora(args.corpus_path)
+    infos = list_corpora(corpus_path_of(args))
     for info in infos:
         print(f"  {info.name:<16} {info.cases:>3} case(s)  {info.description}")
     if not infos:
@@ -137,7 +159,7 @@ def _list(args: argparse.Namespace) -> int:
 def _fetch(args: argparse.Namespace) -> int:
     from iotshield.eval.fetch import fetch
 
-    root = corpus_root(args.corpus_path)
+    root = corpus_root(corpus_path_of(args))
     try:
         written = fetch(args.dataset, root, args.source)
     except (CorpusUnavailable, ValueError) as exc:
@@ -151,7 +173,7 @@ def _fetch(args: argparse.Namespace) -> int:
 def _generate(args: argparse.Namespace) -> int:
     from iotshield.eval.generate import write, write_all
 
-    root = corpus_root(args.corpus_path)
+    root = corpus_root(corpus_path_of(args))
     chosen = args.scenario or None
     corpora = [write(root, name) for name in chosen] if chosen else write_all(root)
     for corpus in corpora:
@@ -174,7 +196,7 @@ def _parse_sweeps(raw: list[str] | None) -> dict[str, list[Any]]:
 
 def _run(args: argparse.Namespace) -> int:
     try:
-        corpus = load_corpus(args.corpus, args.corpus_path)
+        corpus = load_corpus(args.corpus, corpus_path_of(args))
     except CorpusUnavailable as exc:
         # Not a usage error — the dataset simply is not on this machine. Exit 0 so a CI job
         # that benchmarks over optional corpora stays green on a fresh clone.

@@ -4,6 +4,7 @@ Also pins the two boundary properties the harness is built around (ADR-0021 D1):
 never touches a store, and it measures the *real* pipeline rather than a parallel code path.
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from iotshield.eval import (
     load_corpus,
     render,
 )
-from iotshield.eval.__main__ import main
+from iotshield.eval.__main__ import build_parser, corpus_path_of, main
 from iotshield.eval.fit import FitProtocol
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.pipeline import PipelineSpec, load_spec
@@ -249,3 +250,45 @@ class TestCorpusSpecAlignment:
         )
         with pytest.raises(ValueError, match="supplies 1 input"):
             evaluate(corpus, [("two", two_source)])
+
+
+class TestCorpusPathIsPositionIndependent:
+    """`--corpus-path` must mean the same thing on either side of the verb.
+
+    It silently did not: argparse parses a subcommand into a fresh namespace and copies every
+    attribute onto the real one, so any default reachable from the subparser overwrote what the
+    root parser had already stored. `--corpus-path X list` therefore listed the *default* root
+    while `list --corpus-path X` worked, which is the worst shape for this flag: it points the
+    harness at the wrong data and says nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--corpus-path", "somewhere", "list"],
+            ["list", "--corpus-path", "somewhere"],
+            ["--corpus-path", "somewhere", "generate"],
+            ["generate", "--corpus-path", "somewhere"],
+            ["--corpus-path", "somewhere", "fetch", "skab"],
+            ["--corpus-path", "somewhere", "--corpus", "synthetic"],
+        ],
+        ids=lambda argv: " ".join(argv),
+    )
+    def test_the_flag_is_honoured_wherever_it_appears(self, argv: list[str]) -> None:
+        args = build_parser().parse_args(argv)
+        assert corpus_path_of(args) == Path("somewhere")
+
+    def test_omitting_it_falls_back_to_the_default_root(self) -> None:
+        for argv in ([], ["list"], ["generate"]):
+            assert corpus_path_of(build_parser().parse_args(argv)) is None
+
+    def test_a_declared_default_would_reintroduce_the_bug(self) -> None:
+        """Guard the fix itself, since the mechanism is invisible at the call site.
+
+        `SUPPRESS` is load-bearing: the moment the flag carries a real default, or anything
+        calls `set_defaults` for it, the subparser's copy wins again.
+        """
+        action = next(
+            a for a in build_parser()._actions if "--corpus-path" in (a.option_strings or [])
+        )
+        assert action.default is argparse.SUPPRESS
