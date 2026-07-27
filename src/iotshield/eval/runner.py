@@ -34,6 +34,7 @@ from iotshield.pipeline import (
     compute_result,
     normalize_sources,
 )
+from iotshield.pipeline.compat import CompatLevel, check_compatibility
 from iotshield.pipeline.config import config_fingerprint
 from iotshield.sink import RunResult
 
@@ -58,6 +59,34 @@ def _check_alignment(spec: PipelineSpec, case: Case) -> None:
                 f"case {case.name!r} input[{index}] is {given.source_format!r} but the spec's "
                 f"sources[{index}] declares {source.source_format!r}"
             )
+
+
+def _compatibility_notes(spec: PipelineSpec) -> list[str]:
+    """Guard warnings about this spec, so a row of zeros arrives with its own explanation.
+
+    ``_check_alignment`` compares a case's inputs against the spec's *sources*, which leaves
+    one layer unchecked: a spec can be perfectly aligned and still incoherent downstream.
+    Ingest the FLOW lane and hand it to a TELEMETRY detector and every input matches, the
+    detector is handed nothing, and the report reads ``evF1 0.00`` — indistinguishable from a
+    detector that ran and was simply bad. That is the single most misleading thing this
+    harness can print, and it is the same failure ``_check_alignment`` exists to prevent, one
+    joint further along.
+
+    The compatibility guard already diagnoses it, in words, and was never asked here. Asking
+    it costs nothing and covers every client at once: the CLI, the API and the dashboard all
+    arrive through ``evaluate``.
+
+    Reported, not refused. A detector that stays deliberately silent on a corpus is a
+    legitimate measurement — it is how ``severity_spike`` demonstrates it sees nothing in a
+    burst of INFO lines — so the honest outcome is the zero, scored, *with* its reason
+    attached. ERROR-level issues are left alone: they describe a spec that cannot construct,
+    and ``build_detectors`` already fails on those with its own message.
+    """
+    return [
+        f"{issue.stage}: {issue.message}"
+        for issue in check_compatibility(spec)
+        if issue.level is CompatLevel.WARNING
+    ]
 
 
 def _timeline(case: Case, result: RunResult) -> CaseTimeline:
@@ -103,8 +132,14 @@ def evaluate_case(
     include_timeline: bool = False,
     ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
     | None = None,
+    spec_notes: Sequence[str] = (),
 ) -> CaseReport:
     """Run one spec over one labelled case and score both levels.
+
+    ``spec_notes`` are remarks that hold for the whole spec regardless of case — today the
+    compatibility warnings. They are passed in rather than derived here because they depend
+    only on the spec: computing them per case would repeat identical work once per recording
+    (sixteen times over SKAB), and the renderer dedupes notes across cases anyway.
 
     ``ingest_cache`` is an optional memo shared across the specs of one ``evaluate`` call.
     Ingest is pure and depends only on the source chain, so a sweep of N values would
@@ -157,7 +192,7 @@ def evaluate_case(
         # "Fitted" only if every detector that was asked to fit actually did — a partially
         # fitted chain must not read as a clean fitted run.
         fitted=all(o.fitted for o in outcomes) and protocol is not FitProtocol.NONE,
-        notes=sorted({o.note for o in outcomes if o.note}),
+        notes=sorted({o.note for o in outcomes if o.note} | set(spec_notes)),
         timeline=_timeline(case, result) if include_timeline else None,
     )
 
@@ -172,6 +207,9 @@ def evaluate_spec(
     ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
     | None = None,
 ) -> SpecReport:
+    # Once per spec, not once per case: the guard reads the spec's shape and nothing about
+    # the data, so its verdict is identical for every recording in the corpus.
+    spec_notes = _compatibility_notes(spec)
     return SpecReport(
         spec=label,
         detectors=[entry.name for entry in spec.detectors],
@@ -183,6 +221,7 @@ def evaluate_spec(
                 protocol=protocol,
                 include_timeline=include_timeline,
                 ingest_cache=ingest_cache,
+                spec_notes=spec_notes,
             )
             for case in corpus.cases
         ],

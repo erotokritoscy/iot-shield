@@ -87,6 +87,21 @@ class TestCatalogue:
         assert synthetic["cases"] > 0
         assert synthetic["licence"] and synthetic["provenance"]
 
+    def test_each_corpus_publishes_the_detector_lanes_it_can_feed(self, client: TestClient) -> None:
+        """The join a detector picker needs, decoded server-side.
+
+        Published rather than derived by the client for the same reason `DetectorSummary.lanes`
+        is decoded here: the `lane:` prefix is a private detail of `capabilities.py`, so a UI
+        computing this for itself would have to parse it. Both sides of the comparison arrive
+        in the same vocabulary and the client only intersects them.
+        """
+        corpora = {item["name"]: item for item in client.get("/eval/corpora").json()["corpora"]}
+        assert corpora["synthetic"]["lanes"] == ["telemetry"]
+        assert corpora["fleet_scan"]["lanes"] == ["flow"]
+        # The trimodal corpus feeds all three, which is what makes one entry judging three
+        # lanes expressible at all.
+        assert corpora["device_trimodal"]["lanes"] == ["flow", "log", "telemetry"]
+
     def test_detectors_report_their_lane_and_trainability(self, client: TestClient) -> None:
         detectors = {item["name"]: item for item in client.get("/eval/detectors").json()}
         assert detectors["team3_zscore"]["fittable"] is True
@@ -128,6 +143,53 @@ class TestRun:
         payload = response.json()
         assert payload["corpus"] == "synthetic"
         assert payload["specs"][0]["cases"]
+
+    def test_an_entrys_detectors_run_together_and_can_corroborate(self, client: TestClient) -> None:
+        """The measurement the dashboard could not express while it built one detector per spec.
+
+        Detectors in ONE spec pool their detections into a single alert-engine run, so an alert
+        can cite more than one lane. Split across specs, every alert cites exactly one lane by
+        construction — which is why the corroboration result ADR-0026 publishes was unreachable
+        from the UI at any setting. Same corpus, same bytes, same engine: the only difference is
+        whether the three detectors share a spec.
+        """
+        sources = [
+            {"normalizer": "stub", "source_format": "stub-csv"},
+            {"normalizer": "syslog", "source_format": "syslog"},
+            {"normalizer": "flow", "source_format": "flow-csv"},
+        ]
+        detectors = [
+            {"name": "stub_threshold", "params": {"threshold": 80.0, "lane": "telemetry"}},
+            {"name": "log_burst", "params": {"preset": "severity_spike"}},
+            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+        ]
+        engine = {"name": "weighted", "params": {"bucket_minutes": 5}}
+
+        def lanes_cited(specs: list[dict[str, Any]]) -> float:
+            payload = client.post(
+                "/eval/run", json={"corpus": "device_trimodal", "specs": specs}
+            ).json()
+            return max(
+                case["mean_lanes_per_true_alert"] or 0
+                for report in payload["specs"]
+                for case in report["cases"]
+            )
+
+        together = [
+            {
+                "label": "all-three",
+                "spec": {"sources": sources, "detectors": detectors, "alert_engine": engine},
+            }
+        ]
+        apart = [
+            {
+                "label": detector["name"],
+                "spec": {"sources": sources, "detectors": [detector], "alert_engine": engine},
+            }
+            for detector in detectors
+        ]
+        assert lanes_cited(apart) == 1.0
+        assert lanes_cited(together) > 1.0
 
     def test_timelines_are_off_by_default_and_on_when_asked(self, client: TestClient) -> None:
         # The report's other job is to be a small, diffable artifact; spans would dominate it.

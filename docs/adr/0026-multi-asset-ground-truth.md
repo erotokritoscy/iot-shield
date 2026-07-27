@@ -308,3 +308,72 @@ table, and the ingest cache makes the second nearly free.
 | A CI gate on report deltas | two consecutive releases where a regression was caught by hand |
 | Calibration / ideal-ordering truth (ADR-0021 D7, unchanged) | analyst feedback |
 | LEAD and other third-party corpora (`weeks-3-4.md` §5.5, Bucket C) | Panayiotis's module landing; a `fetch.DATASETS` entry, untouched by this design |
+
+## Amendment — the corpus drives *both* halves of a composed spec
+
+The original change taught the Evaluate page to derive a spec's `sources` from
+`CorpusInfo.source_formats`. That was half the job, and shipping half of it was worse than
+shipping none: the page then offered flow and trimodal corpora it could not compose a working
+spec for. Three defects, found by running the dashboard against `fleet_scan`.
+
+**A1 — Eligibility is the corpus's lanes, not a hardcoded lane.** The detector picker filtered
+on `Lane.TELEMETRY`, so `flow_burst` and `log_burst` were unreachable from the dashboard for
+every corpus, and the two corpora D8 added could not be benchmarked from the UI at all.
+
+`/eval/corpora` now publishes `lanes` beside `source_formats` — which detector lanes the corpus
+can feed, given the registered normalizers. **Computed server-side and decoded**, for the same
+reason `DetectorSummary.lanes` is: the `lane:` prefix is a private detail of `capabilities.py`,
+rendered only at the API boundary, so a client deriving this join for itself would have to parse
+that prefix. Both sides of the comparison arrive in one vocabulary and the page intersects them.
+
+This is the one place the implementation departed from its plan, which had called for extracting
+the Compose page's equivalent filter into a shared helper. The two pages legitimately work in
+different vocabularies — Compose joins `/modules` tokens to `/modules` tokens, Evaluate joins
+`/eval` bare lanes to `/eval` bare lanes — and forcing one helper across both would have pushed
+prefix knowledge into the client to save four lines.
+
+**A2 — A silent zero is worse than a refusal.** The mismatched spec was not rejected: it ran and
+reported `evF1 0.00` across five recordings, indistinguishable from a detector that ran and was
+bad. `_check_alignment` cannot see it, because the sources genuinely *do* align — the incoherence
+is one joint further along (ingest FLOW, judge TELEMETRY).
+
+`evaluate` now consults `pipeline/compat.py`, whose warnings already described the failure in
+words and which the eval plane had simply never asked. They land in the report's existing
+per-case `notes`, so every client is covered at once and no schema changed:
+
+```
+! detectors[0]: detector 'stub_threshold' consumes lane(s) telemetry but no configured
+  source produces them (flow); it will not fire
+```
+
+Reported, **not refused**: a detector that stays deliberately silent on a corpus is a legitimate
+measurement — it is how `severity_spike` shows it sees nothing in a burst of INFO lines — so the
+honest outcome is the zero, scored, carrying its reason. ERROR-level issues are left alone;
+`build_detectors` already fails on those with its own message.
+
+**A3 — The entry, not the detector, is the unit of comparison.** The page built exactly one
+detector per spec. That made head-to-head easy and made the other experiment *inexpressible*:
+detectors in one spec pool their detections into a single alert-engine run, which is what
+produces corroboration. With one detector per spec every alert cited one lane by construction, so
+the headline result of this very ADR could not be reproduced from the UI at any setting. Measured
+on `device_trimodal`:
+
+| shape | lanes per true alert | mean true priority |
+|---|---|---|
+| each detector alone (every shape the UI could express) | 1.00 | 74.90 / 62.96 / 28.95 |
+| all three in one entry (`config/bench/trimodal_all.yaml`) | 3.00 | 86.74 |
+
+An *entry* now holds one or more detectors and becomes one spec, one report row. One detector per
+entry is the old behaviour; several is a multi-lane pipeline. Nothing is combined on the user's
+behalf — cross-producing selections would be neither meaningful nor extensible. Two consequences
+fall out: the sweep menu moved from the detector to the entry (which knobs are legal depends on
+the whole set, mirroring `sweep.py`'s existing refusal of a name two detectors in one spec
+accept), and widget keys became entry-scoped, so the same detector can sit in two entries under
+different params.
+
+**What let all three survive:** the test that looked like the guard against exactly this
+(`test_every_discoverable_corpus_composes_a_spec_that_survives_alignment`) hardcoded
+`stub_threshold` and checked only `_check_alignment`, so it passed green while the page composed
+a flow corpus into a telemetry detector. A second test *asserted* the defect
+(`assert "log_burst" not in options`) under a comment that had stopped being true. Both axes are
+now discovered, and coherence is asserted via the guard rather than alignment alone.

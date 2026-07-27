@@ -364,10 +364,56 @@ class TestEvaluateRun:
     ) -> None:
         at = self._open(monkeypatch, empty_client, eval_control_client)
         assert "synthetic" in at.selectbox(key="eval_corpus").options
-        # Only telemetry detectors: offering a log detector would build a spec whose format
-        # the API rightly refuses over a telemetry corpus.
-        options = at.multiselect(key="eval_detectors").options
-        assert "stub_threshold" in options and "log_burst" not in options
+        assert "stub_threshold" in at.multiselect(key="eval_e0_dets").options
+
+    def test_the_detector_roster_follows_the_corpus_lanes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """Eligibility is the corpus's lanes, not a hardcoded one.
+
+        This filter was pinned to telemetry, which was right only until ADR-0026 shipped a
+        flow corpus and a trimodal one. The cost was not a missing option: the page offered
+        `stub_threshold` over `fleet_scan`, built a spec whose flow events it cannot consume,
+        and reported a clean row of zeros that reads exactly like a bad detector. The old
+        version of this test asserted that behaviour was correct.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("fleet_scan").run()
+        assert at.multiselect(key="eval_e0_dets").options == ["flow_burst"]
+
+        # Switching back must prune the stale flow pick rather than raising: Streamlit keeps a
+        # widget's value across the change, and `flow_burst` is not an option here.
+        at.selectbox(key="eval_corpus").set_value("synthetic").run()
+        assert not at.exception
+        assert at.multiselect(key="eval_e0_dets").options == ["stub_threshold", "team3_zscore"]
+
+    def test_one_entry_can_hold_several_detectors_that_run_together(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        eval_control_client: ControlClient,
+    ) -> None:
+        """The entry, not the detector, is the unit of comparison.
+
+        One detector per entry is head to head; several in one entry is a single pipeline
+        whose detections pool into one alert-engine run. Only the second shape can produce
+        cross-lane corroboration, and with a detector per spec it was unreachable from the UI
+        at every setting.
+        """
+        at = self._open(monkeypatch, empty_client, eval_control_client)
+        at.selectbox(key="eval_corpus").set_value("device_trimodal").run()
+        at.number_input(key="eval_entry_n").set_value(1).run()
+        at.multiselect(key="eval_e0_dets").set_value(
+            ["stub_threshold", "log_burst", "flow_burst"]
+        ).run()
+        at.button[0].click().run()
+        assert not at.exception
+        # One row, labelled by its members, judging all three lanes in one pipeline.
+        rendered = str(at.dataframe[0].value)
+        assert "stub_threshold + log_burst + flow_burst" in rendered
 
     def test_running_a_benchmark_renders_charts_and_a_table(
         self,
@@ -379,7 +425,7 @@ class TestEvaluateRun:
         # Explicit: which corpus sorts first depends on what has been fetched locally, and
         # the multi-case sections only make sense on a multi-case corpus.
         at.selectbox(key="eval_corpus").set_value("synthetic").run()
-        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold"]).run()
         at.button[0].click().run()
         assert not at.exception
         headings = " ".join(str(h.value) for h in at.subheader)
@@ -401,14 +447,14 @@ class TestEvaluateRun:
         request construction refuses.
         """
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
-        assert set(at.radio(key="eval_team3_zscore_mode").options) == {
+        at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
+        assert set(at.radio(key="eval_e0_team3_zscore_mode").options) == {
             dashboard_app._TRAINED,
             dashboard_app._SCRATCH,
         }
         # Trained mode shows the artifact id and NOT the hyperparameters.
-        assert at.text_input(key="eval_team3_zscore_art").value
-        assert "eval_team3_zscore_window_size" not in {w.key for w in at.number_input}
+        assert at.text_input(key="eval_e0_team3_zscore_art").value
+        assert "eval_e0_team3_zscore_window_size" not in {w.key for w in at.number_input}
 
     def test_fit_from_scratch_exposes_hyperparameters_prefilled_with_real_defaults(
         self,
@@ -417,11 +463,11 @@ class TestEvaluateRun:
         eval_control_client: ControlClient,
     ) -> None:
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
-        at.radio(key="eval_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
+        at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
+        at.radio(key="eval_e0_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
         # 60, not 0: the factory param defaults to None (the "not given" sentinel), so the
         # real default has to come from the adapter's hyperparameter model via /eval/detectors.
-        assert at.number_input(key="eval_team3_zscore_window_size").value == 60
+        assert at.number_input(key="eval_e0_team3_zscore_window_size").value == 60
 
     def test_a_blank_artifact_blocks_the_run_rather_than_silently_running_untrained(
         self,
@@ -432,8 +478,8 @@ class TestEvaluateRun:
         # An empty artifact box reaches the factory as "no artifact", which ADR-0022 means
         # as *untrained* — so clearing it must be refused, not quietly reinterpreted.
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
-        at.text_input(key="eval_team3_zscore_art").set_value("").run()
+        at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
+        at.text_input(key="eval_e0_team3_zscore_art").set_value("").run()
         assert any("no artifact is named" in str(e.value) for e in at.error)
         assert at.button[0].disabled
 
@@ -446,8 +492,8 @@ class TestEvaluateRun:
         # An untrained model under `none` judges nothing; a row of zeros would read as
         # "this detector is bad" when the truth is that it never ran.
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        at.multiselect(key="eval_detectors").set_value(["team3_zscore"]).run()
-        at.radio(key="eval_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
+        at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
+        at.radio(key="eval_e0_team3_zscore_mode").set_value(dashboard_app._SCRATCH).run()
         assert at.radio(key="eval_protocol").value == "none"
         assert any("prefix" in str(e.value) for e in at.error)
         assert at.button[0].disabled
@@ -459,11 +505,11 @@ class TestEvaluateRun:
         eval_control_client: ControlClient,
     ) -> None:
         at = self._open(monkeypatch, empty_client, eval_control_client)
-        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
-        sweep = at.selectbox(key="eval_stub_threshold_sw")
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold"]).run()
+        sweep = at.selectbox(key="eval_e0_sw")
         assert "threshold" in sweep.options
         sweep.set_value("threshold").run()
-        at.text_input(key="eval_stub_threshold_swv").set_value("40, 80, 120").run()
+        at.text_input(key="eval_e0_swv").set_value("40, 80, 120").run()
         assert any("3 run(s)" in str(c.value) for c in at.caption)
         assert not at.exception
 
@@ -475,9 +521,9 @@ class TestEvaluateRun:
     ) -> None:
         at = self._open(monkeypatch, empty_client, eval_control_client)
         at.selectbox(key="eval_corpus").set_value("synthetic").run()
-        at.multiselect(key="eval_detectors").set_value(["stub_threshold"]).run()
-        at.selectbox(key="eval_stub_threshold_sw").set_value("threshold").run()
-        at.text_input(key="eval_stub_threshold_swv").set_value("40, 80").run()
+        at.multiselect(key="eval_e0_dets").set_value(["stub_threshold"]).run()
+        at.selectbox(key="eval_e0_sw").set_value("threshold").run()
+        at.text_input(key="eval_e0_swv").set_value("40, 80").run()
         at.button[0].click().run()
         assert not at.exception
         rendered = str(at.dataframe[0].value)
@@ -536,9 +582,15 @@ class TestBenchSpecMatchesEveryCorpusShape:
 
         return {name: _module_info("normalizer", name, spec) for name, spec in NORMALIZERS.items()}
 
+    def _detector(self, name: str) -> dict[str, object]:
+        return {"name": name, "params": {}}
+
     def test_it_builds_one_source_per_declared_format(self) -> None:
         spec = dashboard_app._bench_spec(
-            "flow_burst", {}, "weighted", ["stub-csv", "syslog", "flow-csv"], self._normalizers()
+            [self._detector("flow_burst")],
+            "weighted",
+            ["stub-csv", "syslog", "flow-csv"],
+            self._normalizers(),
         )
         assert [source["source_format"] for source in spec["sources"]] == [
             "stub-csv",
@@ -550,26 +602,62 @@ class TestBenchSpecMatchesEveryCorpusShape:
         # By declared capability, not by name — so a newly registered normalizer works here
         # with no change, and a rename cannot silently break the page.
         spec = dashboard_app._bench_spec(
-            "flow_burst", {}, "weighted", ["flow-csv"], self._normalizers()
+            [self._detector("flow_burst")], "weighted", ["flow-csv"], self._normalizers()
         )
         assert spec["sources"] == [{"normalizer": "flow", "source_format": "flow-csv"}]
 
-    def test_every_discoverable_corpus_composes_a_spec_that_survives_alignment(self) -> None:
+    def test_an_entry_carries_every_detector_into_one_spec(self) -> None:
+        # Several detectors in ONE spec run together, which is what lets their detections pool
+        # into a single alert-engine run and corroborate across lanes.
+        spec = dashboard_app._bench_spec(
+            [self._detector("stub_threshold"), self._detector("flow_burst")],
+            "weighted",
+            ["stub-csv", "flow-csv"],
+            self._normalizers(),
+        )
+        assert [entry["name"] for entry in spec["detectors"]] == ["stub_threshold", "flow_burst"]
+
+    def test_every_offerable_corpus_and_detector_pair_composes_a_coherent_spec(self) -> None:
         """The end-to-end guard: whatever the picker can offer, the harness must accept.
 
-        Discovered from the corpus root rather than named, so a corpus added later is covered
-        automatically.
+        Both axes are discovered rather than named, so a corpus or detector added later is
+        covered automatically. The detector axis is the half that matters and the half the
+        previous version of this test was missing: it hardcoded `stub_threshold` and checked
+        only `_check_alignment`, which compares *sources*. That passed for `fleet_scan` while
+        the page was composing a flow corpus into a telemetry detector, because the sources
+        genuinely did align — so this asserts the deeper joint too, via the guard that
+        `evaluate` now consults.
         """
+        from iotshield.api.evaluation import _lanes_fed_by
+        from iotshield.capabilities import lanes_in
         from iotshield.eval import list_corpora, load_corpus
-        from iotshield.eval.runner import _check_alignment
+        from iotshield.eval.runner import _check_alignment, _compatibility_notes
         from iotshield.pipeline import PipelineSpec
+        from iotshield.pipeline.registry import DETECTORS
 
         infos = list_corpora()
         assert infos, "no corpora discovered: this test would be vacuous"
+        checked = 0
         for info in infos:
-            payload = dashboard_app._bench_spec(
-                "stub_threshold", {}, "weighted", list(info.source_formats), self._normalizers()
-            )
-            spec = PipelineSpec.model_validate(payload)
-            for case in load_corpus(info.name).cases:
-                _check_alignment(spec, case)
+            formats = list(info.source_formats)
+            lanes = set(_lanes_fed_by(tuple(formats)))
+            eligible = [
+                name
+                for name, spec in DETECTORS.items()
+                if {lane.value for lane in lanes_in(spec.capability({}).consumes)} & lanes
+            ]
+            assert eligible, f"no detector can judge {info.name!r}: the picker would be empty"
+            for name in eligible:
+                payload = dashboard_app._bench_spec(
+                    [self._detector(name)], "weighted", formats, self._normalizers()
+                )
+                spec = PipelineSpec.model_validate(payload)
+                for case in load_corpus(info.name).cases:
+                    _check_alignment(spec, case)
+                # An eligible detector must be *coherent*, not merely aligned: no warning that
+                # it will never fire. This is what fails if the eligibility filter regresses.
+                assert not [
+                    note for note in _compatibility_notes(spec) if "will not fire" in note
+                ], f"{name} would not fire on {info.name}"
+                checked += 1
+        assert checked >= len(infos), "every corpus should contribute at least one pair"

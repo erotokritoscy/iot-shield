@@ -112,9 +112,19 @@ why). Compare detectors on `synthetic` with `stub_threshold`, on SKAB with `team
 
 A bench spec for a corpus must declare **one source per input position, in the corpus's order**
 — `CorpusInfo.source_formats` (and `/eval/corpora`) publish that shape, which is how the
-dashboard composes a spec that fits rather than assuming telemetry. Flow and trimodal bench
-specs deliberately register **no `assets:`**, because `asset_weight` is something we type in and
-would be indistinguishable from a real ranking improvement (ADR-0021 D7).
+dashboard composes a spec that fits rather than assuming telemetry. `/eval/corpora` also
+publishes `lanes` (which detector lanes those formats feed, decoded server-side so no client
+parses a `lane:` prefix), which is how the Evaluate page offers only detectors the corpus can
+actually feed. Flow and trimodal bench specs deliberately register **no `assets:`**, because
+`asset_weight` is something we type in and would be indistinguishable from a real ranking
+improvement (ADR-0021 D7).
+
+A benchmark can be *aligned* and still incoherent one joint further along — ingest the FLOW lane,
+hand it to a TELEMETRY detector, and every input matches while the detector is handed nothing.
+`evaluate` therefore consults the compatibility guard and carries its warnings into the report's
+per-case `notes` (rendered as `! …`), so a row of zeros always arrives with its reason instead of
+reading like a bad detector. Reported, not refused: a deliberately silent detector is a real
+measurement (ADR-0026 amendment).
 
 ```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
@@ -213,7 +223,7 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps, env-gated)
+  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps over *entries*, env-gated)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = per-asset answer keys and (asset, time) matching (ADR-0026)
