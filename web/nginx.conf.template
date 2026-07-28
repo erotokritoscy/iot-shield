@@ -50,6 +50,13 @@ server {
 
     # A single-page app: every other path is a client-side route, so serve the shell and let
     # the router decide. Without this, a refresh on /compose is a 404.
+    #
+    # `absolute_redirect off` because nginx builds a directory redirect from its own
+    # `server_name` and listen port, which behind a published container port is an address
+    # the browser cannot reach — the failure reads as "connection refused" on a service that
+    # is plainly running.
+    absolute_redirect off;
+
     location / {
         try_files $uri $uri/ /index.html;
     }

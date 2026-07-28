@@ -67,5 +67,9 @@ export function formatCell(value: unknown): string {
   if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(4);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "string") return value;
+  // A list cell reads as its contents, not as its literal. The per-case table's `notes`
+  // column rendered `[]` on every clean row (pandas' repr), which is noise where the whole
+  // point of the column is that a row of zeros arrives with its reason.
+  if (Array.isArray(value)) return value.length === 0 ? "" : value.map(formatCell).join("; ");
   return JSON.stringify(value);
 }

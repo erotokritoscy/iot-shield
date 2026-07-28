@@ -159,8 +159,23 @@ export function severityBar(
       cornerRadiusTopRight: 4,
     },
     encoding: {
-      x: { field: "severity", type: "nominal", sort: [...SEVERITY_ORDER], title: null },
-      y: { aggregate: "count", type: "quantitative", title: "alerts" },
+      x: {
+        field: "severity",
+        type: "nominal",
+        sort: [...SEVERITY_ORDER],
+        title: null,
+        // Horizontal: five short words fit, and Vega's default rotation turned the one thing
+        // this chart's identity rides on (the axis labels) into vertical text.
+        axis: { labelAngle: 0 },
+      },
+      y: {
+        aggregate: "count",
+        type: "quantitative",
+        title: "alerts",
+        // Whole alerts only: with two in the tallest bar Vega ticks at 0.5, and half an
+        // alert is not a thing this axis can mean.
+        axis: { tickMinStep: 1, format: "d" },
+      },
       tooltip: [
         { field: "severity", type: "nominal" },
         { aggregate: "count", type: "quantitative" },

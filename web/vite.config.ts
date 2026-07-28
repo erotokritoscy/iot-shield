@@ -37,6 +37,11 @@ export default defineConfig({
     },
   },
   build: {
+    // NOT Vite's default `assets/`: that is also a client route ("Assets & telemetry"), and
+    // the collision is invisible in dev and fatal in production — nginx matched the built
+    // directory first and 301'd `/assets` to `/assets/`, so the page never loaded. Renaming
+    // the build directory keeps the *route* namespace the app's own.
+    assetsDir: "static",
     // vega + vega-lite are large by nature; the warning is noise, not a finding.
     chunkSizeWarningLimit: 2000,
   },
