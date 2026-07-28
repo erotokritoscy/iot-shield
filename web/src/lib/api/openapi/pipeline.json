@@ -1,0 +1,1789 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "iotshield Pipeline API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules": {
+      "get": {
+        "summary": "Modules",
+        "description": "The adapter catalogue: names, capabilities, and param schemas (built once).",
+        "operationId": "modules_modules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModulesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/validate": {
+      "post": {
+        "summary": "Validate Run",
+        "description": "Dry-run the compatibility guard: no execution, just the issues (for live UI feedback).",
+        "operationId": "validate_run_runs_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs": {
+      "post": {
+        "summary": "Create Run",
+        "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nThe guard runs once, inside execute_run, which raises IncompatiblePipelineError on\nan ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map\nits typed error to a structured 422. It raises before any row is written.",
+        "operationId": "create_run_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eval/corpora": {
+      "get": {
+        "tags": [
+          "evaluation"
+        ],
+        "summary": "Corpora",
+        "description": "What can be benchmarked here, and what could be with one more command.",
+        "operationId": "corpora_eval_corpora_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorporaResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eval/detectors": {
+      "get": {
+        "tags": [
+          "evaluation"
+        ],
+        "summary": "Detectors",
+        "description": "The detectors a benchmark can compare, with their training capability.",
+        "operationId": "detectors_eval_detectors_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DetectorSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Detectors Eval Detectors Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eval/specs": {
+      "get": {
+        "tags": [
+          "evaluation"
+        ],
+        "summary": "Specs",
+        "description": "The committed bench specs, with the corpora each one fits.\n\nRead per request rather than cached: unlike ``DETECTORS``, these are files an operator\ncan edit while the server runs, and a benchmark replaying a spec the YAML no longer\nsays is the exact class of divergence this endpoint exists to close.",
+        "operationId": "specs_eval_specs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BenchSpecSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Specs Eval Specs Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eval/run": {
+      "post": {
+        "tags": [
+          "evaluation"
+        ],
+        "summary": "Run",
+        "description": "Benchmark the given specs over a corpus and return the full report.\n\nSynchronous by design (see the module docstring). Errors are mapped by *kind*: an\nabsent corpus is 404 (ask for something else), a corpus/spec mismatch is 422 (the\nrequest is incoherent) \u2014 never a 500, because both are ordinary user situations.",
+        "operationId": "run_eval_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AlertEngineConfig": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": "stub"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AlertEngineConfig"
+      },
+      "AlertSeverity": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "critical",
+          "emergency"
+        ],
+        "title": "AlertSeverity",
+        "description": "Analyst-facing alert severity (five labels, driven by absolute priority score)."
+      },
+      "AlertStatus": {
+        "type": "string",
+        "enum": [
+          "new",
+          "acknowledged",
+          "closed"
+        ],
+        "title": "AlertStatus",
+        "description": "Minimal triage workflow state."
+      },
+      "Asset": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Asset Id",
+            "description": "Natural key as it appears in raw data"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "asset_type": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Asset Type",
+            "description": "e.g. \"pump\", \"gateway\", \"plc\""
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "criticality": {
+            "$ref": "#/components/schemas/Criticality",
+            "default": "medium"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_id",
+          "name",
+          "asset_type"
+        ],
+        "title": "Asset",
+        "description": "A monitored device or system \u2014 the 'who' everything is correlated on."
+      },
+      "BenchSpecSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/PipelineSpec"
+          },
+          "source_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Formats"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Detectors"
+          },
+          "corpora": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Corpora"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "spec"
+        ],
+        "title": "BenchSpecSummary",
+        "description": "One shipped benchmark spec, and the corpora it can actually run on.\n\nPublished so a UI can run **the committed spec** rather than compose a lookalike. The\ndashboard's Evaluate page used to build its own ``PipelineSpec`` from the detectors picked\non screen, which silently dropped the ``assets:`` block and every source and engine\nparameter \u2014 so the page and the CLI reported different numbers for what read as the same\nbenchmark (mean true priority 39.46 from ``stub.yaml``, 35.72 from the page's\nreconstruction) with nothing on either surface disclosing which spec produced them.\n\n``corpora`` is the join a client would otherwise have to compute: which corpora this spec's\nsource shape matches (``eval.bench``)."
+      },
+      "CaseReport": {
+        "properties": {
+          "case": {
+            "type": "string",
+            "title": "Case"
+          },
+          "incidents": {
+            "type": "integer",
+            "title": "Incidents"
+          },
+          "detections": {
+            "type": "integer",
+            "title": "Detections"
+          },
+          "alerts": {
+            "type": "integer",
+            "title": "Alerts"
+          },
+          "fitted": {
+            "type": "boolean",
+            "title": "Fitted"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          },
+          "point_precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Precision"
+          },
+          "point_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Recall"
+          },
+          "point_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point F1"
+          },
+          "event_precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Precision"
+          },
+          "event_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Recall"
+          },
+          "event_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event F1"
+          },
+          "detections_per_incident": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detections Per Incident"
+          },
+          "alerts_per_incident": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alerts Per Incident"
+          },
+          "incident_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Coverage"
+          },
+          "mean_latency_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Latency Seconds"
+          },
+          "mean_rank_of_true": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Rank Of True"
+          },
+          "precision_at_k": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Precision At K"
+          },
+          "misattributed_detections": {
+            "type": "integer",
+            "title": "Misattributed Detections",
+            "default": 0
+          },
+          "off_lane_detections": {
+            "type": "integer",
+            "title": "Off Lane Detections",
+            "default": 0
+          },
+          "unlabelled_detections": {
+            "type": "integer",
+            "title": "Unlabelled Detections",
+            "default": 0
+          },
+          "unlabelled_lane_detections": {
+            "type": "integer",
+            "title": "Unlabelled Lane Detections",
+            "default": 0
+          },
+          "unlabelled_alerts": {
+            "type": "integer",
+            "title": "Unlabelled Alerts",
+            "default": 0
+          },
+          "clean_assets": {
+            "type": "integer",
+            "title": "Clean Assets",
+            "default": 0
+          },
+          "clean_assets_detected": {
+            "type": "integer",
+            "title": "Clean Assets Detected",
+            "default": 0
+          },
+          "clean_assets_alerted": {
+            "type": "integer",
+            "title": "Clean Assets Alerted",
+            "default": 0
+          },
+          "mean_true_priority": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean True Priority"
+          },
+          "mean_false_priority": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean False Priority"
+          },
+          "mean_lanes_per_true_alert": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Lanes Per True Alert"
+          },
+          "mean_true_detection_overlap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean True Detection Overlap"
+          },
+          "lanes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LaneCounts"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Lane"
+            },
+            "type": "object",
+            "title": "Lanes"
+          },
+          "faults": {
+            "type": "integer",
+            "title": "Faults",
+            "default": 0
+          },
+          "scoreable_alerts": {
+            "type": "integer",
+            "title": "Scoreable Alerts",
+            "default": 0
+          },
+          "faults_covered": {
+            "type": "integer",
+            "title": "Faults Covered",
+            "default": 0
+          },
+          "timeline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseTimeline"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scoreable_detections": {
+            "type": "integer",
+            "title": "Scoreable Detections",
+            "readOnly": true
+          },
+          "true_detections": {
+            "type": "integer",
+            "title": "True Detections",
+            "readOnly": true
+          },
+          "incidents_caught": {
+            "type": "integer",
+            "title": "Incidents Caught",
+            "readOnly": true
+          },
+          "point_true_positive": {
+            "type": "integer",
+            "title": "Point True Positive",
+            "readOnly": true
+          },
+          "point_false_positive": {
+            "type": "integer",
+            "title": "Point False Positive",
+            "readOnly": true
+          },
+          "point_false_negative": {
+            "type": "integer",
+            "title": "Point False Negative",
+            "readOnly": true
+          },
+          "lane_recall": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Lane"
+            },
+            "type": "object",
+            "title": "Lane Recall",
+            "description": "Per-lane event recall, derived \u2014 it was the seventh stored copy of ``lanes``.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "case",
+          "incidents",
+          "detections",
+          "alerts",
+          "fitted",
+          "point_precision",
+          "point_recall",
+          "point_f1",
+          "event_precision",
+          "event_recall",
+          "event_f1",
+          "detections_per_incident",
+          "alerts_per_incident",
+          "incident_coverage",
+          "mean_latency_seconds",
+          "mean_rank_of_true",
+          "scoreable_detections",
+          "true_detections",
+          "incidents_caught",
+          "point_true_positive",
+          "point_false_positive",
+          "point_false_negative",
+          "lane_recall"
+        ],
+        "title": "CaseReport",
+        "description": "One spec's result on one labelled case.\n\nFlat rather than two nested metric objects, deliberately: this is the JSON a CI gate\nkeys into (``cases[].event_f1``), so the shape is part of the artifact's contract.\n``None`` on any ratio means *undefined*, never zero \u2014 see ``score.ratio``."
+      },
+      "CaseTimeline": {
+        "properties": {
+          "truth": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Truth"
+          },
+          "detections": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Detections"
+          },
+          "alerts": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Alerts"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CaseTimeline",
+        "description": "Where the faults, detections and alerts actually fell, for one case.\n\nThe data behind the timeline chart, and the only part of a report that is about *shape*\nrather than *score*. It answers the question a table cannot: a detector with\n``det/inc 300`` is fragmenting, but you only *see* what that costs an analyst when the\nthree lanes are drawn against one clock.\n\nOff by default (``include_timeline``): the report's other job is to be a small, diffable\nartifact a CI gate reads, and spans would dominate it."
+      },
+      "CorporaResponse": {
+        "properties": {
+          "root": {
+            "type": "string",
+            "title": "Root"
+          },
+          "corpora": {
+            "items": {
+              "$ref": "#/components/schemas/CorpusSummary"
+            },
+            "type": "array",
+            "title": "Corpora"
+          },
+          "fetchable": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Fetchable",
+            "description": "Datasets convertible locally but not shipped; value is how to get them"
+          }
+        },
+        "type": "object",
+        "required": [
+          "root",
+          "corpora"
+        ],
+        "title": "CorporaResponse"
+      },
+      "CorpusSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "licence": {
+            "type": "string",
+            "title": "Licence"
+          },
+          "cases": {
+            "type": "integer",
+            "title": "Cases"
+          },
+          "source_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Formats",
+            "description": "The input shape a spec must declare to benchmark this corpus: one source format per position, in order. A UI composing a spec needs it to build one that fits."
+          },
+          "lanes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lanes",
+            "description": "The detector lanes this corpus can actually feed. A UI picking detectors needs it: one that consumes none of these lanes is handed no events and scores a row of zeros it never had the chance to earn."
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "Why this bundle cannot be loaded, when it cannot; empty for a healthy corpus. Published rather than filtered out so a broken bundle is visibly broken instead of silently absent from the picker.",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "provenance",
+          "licence",
+          "cases"
+        ],
+        "title": "CorpusSummary",
+        "description": "One corpus as a picker sees it \u2014 described without paying to load its readings."
+      },
+      "Criticality": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "title": "Criticality",
+        "description": "How much an asset matters \u2014 feeds the prioritizer's device weight."
+      },
+      "DetectorConfig": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DetectorConfig"
+      },
+      "DetectorSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "lanes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lanes"
+          },
+          "fittable": {
+            "type": "boolean",
+            "title": "Fittable"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/ParamInfo"
+            },
+            "type": "array",
+            "title": "Params"
+          },
+          "artifact_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Param"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "lanes",
+          "fittable"
+        ],
+        "title": "DetectorSummary",
+        "description": "A benchmarkable detector. ``fittable`` tells the UI whether fit protocols apply.\n\n``lanes`` is *decoded* server-side into bare ``Lane`` values, mirroring\n``ModuleInfo.formats``: capability tokens render to wire form only at the API boundary,\nso a client never has to know the ``lane:`` prefix scheme (``capabilities.py``). Plural\nbecause ``consumes`` is a set \u2014 a detector may legitimately consume more than one lane,\nand picking one arbitrarily would misreport it.\n\n``params`` and ``artifact_param`` are the ADR-0022 declaration, carried here so the\nEvaluate page needs *one* call rather than joining this against ``/modules``: which\nhyperparameters exist (with real defaults, so a form can prefill them), and which\nparam \u2014 if any \u2014 names a cached fit. A UI reads the latter to offer \"use trained\nweights\" and \"fit from scratch with my own hyperparameters\" as two exclusive modes,\ninstead of letting someone combine them and hit the atomicity error."
+      },
+      "EvalRunRequest": {
+        "properties": {
+          "corpus": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Corpus"
+          },
+          "specs": {
+            "items": {
+              "$ref": "#/components/schemas/LabelledSpec"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Specs"
+          },
+          "fit_protocol": {
+            "$ref": "#/components/schemas/FitProtocol",
+            "default": "none"
+          },
+          "include_timeline": {
+            "type": "boolean",
+            "title": "Include Timeline",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "corpus",
+          "specs"
+        ],
+        "title": "EvalRunRequest"
+      },
+      "EvaluationReport": {
+        "properties": {
+          "corpus": {
+            "type": "string",
+            "title": "Corpus"
+          },
+          "corpus_description": {
+            "type": "string",
+            "title": "Corpus Description"
+          },
+          "fit_protocol": {
+            "type": "string",
+            "title": "Fit Protocol"
+          },
+          "cases": {
+            "type": "integer",
+            "title": "Cases"
+          },
+          "incidents": {
+            "type": "integer",
+            "title": "Incidents"
+          },
+          "faults": {
+            "type": "integer",
+            "title": "Faults",
+            "default": 0
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "specs": {
+            "items": {
+              "$ref": "#/components/schemas/SpecReport"
+            },
+            "type": "array",
+            "title": "Specs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "corpus",
+          "corpus_description",
+          "fit_protocol",
+          "cases",
+          "incidents"
+        ],
+        "title": "EvaluationReport"
+      },
+      "FitProtocol": {
+        "type": "string",
+        "enum": [
+          "none",
+          "prefix"
+        ],
+        "title": "FitProtocol"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IssueInfo": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "title": "Level"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "stage",
+          "message"
+        ],
+        "title": "IssueInfo"
+      },
+      "LabelledSpec": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Label"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/PipelineSpec"
+          },
+          "sweep": {
+            "additionalProperties": {
+              "items": {},
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Sweep"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "spec"
+        ],
+        "title": "LabelledSpec",
+        "description": "A spec plus the name it appears under in the report, optionally swept.\n\n``sweep`` maps a detector hyperparameter to the values to vary it across; the server\ncross-products them into one labelled spec per combination before evaluating\n(ADR-0022). Expanding server-side rather than in the client is what keeps the CLI and\nthe dashboard producing identical labels and obeying one expansion cap."
+      },
+      "Lane": {
+        "type": "string",
+        "enum": [
+          "telemetry",
+          "log",
+          "flow"
+        ],
+        "title": "Lane",
+        "description": "Detection modality \u2014 which specialist lane an event or detection belongs to."
+      },
+      "LaneCounts": {
+        "properties": {
+          "point_true_positive": {
+            "type": "integer",
+            "title": "Point True Positive",
+            "default": 0
+          },
+          "point_false_positive": {
+            "type": "integer",
+            "title": "Point False Positive",
+            "default": 0
+          },
+          "point_false_negative": {
+            "type": "integer",
+            "title": "Point False Negative",
+            "default": 0
+          },
+          "incidents": {
+            "type": "integer",
+            "title": "Incidents",
+            "default": 0
+          },
+          "incidents_caught": {
+            "type": "integer",
+            "title": "Incidents Caught",
+            "default": 0
+          },
+          "scoreable_detections": {
+            "type": "integer",
+            "title": "Scoreable Detections",
+            "default": 0
+          },
+          "true_detections": {
+            "type": "integer",
+            "title": "True Detections",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "LaneCounts",
+        "description": "One lane's tallies \u2014 the unit both the point and event levels are really counted in.\n\nPer lane because a lane's instants are its own (``truth.AssetTruth``) and, since ADR-0028\nD2, so are its incidents. Pooling these into one set of point counts weights each modality\nby **how fast it samples**, which is a corpus-authoring decision masquerading as a\nmeasurement: on ``device_trimodal`` telemetry carries 2,700 of 3,597 clock entries, so a\npooled point precision is a telemetry number wearing a corpus-wide name.\n\nKept as counts rather than rates so pooling stays addition, the same reason ``Counts``\ndoes \u2014 and so ``report._attribution`` can pool per-lane recall across cases instead of\naveraging rates, which is the one column ADR-0027 D4 could not reach."
+      },
+      "ModuleInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "consumes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Consumes"
+          },
+          "produces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Produces"
+          },
+          "formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Formats"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/ParamInfo"
+            },
+            "type": "array",
+            "title": "Params"
+          },
+          "artifact_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Param"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "consumes",
+          "produces",
+          "formats",
+          "params"
+        ],
+        "title": "ModuleInfo"
+      },
+      "ModulesResponse": {
+        "properties": {
+          "normalizers": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInfo"
+            },
+            "type": "array",
+            "title": "Normalizers"
+          },
+          "detectors": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInfo"
+            },
+            "type": "array",
+            "title": "Detectors"
+          },
+          "alert_engines": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleInfo"
+            },
+            "type": "array",
+            "title": "Alert Engines"
+          },
+          "sinks": {
+            "items": {
+              "$ref": "#/components/schemas/SinkInfo"
+            },
+            "type": "array",
+            "title": "Sinks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "normalizers",
+          "detectors",
+          "alert_engines",
+          "sinks"
+        ],
+        "title": "ModulesResponse",
+        "description": "The adapter catalogue that drives the orchestration UI's menus."
+      },
+      "ParamInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "default": {
+            "title": "Default"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required"
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "required"
+        ],
+        "title": "ParamInfo",
+        "description": "One tunable of an adapter, introspected from its factory signature."
+      },
+      "PipelineSpec": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSpec"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Sources"
+          },
+          "detectors": {
+            "items": {
+              "$ref": "#/components/schemas/DetectorConfig"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Detectors"
+          },
+          "alert_engine": {
+            "$ref": "#/components/schemas/AlertEngineConfig"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/Asset"
+            },
+            "type": "array",
+            "title": "Assets",
+            "description": "Seed registrations"
+          },
+          "sinks": {
+            "items": {
+              "$ref": "#/components/schemas/SinkConfig"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Sinks"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sources",
+          "detectors"
+        ],
+        "title": "PipelineSpec",
+        "description": "The operator-chosen shape of a run: which adapters, over what input source(s), to where.\n\nDeliberately excludes ``database_url`` \u2014 *where the database lives* is a deployment\ndecision, not an operator one (a tenant must never point a run at an arbitrary\ndatabase). The Pipeline API accepts a ``PipelineSpec`` and the server supplies\n``database_url`` from its environment; the CLI's ``load_config`` produces a full\n``PipelineConfig`` directly. ``sinks`` *is* operator-chosen (which stores/deliveries\nto fan the result out to); the Postgres sink among them is what reads ``database_url``.\n\n``sources`` is the multi-source ingest list (ADR-0019). A pre-validator desugars the\nlegacy single-source form (top-level ``source_format``/``normalizer``) into a one-element\n``sources`` list, so every config and spec written before multi-source keeps working."
+      },
+      "PrioritizedAlert": {
+        "properties": {
+          "window_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Window Start"
+          },
+          "window_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Window End"
+          },
+          "alert_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Alert Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Asset Id"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/AlertSeverity"
+          },
+          "priority_score": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Priority Score"
+          },
+          "threat_class": {
+            "type": "string",
+            "title": "Threat Class",
+            "default": "unknown"
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Rationale",
+            "description": "Human-readable why, always present"
+          },
+          "score_components": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Score Components"
+          },
+          "detection_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Detection Ids"
+          },
+          "recommended_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Action"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AlertStatus",
+            "default": "new"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "window_start",
+          "window_end",
+          "asset_id",
+          "severity",
+          "priority_score",
+          "rationale",
+          "detection_ids"
+        ],
+        "title": "PrioritizedAlert",
+        "description": "The analyst-facing decision: ranked, labeled, explained.\n\n``detection_ids`` is the lineage; more than one entry means corroboration.\nEvery detection bucket becomes an alert \u2014 ranking, not a hidden gate,\ndecides what analysts look at first (ADR-0003 D3)."
+      },
+      "RunRequest": {
+        "properties": {
+          "spec": {
+            "$ref": "#/components/schemas/PipelineSpec"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/SourceInput"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Inputs",
+            "description": "One raw input per source in spec.sources (same order)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "spec",
+          "inputs"
+        ],
+        "title": "RunRequest"
+      },
+      "RunResponse": {
+        "properties": {
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "malformed": {
+            "type": "integer",
+            "title": "Malformed"
+          },
+          "detections": {
+            "type": "integer",
+            "title": "Detections"
+          },
+          "alerts": {
+            "type": "integer",
+            "title": "Alerts"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "destinations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Destinations"
+          },
+          "top_alerts": {
+            "items": {
+              "$ref": "#/components/schemas/PrioritizedAlert"
+            },
+            "type": "array",
+            "title": "Top Alerts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "events",
+          "malformed",
+          "detections",
+          "alerts",
+          "warnings",
+          "destinations",
+          "top_alerts"
+        ],
+        "title": "RunResponse",
+        "description": "A run summary. Full results are read back from the read-side API."
+      },
+      "SinkConfig": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SinkConfig",
+        "description": "One result sink: where a run's results are stored or delivered (ADR-0018)."
+      },
+      "SinkInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/ParamInfo"
+            },
+            "type": "array",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "params"
+        ],
+        "title": "SinkInfo",
+        "description": "A result sink for the catalogue: no capability (terminal consumer), just params."
+      },
+      "SourceInput": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Raw input payload for this source"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "description": "Provenance label for this source",
+            "default": "api-run"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "SourceInput",
+        "description": "One source's raw payload, aligned to ``spec.sources`` by position."
+      },
+      "SourceSpec": {
+        "properties": {
+          "normalizer": {
+            "type": "string",
+            "title": "Normalizer",
+            "default": "stub"
+          },
+          "source_format": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source Format"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "CLI/config: where to read this source"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "Normalizer construction"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_format"
+        ],
+        "title": "SourceSpec",
+        "description": "One input source: which normalizer parses it, asserting its raw format (ADR-0019).\n\nA run ingests a *list* of these, so one run can carry mixed modalities (telemetry CSV\n*and* syslog) that pool into the detector lanes. Routing is explicit \u2014 the operator (or\nsource system) tags each source with its ``normalizer``/``source_format``; the pipeline\nnever sniffs a blob's format (the normalizer double-checks and rejects a mismatch, as a\nconfig error). ``path`` is a loading hint used only by the file-reading CLI to locate a\nsource's content; the Pipeline API ignores it (content arrives in the request) and the\ncompatibility guard ignores it (it is not part of the chain's shape).\n\n``params`` configures the normalizer itself, exactly as ``DetectorConfig.params``\nconfigures a detector (ADR-0023 D8). Normalizers were the only one of the four ports\nthat could not be parameterized \u2014 an asymmetry rather than a decision: the builder\nhardcoded an empty mapping, while the ``/modules`` catalogue already introspected\nnormalizer factory signatures for parameters that could never arrive. The flow\nnormalizer's ``home_networks`` is the first real need. Additive with a default, so\nevery config file and API request written before this stays valid."
+      },
+      "SpecReport": {
+        "properties": {
+          "spec": {
+            "type": "string",
+            "title": "Spec"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Detectors"
+          },
+          "alert_engine": {
+            "type": "string",
+            "title": "Alert Engine"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/CaseReport"
+            },
+            "type": "array",
+            "title": "Cases"
+          },
+          "pooled": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Pooled",
+            "description": "``summary()``, serialized \u2014 the headline a CI gate can read without re-pooling.\n\nADR-0027 left this as a gap: the report carried the per-case counts but no corpus-level\nnumber, so a gate wanting the pooled figure had to sum ``cases[].*`` and divide, which\nis a third place that would know how a rate is formed. Exposing the *result* of the one\ndefinition is not a second definition.",
+            "readOnly": true
+          },
+          "pooled_by_lane": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Lane"
+            },
+            "type": "object",
+            "title": "Pooled By Lane",
+            "description": "``rates_by_lane()``, serialized, for the same reason as ``pooled``.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "spec",
+          "detectors",
+          "alert_engine",
+          "cases",
+          "pooled",
+          "pooled_by_lane"
+        ],
+        "title": "SpecReport",
+        "description": "One benchmarked pipeline spec, across every case in the corpus."
+      },
+      "ValidateRequest": {
+        "properties": {
+          "spec": {
+            "$ref": "#/components/schemas/PipelineSpec"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "spec"
+        ],
+        "title": "ValidateRequest"
+      },
+      "ValidateResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueInfo"
+            },
+            "type": "array",
+            "title": "Issues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "issues"
+        ],
+        "title": "ValidateResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
