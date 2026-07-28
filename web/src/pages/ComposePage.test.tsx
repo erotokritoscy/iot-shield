@@ -83,6 +83,22 @@ describe("Compose & run", () => {
     });
   });
 
+  it("takes content from an uploaded file and its origin from the filename (C2)", async () => {
+    await openCompose();
+    await userEvent.upload(
+      screen.getByTestId("src_0_file"),
+      new File([CSV], "pump-02.csv", { type: "text/csv" }),
+    );
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+
+    await screen.findByText("Run complete.");
+    const body = captured.runBody as RunBody;
+    // Provenance is the filename, not `source-1`: an operator reading the malformed-record
+    // audit later needs to know which file a bad line came from.
+    expect(body.inputs).toEqual([{ content: CSV, origin: "pump-02.csv" }]);
+  });
+
   it("omits every untouched parameter from the submitted spec (C4)", async () => {
     // `describe_params` back-fills a learning adapter's real defaults, so every widget
     // renders populated. Submitting all of them made an untouched `team3_zscore` row an

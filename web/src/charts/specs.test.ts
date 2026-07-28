@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LIGHT_PALETTE as palette } from "./palette";
 import {
   caseTimeline,
+  caseVariance,
   parseSweep,
   severityBar,
   specScores,
@@ -174,6 +175,64 @@ describe("the case timeline", () => {
       spec?.["encoding"] as { color: { scale: { range: string[] } } }
     ).color.scale.range;
     expect(range).toEqual([palette.truth, palette.critical, palette.critical]);
+  });
+});
+
+describe("tooltips (V3)", () => {
+  const fields = (encoding: unknown): string[] =>
+    ((encoding as { tooltip: { field?: string; aggregate?: string }[] }).tooltip ?? []).map(
+      (item) => item.field ?? item.aggregate ?? "",
+    );
+
+  it("carries the old fields on every mark", () => {
+    // Hover is the default layer of every chart in this app; losing it loses the values a
+    // dense chart cannot print.
+    const timeline = telemetryTimeline(
+      [
+        {
+          timestamp: "2026-07-07T12:00:00Z",
+          asset_id: "pump-02",
+          source_type: "telemetry",
+          source_format: "stub-csv",
+          metric: "Pressure",
+          value: 45,
+          severity: "info",
+          raw: "line",
+        },
+      ],
+      [
+        {
+          asset_id: "pump-02",
+          lane: "telemetry",
+          method: "stub_threshold",
+          score: 96,
+          threshold: 80,
+          window_start: "2026-07-07T12:00:30Z",
+          window_end: "2026-07-07T12:01:30Z",
+        },
+      ],
+      palette,
+    );
+    const layer = timeline?.["layer"] as { encoding: unknown }[];
+    expect(fields(layer[0]?.encoding)).toEqual(["timestamp", "value", "metric"]);
+    expect(fields(layer[1]?.encoding)).toEqual(["start", "end", "method"]);
+
+    expect(fields(specScores([{ spec: "a", event_f1: 1 }], palette)?.["encoding"])).toEqual([
+      "spec",
+      "event_f1",
+    ]);
+    expect(
+      fields(
+        caseVariance([{ spec: "a", case: "c", event_f1: 1 }], palette)?.["encoding"],
+      ),
+    ).toEqual(["spec", "case", "event_f1"]);
+    expect(
+      fields(
+        caseTimeline([["2026-07-07T12:00:00Z", "2026-07-07T12:10:00Z"]], [], [], palette)?.[
+          "encoding"
+        ],
+      ),
+    ).toEqual(["lane", "start", "end", "span_s"]);
   });
 });
 

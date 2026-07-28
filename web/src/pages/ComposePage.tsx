@@ -21,6 +21,7 @@ import {
 import { StatTile } from "@/components/ui/table";
 import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
+import { readTextFile } from "@/lib/files";
 import type { ModuleInfo, ModulesResponse, SinkInfo } from "@/lib/api/types";
 import { initialValues, submittedParams, type ParamValues } from "@/lib/params";
 import { useModules } from "@/lib/queries";
@@ -182,9 +183,7 @@ function SourceCard({
       onChange({ ...row, content: "", fileName: null });
       return;
     }
-    // UTF-8 with replacement, like the old `decode("utf-8", errors="replace")`: an
-    // undecodable byte must not lose the whole file.
-    onChange({ ...row, content: await file.text(), fileName: file.name });
+    onChange({ ...row, content: await readTextFile(file), fileName: file.name });
   };
 
   return (

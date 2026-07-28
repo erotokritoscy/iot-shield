@@ -7,6 +7,7 @@
  */
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { emptyHandlers, server } from "@/test/msw";
@@ -53,6 +54,20 @@ describe("Triage", () => {
     expect(screen.getByTestId("vega-spec")).toBeInTheDocument();
   });
 
+  it("renders a KPI the summary does not carry as 0, not as blank (T8)", async () => {
+    // `summary.counts` is an open mapping, so a key the server stops sending must read as
+    // zero — a blank tile would look like a rendering fault rather than a count.
+    server.use(
+      http.get("http://localhost/api/summary", () =>
+        HttpResponse.json({ counts: { events: 7 }, top_alert: null }),
+      ),
+    );
+    renderApp("/");
+    expect(await screen.findByTestId("stat-events")).toHaveTextContent("7");
+    expect(screen.getByTestId("stat-detections")).toHaveTextContent("0");
+    expect(screen.getByTestId("stat-malformed-records")).toHaveTextContent("0");
+  });
+
   it("shows guidance rather than an empty table when nothing has run", async () => {
     server.use(...emptyHandlers);
     renderApp("/");
@@ -95,6 +110,20 @@ describe("Data health", () => {
     expect(await screen.findByText("garbage-line")).toBeInTheDocument();
     expect(screen.getByText("unparseable")).toBeInTheDocument();
     expect(screen.getByText("test://seed")).toBeInTheDocument();
+  });
+
+  it("takes the counts table's columns from whatever /summary carries (DH4)", async () => {
+    // `counts` is an open mapping; a fixed column list here would hide a count the API
+    // starts reporting, which is the one thing an audit view must not do.
+    server.use(
+      http.get("http://localhost/api/summary", () =>
+        HttpResponse.json({ counts: { events: 3, quarantined_rows: 9 }, top_alert: null }),
+      ),
+    );
+    renderApp("/data-health");
+    const counts = (await screen.findAllByRole("table"))[0] as HTMLElement;
+    expect(within(counts).getByText("quarantined_rows")).toBeInTheDocument();
+    expect(within(counts).getByText("9")).toBeInTheDocument();
   });
 
   it("shows a success state when nothing was rejected", async () => {

@@ -76,6 +76,16 @@ describe("API failures", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves Operate usable while the read plane is down (M4)", async () => {
+    // The health gate is Monitor's, not the app's: Operate talks only to the Pipeline API
+    // and reports its own reachability, which is how `main()` routed around it. An operator
+    // must be able to fix a broken read plane by running a pipeline into it.
+    server.use(http.get(`${API}/health`, () => HttpResponse.error()));
+    renderApp("/compose");
+    expect(await screen.findByText("Chain is compatible.")).toBeInTheDocument();
+    expect(screen.queryByText("Read API unreachable")).not.toBeInTheDocument();
+  });
+
   it("refuses to render a blank form when the catalogue is empty (C1)", async () => {
     server.use(
       http.get("http://localhost/pipeline/modules", () =>

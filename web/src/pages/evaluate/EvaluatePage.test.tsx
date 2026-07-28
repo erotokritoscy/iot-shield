@@ -43,6 +43,43 @@ describe("the Evaluate gate (D5/E1)", () => {
     expect(screen.getByRole("link", { name: "Benchmarks" })).toBeInTheDocument();
   });
 
+  it("fetches only the endpoints the active mode uses (E19)", async () => {
+    // /eval/specs re-walks the corpus root and re-parses every bench YAML, and the compose
+    // mode never needs it; the committed-spec mode never needs the detector catalogue. The
+    // old page fetched each lazily for exactly this reason.
+    let detectorCalls = 0;
+    withEvalPlane();
+    // After the plane handlers, so this counting one wins (`server.use` prepends).
+    server.use(
+      http.get("http://localhost/pipeline/eval/detectors", () => {
+        detectorCalls += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+    renderApp("/evaluate");
+    await screen.findByRole("checkbox", { name: "stub" });
+    expect(detectorCalls).toBe(0);
+
+    await userEvent.click(screen.getByRole("radio", { name: COMPOSE }));
+    await waitFor(() => expect(detectorCalls).toBe(1));
+  });
+
+  it.each([
+    ["{not json", /could not be read as JSON/],
+    ['{"hello": 1}', /is not a benchmark report/],
+  ])("treats an unreadable saved report as an empty state, not a traceback (E18)", async (
+    body,
+    message,
+  ) => {
+    server.use(http.get("http://localhost/pipeline/eval/corpora", () => HttpResponse.error()));
+    renderApp("/evaluate");
+    await userEvent.upload(
+      await screen.findByTestId("eval_report_upload"),
+      new File([body as string], "evaluation.json", { type: "application/json" }),
+    );
+    expect(await screen.findByText(message as RegExp)).toBeInTheDocument();
+  });
+
   it("offers the saved-report upload when the Pipeline API is unreachable (D6)", async () => {
     // A transport failure is a *different fact* from a 404: the plane is enabled but the
     // Pipeline API is down or still starting, which is the situation the old page degraded
@@ -62,6 +99,25 @@ describe("corpora (E2, E3)", () => {
     const picker = screen.getByTestId("eval_corpus");
     expect(within(picker).queryByRole("option", { name: "stale_bundle" })).not.toBeInTheDocument();
     expect(within(picker).getByRole("option", { name: "synthetic" })).toBeInTheDocument();
+  });
+
+  it("names the root, the generate command and the fetchable hints when there are none (E2)", async () => {
+    // "There is nothing here" must arrive with the command that fixes it, and with the
+    // datasets this deployment could convert locally but does not ship.
+    withEvalPlane();
+    server.use(
+      http.get("http://localhost/pipeline/eval/corpora", () =>
+        HttpResponse.json({
+          root: "/app/data/eval",
+          corpora: [],
+          fetchable: { skab: "SKAB is GPLv3: run `uv run python -m iotshield.eval fetch skab`" },
+        }),
+      ),
+    );
+    renderApp("/evaluate");
+    expect(await screen.findByText("/app/data/eval")).toBeInTheDocument();
+    expect(screen.getByText("uv run python -m iotshield.eval generate")).toBeInTheDocument();
+    expect(screen.getByText(/SKAB is GPLv3/)).toBeInTheDocument();
   });
 
   it("captions the corpus, offers both fit protocols and no holdout", async () => {
@@ -173,6 +229,18 @@ describe("composing entries (E5, E6, E7)", () => {
     // 60, not 0: the factory param defaults to None, so the real default has to come from
     // the adapter's hyperparameter model via /eval/detectors.
     expect(await screen.findByTestId("eval_e1_team3_zscore_window_size")).toHaveValue(60);
+  });
+
+  it("says so when a fit protocol is asked of detectors that cannot train (E17)", async () => {
+    // Not a blocker: they are evaluated as configured and the report says so. But silence
+    // here would let someone read `prefix` numbers as fitted ones.
+    await openCompose();
+    const entry1 = within(screen.getByTestId("eval_entry_1"));
+    await userEvent.click(entry1.getByRole("checkbox", { name: "team3_zscore" }));
+    await userEvent.click(screen.getByRole("radio", { name: "prefix" }));
+    expect(
+      await screen.findByText(/None of the selected detectors can be trained/),
+    ).toBeInTheDocument();
   });
 
   it("keeps bare sweep keys in a single-detector entry", async () => {

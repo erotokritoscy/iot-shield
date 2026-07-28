@@ -13,6 +13,7 @@ import {
 import { pipelineApi } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import { evaluationReportSchema, type EvalReport } from "@/lib/api/schemas";
+import { readTextFile } from "@/lib/files";
 import { useEvalDetectors, useEvalPlane, useModules } from "@/lib/queries";
 
 import { useComposeEntries } from "./ComposeEntries";
@@ -42,7 +43,7 @@ function SavedReportFallback() {
   const load = async (file: File | null) => {
     if (file === null) return;
     try {
-      const parsed = evaluationReportSchema.safeParse(JSON.parse(await file.text()));
+      const parsed = evaluationReportSchema.safeParse(JSON.parse(await readTextFile(file)));
       if (!parsed.success) {
         setReport(null);
         setProblem(`${file.name} is not a benchmark report: ${parsed.error.issues[0]?.message ?? "unrecognised shape"}.`);
