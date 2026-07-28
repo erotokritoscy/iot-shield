@@ -81,20 +81,53 @@ format, and **per-asset** interval labels. They are *discovered*, not registered
 the root with a manifest is a corpus, so adding one is dropping in data, not writing code. The
 root is `IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
 
-**Truth is per asset and per lane, and the roster is a declaration (ADR-0026, ADR-0027 D2).**
-An answer key lists one entry per device it has an opinion about, each with **a row clock per
-lane**, and a lane's detections are scored against that lane's rows only. Pooling a device's
-modalities into one clock hands it to whichever samples fastest: on `device_trimodal` (900
-telemetry instants, ~275 flow, ~25 log) a single flow detection covering a minute was charged
-sixty telemetry false positives. A finding is matched to an incident on **(asset, time)**, never
-time alone. Three states, and the middle one is the point:
-listed *with* incidents is faulty in those windows; listed with `"incidents": []` is **asserted
-clean**, so every detection on it is a false alarm; **absent entirely** is out of scope and its
-findings are counted but never scored. Conflating the last two would publish a precision number
-the corpus never justified. A generated corpus lists every device it built, which is what makes
-"that gateway should have stayed quiet" measurable. Reported alongside the usual rates:
-`misattributed_detections` (right moment, wrong device — these used to score as catches),
-`clean_assets_alerted`, `unlabelled_detections`, and `lane_recall`.
+**Truth is indexed by (asset, lane, instant) — ADR-0028 D1, and everything below follows from
+it.** That is the whole of what a detector claims (`DetectionResult(asset_id, lane,
+window_start, window_end)`), so it is the only coordinate system truth can be compared in: the
+unit is forced by the other side, not chosen. Four labels-schema versions were this system being
+completed one axis at a time (v1 "something was wrong", v2 the asset, v3 the lane *on the clock*,
+v4 the lane *on the incident*) — which reads as four patches only because nobody wrote the system
+down first.
+
+It is **not a row**: a row count is a fact about an encoding, not the world. The same SKAB
+recording is 1,148 rows wide-form and 9,184 in our long-form contract (ADR-0003 D1 fans a
+multi-channel reading into one event per channel), with one fault either way. It is not finer
+than an instant either — `DetectionResult` carries no metric and `team3_zscore` is multivariate,
+so scoring per channel would mark a correct detection wrong for declining to localize.
+
+**One incident per (fault, lane), sharing a `fault_id` (ADR-0028 D2).** A compromised camera is
+one cause with several observable *projections* of different extents — it scans in bursts, fails
+an integrity check when one runs, runs hot and stays hot — and there is no truer fourth interval
+behind them. So a lane is an axis, not a set-valued attribute: the predecessor's
+`Incident.lanes` had to mean "every lane" to point scoring and "no claim" to per-lane recall,
+one field read two contradictory ways. Consequences: `affects()` and the empty-set fallback are
+gone, per-lane recall is a group-by rather than a special case, and **both denominators stay
+derivable** — the event level divides by projections (a telemetry detector can only be asked
+about the telemetry projection), the alert level by distinct **faults** (an alert carries no
+lane, and an analyst investigates the cause once). `device_trimodal` is 7 projections of 3
+faults; a single-lane corpus has them equal.
+
+A detection is matched on **(asset, lane, time)**; an alert on (asset, time). So there are two
+shapes of "nearly right", reported separately because one number would name the wrong cause:
+`misattributed_detections` (right moment, wrong device) and `off_lane_detections` (right device,
+wrong modality — these used to score as catches, for exactly the reason wrong-device
+coincidences used to).
+
+**The roster is a declaration.** Three states, and the middle one is the point: listed *with*
+incidents is faulty in those windows; listed with `"incidents": []` is **asserted clean**, so
+every detection on it is a false alarm; **absent entirely** is out of scope and its findings are
+counted but never scored. Conflating the last two would publish a precision number the corpus
+never justified. A generated corpus lists every device it built, which is what makes "that
+gateway should have stayed quiet" measurable. `unlabelled_detections` and
+`unlabelled_lane_detections` disclose what was set aside in each dimension.
+
+**Point and event rates are counted per lane, then pooled (ADR-0028 D4).** Pooling first weights
+each modality by how fast it samples — a corpus-authoring choice masquerading as a measurement.
+The pooled figures are kept (two specs on one corpus share every denominator, so they are a fair
+head-to-head) but never stand alone: the report prints per-lane recall and per-lane point
+precision/recall, pooled from `CaseReport.lanes` rather than averaged across cases. `Counts`
+derives every lane-bearing total from that mapping, so a per-lane and a pooled copy of one count
+cannot disagree.
 
 Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shapes),
 `fleet_scan` (multi-device flow captures with the volume/direction/cardinality controls), and
@@ -102,8 +135,10 @@ Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shape
 **GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
 bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
 clone — but an **unknown** corpus name is exit 2, because a typo in a CI job must not pass green
-having measured nothing. **Labels are v3**; an older bundle is rejected with the command to
-regenerate, because an upgrade would have to invent the missing dimension.
+having measured nothing. **Labels are v4**; an older bundle is rejected with the command to
+regenerate, because an upgrade would have to invent the missing dimension — for v3→v4 it would
+have to guess each projection's extent out of the union it stored, which is the one thing that
+cannot be un-unioned.
 
 `--corpus` and `--spec` are **required and have no defaults**. Which pairs are legal is derived
 from both sides' declared shapes (`eval/bench.py`), and `eval list` prints the table; omitting
@@ -114,7 +149,9 @@ The generator (`eval/generate/`) is a **world** (devices + a clock + declared fa
 formats) rendered through two ports: a `Behaviour` per lane (what normal looks like, and what a
 fault does to it) and a `Renderer` per wire format (events → text). **A label is made of the
 instants a behaviour actually perturbed** (`Observed.expressed`), never of the declared fault
-window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1). A
+window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1) — and
+those instants are split into contiguous runs of the lane's **own** clock with the same
+`merge_runs` a detector uses, so a quiet stretch mid-fault is not labelled (ADR-0028 D3). A
 fault that changes nothing is refused at generation time rather than shipped labelled. Adding a
 lane is one behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A
 renderer is the **inverse of a normalizer**, and the meta-test that composes the two (emit →
@@ -122,11 +159,37 @@ parse → compare, every field) is what caught an RFC 3164 corpus silently scori
 Year; a companion test refuses a bundle-storable format with no renderer. Streams are seeded by
 *name*, so adding a device leaves every other device's bytes untouched.
 
+**`FaultSpec.intensity` is dimensionless: multiples of the detector boundary a behaviour
+declares for that fault kind (ADR-0028 D6).** `1.0` means "exactly at the alarm line" on every
+lane at once, and each behaviour converts into its own units — peers, ports, byte-chunks, log
+lines, an absolute channel value. A single scalar was always right; leaving it *dimensioned* was
+not: the 30 that `device_trimodal`'s compromise needed for 30 fan-out peers also meant "×30 the
+thermal rise", driving the camera to **316.7 °C against a threshold of 80** while its docstring
+called it modest — so the corroboration A/B compared corroboration against a problem telemetry
+had already solved. `Calibration` is therefore load-bearing rather than documentary, declared
+per fault kind (fan-out's 20 peers, port-scan's 15 ports and exfiltration's 50 MB are three
+alarm lines on one lane), and two meta-tests hold it: every expressible fault has a boundary
+matching the registry, and a scenario can assert its own **difficulty** — the test whose absence
+let the 316.7 ship.
+
+Detectors judge every channel of every device against one absolute value, so a device *kind*
+selects a telemetry profile too (ADR-0028 D7): a gateway reports CPU load twice a minute rather
+than a rig's pressure at 1 Hz. Both realism and measurement — three 1 Hz devices made telemetry
+2,700 of `device_trimodal`'s 3,597 clock entries. A flow profile may also **burst**
+(`burst_every_steps`, ADR-0028 D5), which is what decouples "chatty in cardinality" from "chatty
+in volume": a device above fan-out's 20-peers-per-minute boundary must emit 20+ flows per
+minute, so the deliberately-over-threshold mirror was forced to be the corpus's fastest sampler
+and owned **99.3%** of `fleet_scan`'s point false positives (flow-lane point precision 0.016
+with it, 0.706 without). That is ADR-0021 D7's circularity — a number we typed in becoming the
+published result — in the point metrics rather than the ranking ones.
+
 **Corpus-level rates are pooled from counts, not averaged from per-case rates** (ADR-0027 D4).
 A rate is undefined on a clean recording and averaging skips undefined values, so a spec that
-false-alarmed on the clean recordings used to score identically to one that stayed quiet. `ovl`
-is the width column: of a true detection's window, how much was actually fault — a
-recording-wide detection scores evP 1.00 and ovl 0.04.
+false-alarmed on the clean recordings used to score identically to one that stayed quiet. The
+same rule now reaches the per-lane columns (ADR-0028 D4), and `SpecReport.pooled` /
+`pooled_by_lane` serialize the headline so a CI gate need not re-pool. `ovl` is the width column:
+of a true detection's window, how much was actually fault — a recording-wide detection scores
+evP 1.00 and ovl 0.04.
 
 `--fit-protocol prefix` reserves the first 20% of each asset's clock (capped at its first
 fault) for training and **does not score it**. Rates are defined once, on `score.Counts`:
@@ -258,7 +321,7 @@ src/iotshield/
   dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps over *entries*, env-gated)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
-                truth.py/score.py = per-asset answer keys and (asset, time) matching (ADR-0026)
+                truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)
                 generate/ = synthetic corpora: world + Behaviour/Renderer ports + scenarios
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)

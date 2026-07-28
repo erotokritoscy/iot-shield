@@ -274,6 +274,31 @@ class TestCalibration:
         # Otherwise the parametrized test above passes while asserting nothing.
         assert any(behaviour.calibration for behaviour in BEHAVIOURS.values())
 
+    @pytest.mark.parametrize("lane", _BEHAVIOUR_IDS)
+    def test_every_expressible_fault_has_a_boundary(self, lane: Lane) -> None:
+        """The law that makes ``intensity`` dimensionless (ADR-0028 D6).
+
+        A fault magnitude is now quoted in multiples of the detector boundary its behaviour
+        declares for that kind. A shape added without one would fall back to whatever its handler
+        hard-coded — which is exactly the state that let the trimodal compromise reach 316.7
+        degrees against a threshold of 80 while its docstring called it modest.
+        """
+        behaviour: Behaviour = BEHAVIOURS[lane]
+        for kind in sorted(behaviour.expresses):
+            boundary = behaviour.boundary(kind)
+            assert boundary.detector in DETECTORS, f"{lane}/{kind}: {boundary.detector}"
+            actual = _registered_default(boundary.detector, boundary.param, boundary.preset)
+            assert actual == boundary.value, (
+                f"{lane}/{kind}: boundary says {boundary.param}={boundary.value} but "
+                f"{boundary.detector} offers {actual}"
+            )
+
+    # There is deliberately no "calibration matches the boundaries" test any more.
+    # `port.LaneBehaviour` derives `calibration` and `expresses` from the one boundary table
+    # each lane declares, so the two cannot disagree — and a test whose whole job is to
+    # re-establish a law the code could make true by construction is a sign the mechanism sat
+    # one level too low (ADR-0028 D6).
+
 
 def test_a_renderer_is_order_preserving() -> None:
     """Ordering belongs to the builder, so a renderer must not re-sort.

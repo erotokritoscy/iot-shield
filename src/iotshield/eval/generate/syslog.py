@@ -14,7 +14,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from iotshield.contracts import Lane, NormalizedEvent, Severity
-from iotshield.eval.generate.port import Calibration, Observed, Streams
+from iotshield.eval.generate.port import (
+    Calibration,
+    LaneBehaviour,
+    Observed,
+    Streams,
+    one_boundary,
+)
 from iotshield.eval.generate.world import Clock, Device, FaultSpec
 from iotshield.normalize.syslog import PRI_SEVERITY, SOURCE_FORMAT
 
@@ -30,9 +36,10 @@ keeps the *highest* code per severity — the conventional one to emit.
 """
 
 MIN_COUNT = 5
-CALIBRATION = (Calibration("log_burst", "min_count", float(MIN_COUNT)),)
-"""``log_burst``'s default window trigger. The storm lengths below are chosen to clear it while
-routine chatter stays far under, which is the property that makes this lane discriminate."""
+CALIBRATION = Calibration("log_burst", "min_count", float(MIN_COUNT))
+"""``log_burst``'s default window trigger, and the unit a log fault's intensity is quoted in
+(ADR-0028 D6): a storm of ``intensity`` x 5 lines. Routine chatter stays far under, which is the
+property that makes this lane discriminate."""
 
 _ROUTINE = (
     (Severity.INFO, "heartbeat ok"),
@@ -66,11 +73,10 @@ _PROFILES: dict[str, _Profile] = {
 _DEFAULT_PROFILE = "sensor"
 
 
-class LogSource:
+class LogSource(LaneBehaviour):
     """Routine chatter at a low rate, plus bursts that clear ``log_burst``'s trigger."""
 
     lane = Lane.LOG
-    calibration = CALIBRATION
 
     def __init__(self) -> None:
         # The dispatch table is the declaration — see `SensorRig.__init__`.
@@ -79,7 +85,10 @@ class LogSource:
             "compromise": self._errors,
             "auth_storm": self._auth_failures,
         }
-        self.expresses = frozenset(self._handlers)
+        # Every log shape is "too many matching lines in one window", so all three share
+        # ``min_count`` as their boundary. What differs between them is which lines *match* the
+        # preset, which is a property of the message and the severity rather than of the count.
+        super().__init__(self._handlers, one_boundary(self._handlers, CALIBRATION))
 
     def observe(
         self,
@@ -104,8 +113,16 @@ class LogSource:
             # Read off the lines the handler produced rather than the steps it was given: a
             # fault expresses itself here by *adding log lines*, so those are the perturbation
             # and the answer key is made of exactly their instants (see `port.Observed`).
+            #
+            # The count is `intensity` multiples of the boundary, so 1.0 puts exactly
+            # `min_count` lines in the window and the scenario never writes a raw line count
+            # (ADR-0028 D6).
             injected = handler(
-                clock.spread(fault.start_step, fault.length_steps, int(fault.intensity))
+                clock.spread(
+                    fault.start_step,
+                    fault.length_steps,
+                    self.boundary(fault.kind).units(fault.intensity),
+                )
             )
             lines.extend(injected)
             if injected:

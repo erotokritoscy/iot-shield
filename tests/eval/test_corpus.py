@@ -137,6 +137,26 @@ class TestRoundTrip:
                 right = tmp_path / "b" / left.relative_to(tmp_path / "a")
                 assert left.read_bytes() == right.read_bytes(), left.name
 
+    def test_text_files_are_written_with_lf_on_every_platform(self, tmp_path: Path) -> None:
+        """Reproducibility must not depend on which operating system generated the bundle.
+
+        ``write_text`` with the default ``newline=None`` translates to ``os.linesep``, so a
+        manifest written on Windows carried CRLF while ``.gitattributes`` (``eol=lf``) checks it
+        out with LF. ``test_a_fresh_build_reproduces_the_committed_bytes`` then failed on a fresh
+        Windows clone for a reason unrelated to the corpus — and passed on a machine where a
+        previous local build had already overwritten the file, which is the worst way for a
+        reproducibility check to behave.
+        """
+        write_bundle(tmp_path / "copy", load_corpus(COMMITTED))
+        text_files = [
+            path
+            for path in sorted((tmp_path / "copy").rglob("*"))
+            if path.is_file() and path.suffix != ".gz"
+        ]
+        assert text_files, "no uncompressed files: this test would be vacuous"
+        for path in text_files:
+            assert b"\r\n" not in path.read_bytes(), path.name
+
     def test_readings_and_labels_are_compressed(self, tmp_path: Path) -> None:
         # Uncompressed labels were measured *larger* than the readings they annotate; a
         # repository is a bad place for megabytes that compress away.

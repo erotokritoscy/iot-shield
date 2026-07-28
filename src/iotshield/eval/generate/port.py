@@ -30,7 +30,8 @@ Neither is a fifth pipeline port. Ports are the *product's* runtime joints; noth
 at product runtime, which is the same argument ``corpus`` makes about ``Corpus`` itself.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, TypeAlias
@@ -43,7 +44,7 @@ from iotshield.eval.generate.world import Clock, Device, FaultSpec
 
 @dataclass(frozen=True)
 class Calibration:
-    """A detector boundary this behaviour's magnitudes were deliberately chosen against.
+    """A detector boundary a fault's magnitude is expressed **in multiples of**.
 
     The generalization of the old ``generate.THRESHOLD_HINT``. That constant existed because
     the telemetry corpus only discriminates while its channel scales straddle
@@ -54,12 +55,54 @@ class Calibration:
     Declaring it per behaviour lets one meta-test check every corpus's calibration against the
     registry, so the coupling is enforced rather than commented. ``preset`` names the preset
     the value belongs to, for a detector whose thresholds live in a ``PRESETS`` table.
+
+    ## Why it is now load-bearing rather than documentary (ADR-0028 D6)
+
+    It used to be a declaration a test checked and nothing read. Now it is the **unit** every
+    fault magnitude is quoted in: a behaviour converts ``FaultSpec.intensity`` into its own
+    units by multiplying this boundary, so ``intensity=1.0`` means "exactly at the alarm line"
+    on every lane at once.
+
+    That is what makes one scalar honest across three modalities. Before, the same number meant
+    "30 network peers" to the flow behaviour and "multiply the thermal rise by 30" to the sensor
+    rig, so the trimodal compromise — documented as deliberately *marginal*, so the corroboration
+    A/B would measure corroboration rather than an obvious spike — drove the camera's temperature
+    to 316.7 degrees against a threshold of 80, and the telemetry arm caught it outright.
+
+    A boundary is therefore declared per *fault kind*, not per behaviour: fan-out's 20 peers and
+    the port scan's 15 ports are different alarm lines on one lane, and a fault expressed against
+    the wrong one is a magnitude nobody chose.
     """
 
     detector: str
     param: str
     value: float
     preset: str | None = None
+
+    def scaled(self, intensity: float) -> float:
+        """The magnitude ``intensity`` multiples of this boundary comes to, in its own units.
+
+        The ADR-0028 D6 conversion, written **once**. It was open-coded per lane — a `_target` in
+        the sensor rig, a `_lines` in the log source, an `_at_least_one` in the network host —
+        which is three chances for the rule that makes ``intensity`` mean one thing to drift.
+        The natural home is the object being multiplied, and this class already calls itself
+        "the **unit** every fault magnitude is quoted in".
+        """
+        return self.value * intensity
+
+    def units(self, intensity: float, per_unit: float = 1.0) -> int:
+        """``scaled``, as a whole number of records — at least one.
+
+        Rounded **up** because ``intensity=1.0`` means "at the boundary", and a fault producing
+        19.6 peers against a threshold of 20 would sit below a line it was asked to sit on.
+
+        ``per_unit`` is how much of the boundary's quantity one record carries, which is 1 for
+        the counting boundaries (a peer, a port, a log line) and a chunk size for a volumetric
+        one — so an exfiltration of ``intensity`` x 50 MB is however many fixed-size flows that
+        takes. Without it the volumetric case would need its own conversion, which is exactly the
+        per-lane special-casing this method exists to remove.
+        """
+        return max(1, math.ceil(self.scaled(intensity) / per_unit))
 
 
 @dataclass(frozen=True)
@@ -123,7 +166,23 @@ class Behaviour(Protocol):
         ...
 
     @property
-    def calibration(self) -> tuple[Calibration, ...]: ...
+    def calibration(self) -> tuple[Calibration, ...]:
+        """The distinct boundaries this lane's magnitudes are quoted against.
+
+        Derived from ``boundary`` over ``expresses`` rather than listed separately, for the same
+        reason ``expresses`` is derived from the handler table: two places to say one thing is
+        one place to get it wrong.
+        """
+        ...
+
+    def boundary(self, kind: str) -> Calibration:
+        """The alarm line ``intensity`` is measured in multiples of, for one fault kind.
+
+        Every kind in ``expresses`` must have one — a meta-test pins that, because a fault shape
+        added without a boundary would silently fall back to whatever magnitude its handler
+        happened to hard-code, which is the failure ADR-0028 D6 exists to remove.
+        """
+        ...
 
     def observe(
         self,
@@ -174,6 +233,63 @@ class Renderer(Protocol):
         statelessness is exercised. A renderer that sorted internally would fight that.
         """
         ...
+
+
+class LaneBehaviour:
+    """The half of a ``Behaviour`` every lane implements identically — declared once.
+
+    A behaviour owns two tables keyed by fault kind: what each fault *does* (its handlers) and
+    what boundary each fault's magnitude is *quoted against*. Everything else the Protocol asks
+    for is a derivation of those two, so this base performs the derivations and the lane modules
+    declare only the tables.
+
+    Before, each lane wrote the derivations out. ``expresses`` was ``frozenset(self._handlers)``
+    in three files; ``calibration`` was a hand-typed 1-tuple in two of them and derived from a
+    third table in the other; and ``boundary`` was implemented twice as ``del kind`` plus a
+    constant — the visible symptom of a *function* in the Protocol where every lane really owns
+    a *table*. A meta-test then checked that the hand-written `calibration` still matched the
+    boundaries it was supposed to be derived from, which is the signature of a mechanism sitting
+    one level too low: the test's whole job was to re-establish a law the code could have made
+    true by construction.
+
+    The two tables are checked against each other here, which is the part no lane can now forget:
+    a fault with a handler and no boundary would silently fall back to whatever magnitude its
+    handler hard-coded, and that is the state ADR-0028 D6 exists to remove.
+    """
+
+    def __init__(self, handlers: Iterable[str], boundaries: Mapping[str, Calibration]) -> None:
+        kinds = frozenset(handlers)
+        if kinds != frozenset(boundaries):
+            raise ValueError(
+                f"{type(self).__name__} expresses {sorted(kinds)} but declares boundaries for "
+                f"{sorted(boundaries)}; every fault a lane can show must say what its magnitude "
+                "is measured against"
+            )
+        self._boundaries = dict(boundaries)
+
+    @property
+    def expresses(self) -> frozenset[str]:
+        return frozenset(self._boundaries)
+
+    @property
+    def calibration(self) -> tuple[Calibration, ...]:
+        # Distinct values, in a stable order: several fault kinds may share one boundary (a scan
+        # and a compromise are both fan-out), and a caller pinning these against the registry
+        # should check each boundary once rather than once per fault that uses it.
+        return tuple(dict.fromkeys(self._boundaries[kind] for kind in sorted(self._boundaries)))
+
+    def boundary(self, kind: str) -> Calibration:
+        return self._boundaries[kind]
+
+
+def one_boundary(handlers: Iterable[str], calibration: Calibration) -> dict[str, Calibration]:
+    """Every fault kind measured against the same boundary — a whole-lane alarm line.
+
+    For a lane whose detector compares everything to one value (``stub_threshold`` on telemetry,
+    ``log_burst``'s ``min_count``), as opposed to one with a preset table (flow). Spelling it as
+    data keeps "one boundary for this whole lane" a visible fact rather than a ``del kind``.
+    """
+    return dict.fromkeys(handlers, calibration)
 
 
 BEHAVIOURS: dict[Lane, Behaviour] = {}

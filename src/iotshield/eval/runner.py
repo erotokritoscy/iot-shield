@@ -278,6 +278,7 @@ def evaluate(
         fit_protocol=protocol.value,
         cases=len(corpus.cases),
         incidents=corpus.incidents,
+        faults=corpus.faults,
         specs=[
             evaluate_spec(
                 spec,

@@ -27,6 +27,11 @@ def _telemetry_recordings() -> tuple[Recording, ...]:
     """
     rig = (Device(asset_id=RIG, kind="sensor", role="test rig"),)
     clock = Clock()
+    # Multiples of `stub_threshold`'s boundary of 80 (ADR-0028 D6), chosen to reproduce the
+    # magnitudes this corpus was calibrated around when they were hard-coded in the handlers:
+    # the spike peaked at 95 (1.19x) and the drift ended at 84 (1.05x). `stuck` has no magnitude
+    # — it freezes the channel wherever it happens to be — so its intensity is never read.
+    over = {"spike": 1.2, "drift": 1.05, "stuck": 1.0}
     recordings: list[Recording] = []
     for kind in ("spike", "drift", "stuck"):
         for repeat in range(3):
@@ -41,6 +46,7 @@ def _telemetry_recordings() -> tuple[Recording, ...]:
                             asset_id=RIG,
                             start_step=300 + repeat * 60,
                             length_steps=120 + repeat * 30,
+                            intensity=over[kind],
                         ),
                     ),
                 )
@@ -97,9 +103,15 @@ def _flow_recordings() -> tuple[Recording, ...]:
     camera = Device(asset_id=CAMERA, kind="camera", role="IP camera")
     second = Device(asset_id="10.0.0.25", kind="camera", role="second IP camera")
 
-    def sweep(kind: str, asset_id: str, start: int, peers: int) -> FaultSpec:
+    def sweep(kind: str, asset_id: str, start: int, over: float) -> FaultSpec:
+        # `over` is multiples of the shape's own detector boundary (ADR-0028 D6), so 1.75 is
+        # "75% past fan-out's 20 peers" = 35 peers. Written this way so the two scanners below
+        # differ in a comparable quantity rather than in raw peer counts that mean nothing
+        # without knowing the threshold they are being read against. The span is wide enough to
+        # hold the burst at one flow per second and still fall inside fan-out's one-minute
+        # window, which is the property that makes it read as fan-out at all.
         return FaultSpec(
-            kind=kind, asset_id=asset_id, start_step=start, length_steps=12, intensity=peers
+            kind=kind, asset_id=asset_id, start_step=start, length_steps=40, intensity=over
         )
 
     return (
@@ -108,7 +120,7 @@ def _flow_recordings() -> tuple[Recording, ...]:
             name="scan-one",
             clock=clock,
             devices=_fleet(camera),
-            faults=(sweep("scan", CAMERA, 300, 35),),
+            faults=(sweep("scan", CAMERA, 300, 1.75),),
         ),
         # Two scanners at different times: the first queue where the ranking metrics measure
         # something real, because true and false alerts come from *different devices*.
@@ -116,7 +128,7 @@ def _flow_recordings() -> tuple[Recording, ...]:
             name="scan-two",
             clock=clock,
             devices=_fleet(camera, second),
-            faults=(sweep("scan", CAMERA, 200, 40), sweep("scan", "10.0.0.25", 600, 28)),
+            faults=(sweep("scan", CAMERA, 200, 2.0), sweep("scan", "10.0.0.25", 600, 1.4)),
         ),
         # The discriminating pair: fan_out is structurally blind to a port sweep, exactly as a
         # fixed threshold is blind to a stuck sensor.
@@ -129,8 +141,10 @@ def _flow_recordings() -> tuple[Recording, ...]:
                     kind="port_sweep",
                     asset_id=CAMERA,
                     start_step=300,
-                    length_steps=20,
-                    intensity=40,
+                    length_steps=40,
+                    # 2.7x the port-scan boundary of 15 ports = 41 ports, on ONE peer, so the
+                    # peer count stays at 1 and fan-out cannot see it.
+                    intensity=2.7,
                 ),
             ),
         ),
@@ -145,7 +159,9 @@ def _flow_recordings() -> tuple[Recording, ...]:
                     asset_id=CAMERA,
                     start_step=200,
                     length_steps=400,
-                    intensity=60,
+                    # 1.44x the 50 MB / 30 min boundary, which the behaviour turns into however
+                    # many fixed-size chunks that takes.
+                    intensity=1.44,
                 ),
             ),
         ),
@@ -187,9 +203,18 @@ def _trimodal_recordings() -> tuple[Recording, ...]:
 
     def compromise(start: int) -> FaultSpec:
         # One fault, three lanes: the flow half is a sweep, the log half an error storm, the
-        # telemetry half a modest thermal rise. Each is arguable alone — which is the point.
+        # telemetry half a thermal rise. **Each is deliberately marginal** — 1.3x each lane's own
+        # alarm line — which is what makes the corroboration A/B measure corroboration rather
+        # than a spike anyone would catch.
+        #
+        # That claim used to be false and nothing could see it. `intensity` was dimensioned, so
+        # the 30 this needed for 30 flow peers also meant "multiply the thermal rise by 30" and
+        # drove the camera to 316.7 degrees against a threshold of 80; the telemetry-only arm
+        # caught the fault outright, and the experiment compared corroboration against an
+        # already-solved problem. A dimensionless intensity (ADR-0028 D6) plus the meta-test in
+        # tests/eval/generate/test_scenarios.py is what keeps the three halves comparable.
         return FaultSpec(
-            kind="compromise", asset_id=CAMERA, start_step=start, length_steps=40, intensity=30
+            kind="compromise", asset_id=CAMERA, start_step=start, length_steps=40, intensity=1.3
         )
 
     return (
@@ -207,7 +232,9 @@ def _trimodal_recordings() -> tuple[Recording, ...]:
                     asset_id=GATEWAY,
                     start_step=100,
                     length_steps=40,
-                    intensity=8,
+                    # 1.6x log_burst's min_count of 5 = 8 lines: comfortably a real burst, so the
+                    # decoy competes for the top of the queue on its own merits.
+                    intensity=1.6,
                 ),
             ),
         ),

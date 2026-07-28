@@ -1,13 +1,20 @@
-"""The TELEMETRY lane: a sensor rig's normal, its three fault shapes, and stub-csv.
+"""The TELEMETRY lane: a device's channels, its four fault shapes, and stub-csv.
 
-Ported from the original single-file generator, split along the axes ``port`` defines: the
-channel model and the fault shapes are *behaviour*, the CSV text is a *renderer*. The
-magnitudes are unchanged, because they are what make the corpus discriminate (see
-``CALIBRATION``).
+Split along the axes ``port`` defines: the channel model and the fault shapes are *behaviour*,
+the CSV text is a *renderer*.
+
+Two things are quoted against ``CALIBRATION`` rather than hard-coded, and both are ADR-0028
+decisions. A fault's **magnitude** is ``intensity`` multiples of the detector's boundary (D6), so
+one scalar means the same thing here as it does on the flow and log lanes. And a device's
+**channels and sampling rate** come from a profile chosen by ``Device.kind`` (D7), so a network
+appliance stops emitting industrial pressure readings at 1 Hz and stops dominating every pooled
+point metric by sheer row count.
 """
 
 import math
+from bisect import bisect_left
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias
 
@@ -16,30 +23,86 @@ import pandas as pd
 
 from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.eval.corpus import CaseInput
-from iotshield.eval.generate.port import Calibration, Observed, Streams
+from iotshield.eval.generate.port import (
+    Calibration,
+    LaneBehaviour,
+    Observed,
+    Streams,
+    one_boundary,
+)
 from iotshield.eval.generate.world import Clock, Device, FaultSpec
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 
-_NORMAL = {
+THRESHOLD = 80.0
+CALIBRATION = Calibration(detector="stub_threshold", param="threshold", value=THRESHOLD)
+"""The boundary every profile's channel scales straddle, and the unit fault magnitudes are
+quoted in (ADR-0028 D6). Pinned against the registry by a meta-test: change the detector's
+default or these scales and the corpus stops discriminating, silently."""
+
+
+@dataclass(frozen=True)
+class _Profile:
+    """What one kind of device measures, and how often.
+
+    ## Why the telemetry lane has profiles at all (ADR-0028 D7)
+
+    It did not, and ``Device.kind``'s docstring promised it did — "selects a profile *within* a
+    behaviour ... an unknown kind falls back to that behaviour's default". True of the flow and
+    log behaviours, false here: every device got a sensor rig's pressure, temperature and
+    vibration at 1 Hz, so ``device_trimodal``'s uplink gateway and update mirror emitted
+    industrial pressure readings.
+
+    That was not only unrealistic, it was the largest single distortion of the pooled point
+    metrics: three devices at 900 instants each made telemetry 2,700 of the corpus's 3,597 clock
+    entries, so a "corpus-wide" point precision was 76% a telemetry number. Per-lane counts
+    (D4) stop that from being *hidden*; giving a gateway a gateway's sampling rate stops it from
+    being *true*.
+
+    ``channels`` maps name to ``(mean, spread)``. Every profile must straddle ``THRESHOLD``, or
+    the fault shapes stop teaching their lesson on that device — a meta-test pins it, because
+    the alternative is a corpus that silently measures nothing on one device class.
+    """
+
+    channels: dict[str, tuple[float, float]]
+    every_steps: int = 1
+    warm: str = "Temperature"
+    """The channel a thermal fault raises. Named per profile because "the one that runs hot"
+    is a different sensor on a rig than on a network appliance, and a fault must not have to
+    know which kind of device it landed on."""
+
+    surge: str = "Pressure"
+    """The channel a spike or a freeze acts on — the profile's primary process variable."""
+
+
+_RIG = {
     "Pressure": (45.0, 1.0),
     "Temperature": (75.0, 0.8),
     "Vibration": (0.05, 0.004),
 }
-"""Per-channel (mean, spread).
+"""The original sensor rig's channels, unchanged: they are what make the shipped ``synthetic``
+corpus discriminate, and ADR-0021 D5b chose them."""
 
-Chosen so a *fixed absolute threshold* around 80 is a meaningful rule on this rig — which is
-what makes ``stub_threshold`` a fair baseline here rather than a detector mis-parameterized
-for the data, and what lets each fault shape teach its intended lesson.
-"""
-
-CHANNELS = tuple(_NORMAL)
-"""Derived from the scales above rather than restated: two lists to keep in step meant a new
-channel was either a silent no-op (absent here) or a KeyError (absent there)."""
-
-THRESHOLD = 80.0
-CALIBRATION = (Calibration(detector="stub_threshold", param="threshold", value=THRESHOLD),)
-"""The boundary the scales above straddle. Pinned against the registry by a meta-test: change
-the detector's default or these scales and the corpus stops discriminating, silently."""
+_PROFILES: dict[str, _Profile] = {
+    "sensor": _Profile(channels=_RIG),
+    "camera": _Profile(
+        # An IP camera reports board temperature and a frame rate, once every five seconds.
+        channels={"Temperature": (62.0, 0.9), "FrameRate": (25.0, 0.4)},
+        every_steps=5,
+        surge="FrameRate",
+    ),
+    "gateway": _Profile(
+        # An appliance reports CPU load and its own die temperature, twice a minute.
+        channels={"CpuLoad": (38.0, 3.0), "Temperature": (58.0, 1.2)},
+        every_steps=30,
+        surge="CpuLoad",
+    ),
+    "mirror": _Profile(
+        channels={"CpuLoad": (44.0, 4.0), "Temperature": (55.0, 1.1)},
+        every_steps=30,
+        surge="CpuLoad",
+    ),
+}
+_DEFAULT_PROFILE = "sensor"
 
 _DECIMALS = 6
 """Rounded before rendering, so the text is stable and small. Applied to the *values*, which
@@ -49,23 +112,25 @@ _Series: TypeAlias = dict[str, np.ndarray]
 """One recording's channels, mutable in place — what a fault handler damages."""
 
 
-class SensorRig:
-    """Independent gaussian channels, damaged over the span a fault names."""
+class SensorRig(LaneBehaviour):
+    """Independent gaussian channels per device kind, damaged over the span a fault names."""
 
     lane = Lane.TELEMETRY
-    calibration = CALIBRATION
 
     def __init__(self) -> None:
         # The dispatch table *is* the declaration of what this lane can show: `expresses` is
         # its keys, so a handler and its claim cannot disagree (`faults.lanes_of` then derives
         # the reverse direction from the same source).
-        self._handlers: dict[str, Callable[[_Series, FaultSpec, slice, int], None]] = {
+        self._handlers: dict[str, Callable[[_Series, _Profile, float, slice], None]] = {
             "spike": self._spike,
             "drift": self._drift,
             "stuck": self._stuck,
             "compromise": self._thermal_rise,
         }
-        self.expresses = frozenset(self._handlers)
+        # One boundary for the whole lane: `stub_threshold` compares every channel of every
+        # device against a single absolute value, so unlike the flow lane there is nothing to
+        # select on. Said as data rather than as a `boundary()` that ignores its argument.
+        super().__init__(self._handlers, one_boundary(self._handlers, CALIBRATION))
 
     def observe(
         self,
@@ -75,20 +140,28 @@ class SensorRig:
         streams: Streams,
         source_format: str,
     ) -> Observed:
+        profile = _PROFILES.get(device.kind, _PROFILES[_DEFAULT_PROFILE])
+        # A device is sampled on its own schedule, so an appliance reporting twice a minute no
+        # longer contributes 900 instants to a corpus alongside a 1 Hz rig (ADR-0028 D7).
+        indices = list(range(0, clock.steps, profile.every_steps))
         # One stream per channel, so adding a channel cannot move an existing one's values.
         series = {
-            channel: streams(channel).normal(mean, spread, clock.steps)
-            for channel, (mean, spread) in _NORMAL.items()
+            channel: streams(channel).normal(mean, spread, len(indices))
+            for channel, (mean, spread) in profile.channels.items()
         }
         expressed = {
-            fault: perturbed for fault in faults if (perturbed := self._apply(series, fault, clock))
+            fault: perturbed
+            for fault in faults
+            if (perturbed := self._apply(series, profile, fault, clock, indices))
         }
 
         # Hoisted out of the comprehension, for the reason `to_stub_csv` documents: per-cell
         # numpy indexing and a per-cell clock call were measured far more expensive than
-        # materializing once. `clock.at` in particular ran three times per instant.
-        stamps = [clock.at(index) for index in range(clock.steps)]
-        columns = [(channel, np.round(series[channel], _DECIMALS).tolist()) for channel in CHANNELS]
+        # materializing once. `clock.at` in particular ran once per channel per instant.
+        stamps = [clock.at(index) for index in indices]
+        columns = [
+            (channel, np.round(values, _DECIMALS).tolist()) for channel, values in series.items()
+        ]
         events = tuple(
             NormalizedEvent(
                 timestamp=moment,
@@ -96,15 +169,22 @@ class SensorRig:
                 source_type=Lane.TELEMETRY,
                 source_format=source_format,
                 metric=channel,
-                value=column[index],
+                value=column[position],
                 raw="",  # the pipeline fills this from the rendered line it parsed
             )
-            for index, moment in enumerate(stamps)
+            for position, moment in enumerate(stamps)
             for channel, column in columns
         )
         return Observed(events=events, expressed=expressed)
 
-    def _apply(self, series: _Series, fault: FaultSpec, clock: Clock) -> frozenset[datetime]:
+    def _apply(
+        self,
+        series: _Series,
+        profile: _Profile,
+        fault: FaultSpec,
+        clock: Clock,
+        indices: Sequence[int],
+    ) -> frozenset[datetime]:
         """Damage the span in place; return the instants whose **rendered values changed**.
 
         Measured, not assumed. This used to return ``True`` whenever a handler existed for the
@@ -118,46 +198,66 @@ class SensorRig:
 
         The span is clamped into the recording here and nowhere else. Deriving the label from
         the instants this returns is what removed the second, unclamped computation of the same
-        window in ``build._incident``, which could place a label past the last row.
+        window in ``build._incidents``, which could place a label past the last instant.
+
+        The span is expressed in *sample positions*, not clock steps, because a profile may
+        sample every thirtieth second: a fault declared over 40 steps covers one or two samples
+        on a gateway and forty on a rig, which is the honest rendering of a slow sensor.
         """
         handler = self._handlers.get(fault.kind)
         if handler is None:
             return frozenset()
         before = {channel: np.round(values, _DECIMALS) for channel, values in series.items()}
-        start = max(0, min(fault.start_step, clock.steps - 1))
-        length = max(1, min(fault.length_steps, clock.steps - start))
-        handler(series, fault, slice(start, start + length), length)
-        changed = np.zeros(clock.steps, dtype=bool)
+        # `bisect_left` already returns 0 below the first sample, so the only clamping that
+        # does anything is keeping the span non-empty and inside the array.
+        first = min(bisect_left(indices, fault.start_step), len(indices) - 1)
+        last = max(bisect_left(indices, fault.start_step + max(1, fault.length_steps)), first + 1)
+        handler(series, profile, fault.intensity, slice(first, last))
+        changed = np.zeros(len(indices), dtype=bool)
         for channel, values in series.items():
             changed |= np.round(values, _DECIMALS) != before[channel]
-        return frozenset(clock.at(int(index)) for index in np.flatnonzero(changed))
+        return frozenset(clock.at(indices[int(pos)]) for pos in np.flatnonzero(changed))
 
-    def _spike(self, series: _Series, fault: FaultSpec, span: slice, length: int) -> None:
-        # A violent excursion peaking mid-span, well past any sane threshold. The floor: every
-        # detector should catch this, so one that misses it is broken.
-        shape = np.sin(np.linspace(0.0, math.pi, length))
-        series["Pressure"][span] += 50.0 * fault.intensity * shape
-        series["Vibration"][span] += 0.08 * fault.intensity * shape
+    def _spike(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
+        # A violent excursion peaking mid-span. The floor: every detector should catch this at a
+        # reasonable intensity, so one that misses it is broken.
+        shape = np.sin(np.linspace(0.0, math.pi, span.stop - span.start))
+        surge = series[profile.surge]
+        # The peak reaches the target; the amplitude is whatever it takes from this channel's
+        # own baseline, which is what lets one intensity mean the same thing on a rig's pressure
+        # and an appliance's CPU load.
+        amplitude = CALIBRATION.scaled(intensity) - float(np.median(surge))
+        surge[span] += amplitude * shape
+        for channel, values in series.items():
+            # Co-perturbation on the other channels, so a spike reads as a correlated event
+            # rather than one lonely column. Deliberately small: it must not itself cross the
+            # boundary, or every fault shape would be catchable on every channel.
+            if channel is not profile.surge:
+                values[span] += 0.1 * float(np.std(values)) * shape
 
-    def _drift(self, series: _Series, fault: FaultSpec, span: slice, length: int) -> None:
-        # A slow ramp ending past the threshold but never locally sudden, so a fixed rule
-        # catches it only once it crosses — this shape is where *latency* separates detectors
-        # that a hit/miss score would tie.
-        series["Temperature"][span] += np.linspace(0.0, 9.0 * fault.intensity, length)
+    def _drift(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
+        # A slow ramp ending at the target but never locally sudden, so a fixed rule catches it
+        # only once it crosses — this shape is where *latency* separates detectors that a
+        # hit/miss score would tie.
+        warm = series[profile.warm]
+        rise = CALIBRATION.scaled(intensity) - float(np.median(warm))
+        warm[span] += np.linspace(0.0, rise, span.stop - span.start)
 
-    def _stuck(self, series: _Series, fault: FaultSpec, span: slice, length: int) -> None:
+    def _stuck(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
         # The sensor freezes at its last plausible value: in range the entire time, so a fixed
         # threshold is structurally blind. Only a detector that models *normal* can see it.
-        # This is the discriminating shape.
-        del fault, length
-        series["Pressure"][span] = series["Pressure"][span.start]
+        # This is the discriminating shape, and the one with no magnitude to scale.
+        del intensity
+        series[profile.surge][span] = series[profile.surge][span.start]
 
-    def _thermal_rise(self, series: _Series, fault: FaultSpec, span: slice, length: int) -> None:
-        # The thermal half of a compromise: the board runs hot while malware works. Kept modest
-        # on purpose — the telemetry signal alone should be arguable, so that the multimodal
-        # corpus measures corroboration rather than a spike anyone would catch.
-        del length
-        series["Temperature"][span] += 8.0 * fault.intensity
+    def _thermal_rise(
+        self, series: _Series, profile: _Profile, intensity: float, span: slice
+    ) -> None:
+        # The thermal half of a compromise: the board runs hot while malware works. A step, not
+        # a ramp — the name said "rise" while the code added a constant, and the constant is the
+        # honest shape for "it is working hard and stays hot".
+        warm = series[profile.warm]
+        warm[span] += CALIBRATION.scaled(intensity) - float(np.median(warm))
 
 
 class StubCsvRenderer:

@@ -100,9 +100,29 @@ class FaultSpec:
 
     ``intensity`` is deliberately a single scalar rather than a per-lane dict of knobs. The
     moment it becomes the latter, the scenario starts encoding lane-specific detail and the
-    separation this module exists for collapses. One scalar means "how hard", and each
-    behaviour reads it in its own units — peers for a flow scan, degrees for a thermal rise,
-    lines per window for a log storm.
+    separation this module exists for collapses.
+
+    ## It is dimensionless: multiples of the detector boundary (ADR-0028 D6)
+
+    ``1.0`` means "exactly at the alarm line", whichever lane is asked, and every behaviour
+    converts it into its own units by multiplying the ``Calibration`` it declares for that fault
+    kind — 20 peers for a fan-out, 15 ports for a port sweep, 50 MB for an exfiltration, 5 lines
+    for a log storm, a value of 80 for the telemetry threshold. So ``1.3`` is "thirty percent
+    past the boundary" on all of them simultaneously, and a scenario expressing a *marginal*
+    fault writes one number rather than three that happen to agree.
+
+    The single scalar was always the right call; leaving it **dimensioned** was not. The same
+    number used to mean "30 peers" to the flow behaviour and "multiply the thermal rise by 30"
+    to the sensor rig, so the trimodal compromise — documented as deliberately arguable —
+    reached 316.7 degrees against a threshold of 80 and the telemetry-only arm of the
+    corroboration A/B caught it outright, measuring nothing it was built to measure.
+
+    Note that the boundary itself is not necessarily a *trip*: detectors use a strict ``>``
+    (the Detector port mandates it), so ``1.0`` sits exactly on the line and a fault meant to
+    fire needs a little more. That asymmetry belongs to the detector, not here.
+
+    A shape with no magnitude ignores it — ``stuck`` freezes a sensor at whatever it last read,
+    and there is nothing for a multiplier to scale.
     """
 
     kind: str

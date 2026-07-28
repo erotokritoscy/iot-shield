@@ -9,7 +9,12 @@ That last clause used to be an aspiration. The behaviours reported a bare fault 
 handler was dispatched rather than when the output changed, and the interval was recomputed
 here from the declared ``FaultSpec`` window — a second computation, with different clamping,
 that never touched a byte. Carrying the instants collapses the two statements into one; see
-``_incident``.
+``_incidents``.
+
+And it now holds *absolutely* rather than up to a convex hull. ``_incidents`` splits a fault's
+perturbed instants into contiguous runs of the lane's own clock, so a quiet stretch in the
+middle of a fault is no longer labelled (ADR-0028 D3), and it emits one incident per lane, so
+no interval describes a union that no single modality showed (D2).
 
 Ordering lives here rather than in a renderer: every device's events for one lane are pooled
 and sorted by ``(timestamp, asset_id)`` before rendering, so a multi-host capture is one
@@ -19,11 +24,12 @@ Four invariants are checked while building, and each exists because breaking it 
 a corpus that *looks* fine and scores wrong (see ``world.GenerationError``).
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from functools import partial
 
 from iotshield.contracts import Lane, NormalizedEvent
+from iotshield.detect import merge_runs
 from iotshield.eval.corpus import Case, CaseInput, Corpus
 from iotshield.eval.generate.port import BEHAVIOURS, RENDERERS, Behaviour, Renderer
 from iotshield.eval.generate.rng import stream
@@ -50,31 +56,59 @@ def _resolve(source_format: str) -> tuple[Renderer, Behaviour]:
     return renderer, behaviour
 
 
-def _incident(fault: FaultSpec, perturbed: Mapping[Lane, frozenset[datetime]]) -> Incident:
-    """One fault's label, made of the instants the behaviours actually perturbed.
+def _incidents(
+    fault: FaultSpec,
+    perturbed: Mapping[Lane, frozenset[datetime]],
+    clocks: Mapping[Lane, Sequence[datetime]],
+) -> list[Incident]:
+    """One fault's labels: **one per lane, split at the gaps** (ADR-0028 D2, D3).
 
-    Not of ``fault.start_step``/``length_steps``. Those are *intent*, and reading the label off
-    them made the answer key a third statement rather than the same one written twice: the
-    declared window was computed here unclamped while the telemetry handler clamped its damage,
-    so a fault aimed past the end of the clock was labelled past the last row — an unwinnable
-    recall miss no detector could ever score against — and a fault scaled to nothing by
-    ``intensity=0.0`` shipped labelled over bytes identical to a clean recording. ``_validate``
-    could not catch either, because it consumed the same boolean that caused them.
+    Nothing here is read off ``fault.start_step``/``length_steps``. Those are *intent*, and
+    reading the label off them made the answer key a third statement rather than the same one
+    written twice: the declared window was computed here unclamped while the telemetry handler
+    clamped its damage, so a fault aimed past the end of the clock was labelled past the last
+    instant — an unwinnable recall miss no detector could ever score against — and a fault
+    scaled to nothing by ``intensity=0.0`` shipped labelled over bytes identical to a clean
+    recording.
 
-    The span is the union across lanes, while ``lanes`` records which ones carried it. Per-lane
-    spans were considered and rejected: with the row clock now per lane, a lane is already only
-    scored on its own rows, and the union differs from each lane's own extent by at most the
-    sampling gap of the sparser lane.
+    Two things changed from the single-interval predecessor, and they are one change seen from
+    either end.
+
+    **One incident per lane**, rather than one spanning the union with a *set* of lanes
+    attached. A compromised camera is one cause with three projections of different extents;
+    the union was a fourth interval no lane actually showed, and the set-valued ``lanes`` had
+    to be read two contradictory ways downstream (see ``truth.Incident``).
+
+    **Split at the gaps**, rather than the convex hull of the perturbed instants. The hull
+    labelled every quiet instant between two injections. Audited across the shipped corpora
+    that cost zero over-labelled instants — but by coincidence rather than by construction: the
+    exfiltration fault injects every ~6.7 s into a camera whose normal flows are every 20 s, so
+    every normal flow inside the hull landed on a second an injection had already perturbed and
+    vanished into the instant set. Move either number and the over-labelling appears.
+
+    The split walks the lane's **own** clock with ``merge_runs`` — the same function a
+    row-scoring detector uses to form its judgments, and the one
+    ``AssetTruth.from_timeline`` uses on a converted corpus. So truth and detections are formed
+    by one rule at both ends, which is what makes the event comparison apples-to-apples.
+    Per-lane incidents are what allow it to be the lane's own clock: a union interval would
+    have had to walk the asset's *pooled* clock and split on gaps no single lane saw.
     """
-    instants = sorted(moment for lane_instants in perturbed.values() for moment in lane_instants)
-    return Incident(
-        asset_id=fault.asset_id,
-        start=instants[0],
-        end=instants[-1],
-        kind=fault.kind,
-        fault_id=fault.fault_id,
-        lanes=frozenset(perturbed),
-    )
+    incidents: list[Incident] = []
+    for lane, instants in sorted(perturbed.items()):
+        clock = clocks[lane]
+        flags = [moment in instants for moment in clock]
+        incidents.extend(
+            Incident(
+                asset_id=fault.asset_id,
+                lane=lane,
+                start=clock[start],
+                end=clock[end],
+                kind=fault.kind,
+                fault_id=fault.fault_id,
+            )
+            for start, end in merge_runs(flags)
+        )
+    return incidents
 
 
 def _observe_lane(
@@ -188,10 +222,18 @@ def _case(scenario: Scenario, recording: Recording) -> Case:
             [
                 AssetTruth.from_incidents(
                     asset_id,
-                    {lane: sorted(instants) for lane, instants in lanes.items()},
-                    [_incident(fault, expressed[fault]) for fault in recording.faults_on(asset_id)],
+                    ordered,
+                    # The asset's own per-lane clocks are passed through, because a fault's label
+                    # is now split against the clock of the lane that showed it. Sorted once per
+                    # asset rather than once per fault, since `_incidents` reads the same lists.
+                    [
+                        incident
+                        for fault in recording.faults_on(asset_id)
+                        for incident in _incidents(fault, expressed[fault], ordered)
+                    ],
                 )
                 for asset_id, lanes in clocks.items()
+                if (ordered := {lane: sorted(instants) for lane, instants in lanes.items()})
             ]
         ),
     )

@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from iotshield.contracts import Lane, NormalizedEvent
-from iotshield.eval.generate.port import Calibration, Observed, Streams
-from iotshield.eval.generate.world import Clock, Device, FaultSpec
+from iotshield.eval.generate.port import Calibration, LaneBehaviour, Observed, Streams
+from iotshield.eval.generate.world import Clock, Device, FaultSpec, GenerationError
 from iotshield.flow import METADATA_KEY, METRIC, Direction, FlowRecord, orient
 from iotshield.normalize.flow import FLOW_CSV, MISSING, ZEEK_CONN
 
@@ -35,13 +35,27 @@ addition. ``_line`` builds its fields in this order.
 
 FAN_OUT_THRESHOLD = 20.0
 PORT_SCAN_THRESHOLD = 15.0
-CALIBRATION = (
-    Calibration("flow_burst", "threshold", FAN_OUT_THRESHOLD, preset="fan_out"),
-    Calibration("flow_burst", "threshold", PORT_SCAN_THRESHOLD, preset="port_scan"),
-)
-"""The boundaries the peer counts below are chosen around — with ``resolver`` deliberately just
-under fan_out's and ``mirror`` deliberately over it, so the corpus measures the threshold
-instead of confirming it."""
+EXFILTRATION_THRESHOLD = 50_000_000.0
+
+_BOUNDARIES: dict[str, Calibration] = {
+    "scan": Calibration("flow_burst", "threshold", FAN_OUT_THRESHOLD, preset="fan_out"),
+    "compromise": Calibration("flow_burst", "threshold", FAN_OUT_THRESHOLD, preset="fan_out"),
+    "port_sweep": Calibration("flow_burst", "threshold", PORT_SCAN_THRESHOLD, preset="port_scan"),
+    "exfiltration": Calibration(
+        "flow_burst", "threshold", EXFILTRATION_THRESHOLD, preset="exfiltration"
+    ),
+}
+"""The boundary each flow fault's magnitude is quoted in multiples of (ADR-0028 D6).
+
+Per fault kind, because this lane is the reason that granularity is necessary: fan-out's 20
+peers, the port scan's 15 ports and exfiltration's 50 MB are three different alarm lines on one
+modality, and a fault expressed against the wrong one has a magnitude nobody chose. The
+exfiltration entry also closes a gap — the preset shipped with no declared calibration at all,
+so ``_EXFIL_CHUNK_BYTES`` was pinned to nothing and the meta-test could not see it.
+
+The peer counts in ``_PROFILES`` are chosen around the same fan-out boundary, with ``resolver``
+deliberately just under it and ``mirror`` deliberately over, so the corpus measures the
+threshold instead of confirming it."""
 
 # Non-local space for external peers (TEST-NET-2/3, reserved for documentation), so orientation
 # sees exactly one local endpoint and attributes the flow to our device.
@@ -60,6 +74,27 @@ class _Profile:
     ``distinct_peers`` is the knob that matters: fan-out counts *cardinality* inside a sliding
     minute, so a device's normal peer count — not its flow count — decides whether a
     fleet-wide threshold misfires on it.
+
+    ## Why a profile can burst (ADR-0028 D5)
+
+    Those two knobs were silently coupled through the detector's window, and the coupling
+    distorted every pooled point metric in the corpus. To sit *above* fan-out's threshold of 20
+    distinct peers per minute a device must emit at least 20 flows per minute, so
+    ``every_steps`` was forced to 2 for the deliberately-over-the-boundary mirror — making the
+    one device we configured to false-alarm the fastest sampler in the corpus. It then owned
+    **99.3%** of ``fleet_scan``'s point false positives, and flow-lane point precision read
+    0.016 with it against 0.706 without. A number typed into this table was the published
+    result, which is exactly the circularity ADR-0021 D7 refuses for ``asset_weight``.
+
+    Raising ``every_steps`` was not available: at one flow every twenty seconds the mirror can
+    never reach twenty peers inside a minute and the control evaporates. So the missing
+    expressiveness was *burstiness*. ``burst_every_steps`` makes a profile sync periodically —
+    all of its peers inside ``burst_span_steps``, then silence — which is both what an update
+    mirror actually does and what decouples "chatty in cardinality" from "chatty in volume".
+    The mirror still trips fan-out inside each burst, so its event-level false alarm (the claim
+    ADR-0024 made) is unchanged; only the row weight it carries into pooled point metrics drops.
+
+    ``burst_every_steps = 0`` is the uniform trickle every other profile wants.
     """
 
     every_steps: int
@@ -69,6 +104,19 @@ class _Profile:
     bytes_out: int
     bytes_in: int
     inbound: bool = False
+    burst_every_steps: int = 0
+    burst_span_steps: int = 10
+
+    def __post_init__(self) -> None:
+        # Exactly one timing mode, because a field the other mode ignores is a field that lies:
+        # a reader of the table below would take `every_steps=1` on a bursty profile as a
+        # statement about its rate, and it is not one.
+        if bool(self.every_steps) == bool(self.burst_every_steps):
+            raise GenerationError(
+                "a flow profile sets either every_steps (uniform) or burst_every_steps "
+                f"(periodic), never both or neither; got every_steps={self.every_steps}, "
+                f"burst_every_steps={self.burst_every_steps}"
+            )
 
 
 _PROFILES: dict[str, _Profile] = {
@@ -92,15 +140,34 @@ _PROFILES: dict[str, _Profile] = {
         bytes_in=800,
         inbound=True,
     ),
-    # THE CALIBRATION DEVICE: legitimately chatty, just under fan_out's boundary of 20.
+    # THE CALIBRATION DEVICE: legitimately chatty, just under fan_out's boundary of 20. Bursty
+    # for the same reason as the mirror below — it is the same experiment from the other side, so
+    # the two must differ in peer count and nothing else.
     "resolver": _Profile(
-        every_steps=3, distinct_peers=18, port=53, service="dns", bytes_out=90, bytes_in=260
+        every_steps=0,
+        distinct_peers=18,
+        port=53,
+        service="dns",
+        bytes_out=90,
+        bytes_in=260,
+        burst_every_steps=300,
     ),
     # DELIBERATELY OVER the boundary: an update mirror whose normal peer count exceeds a
     # fleet-wide constant. ADR-0024's Consequences predicted this false alarm; the corpus is
     # where it stops being a prediction.
+    #
+    # It syncs every five minutes rather than trickling every two seconds (ADR-0028 D5). The
+    # false alarm it raises is identical — 26 distinct peers inside one minute clears fan-out's
+    # 20 either way — but it now contributes ~78 flows per recording instead of 450, so the
+    # control no longer sets the corpus's pooled point precision single-handedly.
     "mirror": _Profile(
-        every_steps=2, distinct_peers=26, port=443, service="ssl", bytes_out=1500, bytes_in=64000
+        every_steps=0,
+        distinct_peers=26,
+        port=443,
+        service="ssl",
+        bytes_out=1500,
+        bytes_in=64000,
+        burst_every_steps=300,
     ),
     "sensor": _Profile(
         every_steps=30, distinct_peers=2, port=8883, service="mqtt", bytes_out=300, bytes_in=180
@@ -109,11 +176,46 @@ _PROFILES: dict[str, _Profile] = {
 _DEFAULT_PROFILE = "sensor"
 
 
-class NetworkHost:
+def _normal_steps(profile: _Profile, clock: Clock) -> list[int]:
+    """When this profile opens a flow: a uniform trickle, or periodic bursts.
+
+    Both shapes in one function because a behaviour must not care which it got — the peer cycle,
+    the jitter stream and the event construction downstream are identical either way, and the
+    only thing burstiness changes is *when*.
+
+    A burst lays ``distinct_peers`` flows across ``burst_span_steps`` so the whole peer set falls
+    inside one of ``flow_burst``'s sliding minutes; that is the property the calibration devices
+    exist to sit either side of, and spacing them any wider would silently dissolve it. Uses the
+    same "spread N events across a span" rule as an injected fault (``Clock.spread``), so a
+    normal burst and a fault burst cannot drift apart in shape.
+    """
+    if not profile.burst_every_steps:
+        return list(range(0, clock.steps, profile.every_steps))
+    steps: list[int] = []
+    for start in range(0, clock.steps, profile.burst_every_steps):
+        steps.extend(
+            step
+            for step in clock.spread(start, profile.burst_span_steps, profile.distinct_peers)
+            if step < clock.steps
+        )
+    return steps
+
+
+_PER_RECORD: dict[str, float] = {"exfiltration": float(_EXFIL_CHUNK_BYTES)}
+"""How much of a boundary's quantity one injected flow carries, where it is not one.
+
+A cardinality shape needs one flow per distinct peer or port, so its boundary counts records
+directly. A bulk transfer is the exception: its boundary is 50 MB, and one flow carries a fixed
+chunk of it. Stating only the exception keeps ``Calibration.units`` the single conversion —
+a parallel table of per-kind lambdas re-typed each boundary constant a second time, so
+re-pointing one left the other silently wrong.
+"""
+
+
+class NetworkHost(LaneBehaviour):
     """Normal traffic per device kind, plus the three flow fault shapes."""
 
     lane = Lane.FLOW
-    calibration = CALIBRATION
 
     def __init__(self) -> None:
         # The dispatch table is the declaration — see `SensorRig.__init__`.
@@ -123,7 +225,13 @@ class NetworkHost:
             "port_sweep": self._ports,
             "exfiltration": self._bulk,
         }
-        self.expresses = frozenset(self._handlers)
+        super().__init__(self._handlers, _BOUNDARIES)
+
+    def _records(self, fault: FaultSpec) -> int:
+        """How many flows this fault injects: ``intensity`` multiples of its own boundary."""
+        return self.boundary(fault.kind).units(
+            fault.intensity, per_unit=_PER_RECORD.get(fault.kind, 1.0)
+        )
 
     def observe(
         self,
@@ -140,7 +248,7 @@ class NetworkHost:
         peers = [_EXTERNAL.format(10 + offset) for offset in range(profile.distinct_peers)]
         flows: list[tuple[int, FlowRecord]] = [
             (step, self._normal(device, profile, peers, index, int(rng.integers(-40, 40))))
-            for index, step in enumerate(range(0, clock.steps, profile.every_steps))
+            for index, step in enumerate(_normal_steps(profile, clock))
         ]
 
         expressed: dict[FaultSpec, frozenset[datetime]] = {}
@@ -148,7 +256,7 @@ class NetworkHost:
             handler = self._handlers.get(fault.kind)
             if handler is None:
                 continue
-            steps = clock.spread(fault.start_step, fault.length_steps, int(fault.intensity))
+            steps = clock.spread(fault.start_step, fault.length_steps, self._records(fault))
             # The instants come from the records the handler actually produced, not from the
             # steps it was offered: a fault expresses itself here by *adding flows*, so those
             # rows are the perturbation, and a handler that emitted fewer must not be labelled

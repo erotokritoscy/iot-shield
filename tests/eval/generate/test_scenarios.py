@@ -17,6 +17,9 @@ from iotshield.eval import CaseReport, evaluate, load_bundle, write_bundle
 from iotshield.eval.corpus import DEFAULT_CORPUS_ROOT
 from iotshield.eval.generate import SCENARIOS
 from iotshield.eval.generate.scenarios import CAMERA, GATEWAY, SERVER
+from iotshield.eval.generate.telemetry import _PROFILES as _TELEMETRY_PROFILES
+from iotshield.eval.generate.telemetry import THRESHOLD
+from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.pipeline import build_detectors, compute_result, load_spec, normalize_sources
 from tests.eval.generate.conftest import built
 
@@ -66,6 +69,75 @@ class TestShape:
         assert restored.incidents == corpus.incidents
         for before, after in zip(corpus.cases, restored.cases, strict=True):
             assert after.truth.assets == before.truth.assets
+
+
+def test_no_telemetry_profiles_normal_readings_reach_the_boundary() -> None:
+    """``_Profile``'s claim that "every profile must straddle THRESHOLD" — actually pinned.
+
+    The docstring said "a meta-test pins it" and none existed, which is the same class of false
+    pin-claim ADR-0028 was written to remove. A profile whose normal readings sit *above* the
+    detector's boundary would false-alarm on every instant of every clean recording; one whose
+    channels a fault cannot lift above it would be invisible to the whole lane. Four sigma is
+    the margin: gaussian noise clears it about once in sixteen thousand samples, and a corpus
+    has hundreds of thousands.
+    """
+    assert _TELEMETRY_PROFILES, "no telemetry profiles: this test would be vacuous"
+    for kind, profile in _TELEMETRY_PROFILES.items():
+        for channel, (mean, spread) in profile.channels.items():
+            assert mean + 4 * spread < THRESHOLD, f"{kind}/{channel} normally trips the detector"
+
+
+class TestDeclaredDifficulty:
+    """A scenario's *intent* about how hard a fault is, pinned rather than merely written down.
+
+    The gap ADR-0028 D6 closed. ``_thermal_rise`` said "kept modest on purpose — the telemetry
+    signal alone should be arguable, so that the multimodal corpus measures corroboration rather
+    than a spike anyone would catch", and ``_trimodal_recordings`` said "each is arguable alone —
+    which is the point". Both were false: a dimensioned ``intensity`` of 30 drove the camera's
+    temperature to 316.7 against a threshold of 80. Nothing failed, because no test asserted the
+    one property the corpus was designed around.
+    """
+
+    MARGINAL = 2.0
+    """How many multiples of its boundary a fault may reach and still count as *marginal*.
+
+    Generous on purpose: the claim being defended is "arguable rather than obvious", not a
+    specific magnitude, and pinning it tighter would make the test a restatement of the scenario
+    instead of a check on it.
+    """
+
+    def test_the_trimodal_compromise_is_marginal_on_every_lane(self) -> None:
+        compromise = [
+            fault
+            for recording in SCENARIOS["device_trimodal"].recordings
+            for fault in recording.faults
+            if fault.kind == "compromise"
+        ]
+        assert compromise, "the corroboration corpus has no compromise fault to check"
+        for fault in compromise:
+            assert 1.0 < fault.intensity <= self.MARGINAL, (
+                f"{fault.fault_id} at {fault.intensity}x its boundary is not marginal; the "
+                "corroboration A/B would compare corroboration against an already-solved problem"
+            )
+
+    def test_the_telemetry_half_of_a_compromise_stays_near_the_threshold(self) -> None:
+        """The same claim measured in the bytes, not in the scenario's declaration.
+
+        Both are needed: the declaration test catches a scenario edited to an obvious magnitude,
+        this one catches a *behaviour* whose conversion drifts from the boundary it claims to use.
+        """
+        corpus = built("device_trimodal")
+        case = next(c for c in corpus.cases if c.name == "compromise")
+        telemetry = next(i for i in case.inputs if i.source_format == STUB_CSV)
+        peak = max(
+            float(line.split(",")[3])
+            for line in telemetry.text.splitlines()
+            if line and line.split(",")[1] == CAMERA
+        )
+        assert peak <= THRESHOLD * self.MARGINAL, (
+            f"the compromised camera peaks at {peak} against a boundary of {THRESHOLD}: the "
+            "telemetry arm catches it outright and the A/B measures nothing"
+        )
 
 
 class TestCommittedBundlesMatchTheCode:

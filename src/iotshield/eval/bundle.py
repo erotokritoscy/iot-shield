@@ -21,14 +21,21 @@ actually ingest, so a benchmark exercises normalization too and measures the *pi
 rather than a detector in isolation. Gzip because the corpora are repetitive numeric text
 (measured 4.4x on SKAB) and a repository is a bad place for megabytes that compress away.
 
-**Labels are intervals plus the row clock, per asset and lane.** See
+**Labels are intervals plus the instant clock, both keyed by (asset, lane).** See
 ``AssetTruth.from_incidents``. Storing the clock alongside the intervals costs a little
 duplication and buys a labels file that is a complete answer key on its own — the reader
 never has to parse readings to learn the truth, so it needs no knowledge of their format. Per
 *asset* because a recording's devices do not share a clock, per *lane* because one device's
-modalities do not either, and because the set of assets listed is the corpus's roster: one
+modalities do not either, and each *interval* names its lane too, so nothing has to be
+inferred from an empty set (ADR-0028 D2). The set of assets listed is the corpus's roster: one
 with an empty ``incidents`` list is *asserted clean*, and one absent entirely is out of scope
 (ADR-0026; see ``truth`` for why those must not be conflated).
+
+**Instants, not rows.** A clock entry is one moment this asset was observed at on this lane,
+not one line of the readings: our contract fans a multi-channel reading into one event per
+channel (ADR-0003 D1), so a 1,148-instant SKAB recording is 9,184 lines here. Row counts are
+a property of the encoding; the answer key is indexed by what a detector can claim
+(ADR-0028 D1).
 
 Provenance and licence are *required* manifest fields, because the first thing this format
 had to solve was which datasets we may redistribute at all: SKAB is GPLv3, so it ships as a
@@ -61,18 +68,29 @@ labels were *larger* than the compressed readings they annotate (264 KB vs 220 K
 one by hand with ``gzip -dc``.
 """
 
-LABELS_VERSION = 3
+LABELS_VERSION = 4
 """On-disk answer-key schema.
 
-v1 was one global clock plus bare ``(start, end)`` pairs, with no asset dimension. v2 added
-the asset (ADR-0026). v3 adds the **lane**: a clock per ``(asset, lane)`` rather than one per
-asset, because pooling a device's modalities into a single clock hands it to whichever lane
-samples fastest and charges that lane's rows against every other lane's detections.
+The version history is one coordinate system being completed one axis at a time, which is
+worth reading as a whole rather than as four repairs (ADR-0028 D1):
+
+===  ==================================================================================
+v1   one global clock, bare ``(start, end)`` pairs. "Something was wrong at 00:05."
+v2   the **asset** axis (ADR-0026). "The camera was wrong at 00:05."
+v3   the **lane** axis, on the clock (ADR-0027 D2). "The camera's network was wrong."
+v4   the lane axis on the **incident** (ADR-0028 D2), so no field is read two ways.
+===  ==================================================================================
+
+v3 gave the clock a lane but left an incident carrying a *set* of them, and that set had to
+mean "every lane" to point scoring and "no claim" to per-lane recall. v4 makes a lane an axis
+of the incident: one incident per (fault, lane), sharing a ``fault_id``.
 
 An older file is *rejected* with the command to regenerate rather than upgraded, for the same
 reason a v1 team3 artifact is: an upgrade would have to invent the missing dimension, and the
 only place to find it is the readings — which is precisely what this format exists to avoid
-needing. A guessed lane is a number nobody measured.
+needing. Here it is sharper than usual: splitting a v3 incident's lane set into v4 incidents
+would have to guess each projection's *extent*, and the union it stored is the one thing that
+cannot be un-unioned. A guessed lane is a number nobody measured.
 """
 
 # Extension per source format, so a bundle's readings are recognisable on sight rather than
@@ -133,18 +151,24 @@ class CorpusManifest(_Model):
 
 
 class IncidentLabel(_Model):
-    """One fault interval. ``kind``/``fault_id``/``lanes`` are descriptive, hence optional.
+    """One fault interval **as one lane saw it** (ADR-0028 D2).
 
-    A converted third-party corpus knows none of them — SKAB's ``anomaly`` column records
-    that a fault happened, not what shape it had — while a generated corpus knows all three.
-    Optional rather than required so the format serves both without lying about either.
+    ``lane`` is required, because it is an axis rather than a description: it decides which
+    clock this interval flags, and a missing one is not a corpus that declined to say — it is
+    a corpus nothing can score. Its v3 predecessor ``lanes: list[str]`` was optional and empty
+    meant two contradictory things at once.
+
+    ``fault_id`` groups the projections of one cause, so it is what the alert level counts.
+    Still defaulted, because a hand-written bundle may legitimately have one interval per
+    fault and nothing to group; ``kind`` stays purely descriptive — SKAB's ``anomaly`` column
+    records that a fault happened, not what shape it had.
     """
 
     start: datetime
     end: datetime
+    lane: str = Field(min_length=1)
     kind: str = ""
     fault_id: str = ""
-    lanes: list[str] = Field(default_factory=list)
 
 
 class AssetLabel(_Model):
@@ -167,12 +191,12 @@ class AssetLabel(_Model):
 class Labels(_Model):
     """A case's answer key: one entry per asset the corpus has an opinion about.
 
-    ``schema_version`` is pinned rather than merely present, so a future v4 fails at
+    ``schema_version`` is pinned rather than merely present, so a future v5 fails at
     validation with a legible message instead of silently dropping fields it does not
     recognise (``extra="forbid"`` would otherwise reject them one at a time).
     """
 
-    schema_version: Literal[3] = LABELS_VERSION
+    schema_version: Literal[4] = LABELS_VERSION
     assets: list[AssetLabel] = Field(min_length=1)
 
 
@@ -243,8 +267,9 @@ def read_labels(path: Path) -> Labels:
     version = found.get("schema_version", 1) if isinstance(found, dict) else None
     if version != LABELS_VERSION:
         raise BundleError(
-            f"{path} is a v{version} answer key; this build reads v{LABELS_VERSION}, which "
-            f"holds a row clock per (asset, lane) rather than one per asset. {REGENERATE_HINT}"
+            f"{path} is a v{version} answer key; this build reads v{LABELS_VERSION}, in which "
+            "each incident names exactly one lane rather than carrying a set of them. "
+            f"{REGENERATE_HINT}"
         )
     try:
         return Labels.model_validate(found)
@@ -272,6 +297,21 @@ def labels_name(case_name: str) -> str:
     return f"{CASES_DIR}/{_stem(case_name)}{LABELS_SUFFIX}"
 
 
+NEWLINE = "\n"
+"""Line ending for every text file a bundle writes. **Never the platform's.**
+
+A committed corpus must be byte-identical to a fresh build, which is what
+``test_a_fresh_build_reproduces_the_committed_bytes`` checks. ``write_text`` with the default
+``newline=None`` translates ``\\n`` to ``os.linesep``, so a bundle generated on Windows carried
+CRLF while ``.gitattributes`` (``* text=auto eol=lf``) checks the file out with LF — the freshness
+test then failed on a fresh Windows clone for a reason that has nothing to do with the corpus, and
+passed only where a previous local build had already overwritten the file.
+
+Gzipped payloads were never exposed to this (``write_bytes``), which is why it went unnoticed:
+only the manifest and the labels of an uncompressed bundle are text.
+"""
+
+
 def write_payload(directory: Path, relative: str, text: str) -> None:
     """Write one bundle payload, gzipping when the name says so."""
     target = directory / relative
@@ -281,7 +321,7 @@ def write_payload(directory: Path, relative: str, text: str) -> None:
         # must not show up as a diff just because the clock moved.
         target.write_bytes(gzip.compress(text.encode("utf-8"), mtime=0))
     else:
-        target.write_text(text, encoding="utf-8")
+        target.write_text(text, encoding="utf-8", newline=NEWLINE)
 
 
 def discover(root: Path) -> Iterator[tuple[str, Path]]:

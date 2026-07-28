@@ -130,7 +130,18 @@ class Corpus:
 
     @property
     def incidents(self) -> int:
+        """Labelled (fault, lane) projections across every case — the event level's total."""
         return sum(len(case.truth.incidents) for case in self.cases)
+
+    @property
+    def faults(self) -> int:
+        """Distinct causes across every case — the alert level's total (ADR-0028 D2).
+
+        Reported beside ``incidents`` rather than instead of it, because the gap between the
+        two *is* the corpus's multimodality: they are equal on a single-lane corpus, and
+        ``device_trimodal`` carries 7 projections of 3 faults.
+        """
+        return sum(len(case.truth.faults) for case in self.cases)
 
 
 @dataclass(frozen=True)
@@ -182,18 +193,18 @@ def corpus_root(root: Path | None = None) -> Path:
 
 
 def _asset_truth(label: AssetLabel) -> AssetTruth:
-    """One asset's stored labels back into truth, re-deriving its row flags from intervals."""
+    """One asset's stored labels back into truth, re-deriving its flags from the intervals."""
     return AssetTruth.from_incidents(
         label.asset_id,
         {Lane(lane): moments for lane, moments in label.clocks.items()},
         [
             Incident(
                 asset_id=label.asset_id,
+                lane=Lane(incident.lane),
                 start=incident.start,
                 end=incident.end,
                 kind=incident.kind,
                 fault_id=incident.fault_id,
-                lanes=frozenset(Lane(lane) for lane in incident.lanes),
             )
             for incident in label.incidents
         ],
@@ -214,17 +225,19 @@ def _asset_label(asset: AssetTruth) -> AssetLabel:
             lane.value: [moment for moment, _ in rows]
             for lane, rows in sorted(asset.timelines.items())
         },
+        # Sorted by (lane, start) so a regenerated bundle is byte-identical however the
+        # generator happened to visit the lanes. The v3 predecessor needed a sort *inside* each
+        # label as well, because a lane set has no order; one incident naming one lane removes
+        # that second ordering problem rather than solving it again.
         incidents=[
             IncidentLabel(
                 start=incident.start,
                 end=incident.end,
+                lane=incident.lane.value,
                 kind=incident.kind,
                 fault_id=incident.fault_id,
-                # Sorted so a regenerated bundle is byte-identical: a frozenset has no order,
-                # and gzip would show the churn.
-                lanes=sorted(incident.lanes),
             )
-            for incident in asset.incidents
+            for incident in sorted(asset.incidents, key=lambda i: (i.lane.value, i.start, i.end))
         ],
     )
 
@@ -367,6 +380,9 @@ def write_bundle(directory: Path, corpus: Corpus) -> CorpusManifest:
         licence=corpus.licence,
         cases=cases,
     )
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / MANIFEST_NAME).write_text(manifest_json(manifest), encoding="utf-8")
+    # Through `write_payload` like every other file above, rather than its own `write_text`.
+    # A bundle's text files must be LF on every platform (`bundle.NEWLINE`), and a second write
+    # site is a second place to forget that — which is exactly how the CRLF reproducibility bug
+    # got in. `MANIFEST_NAME` has no `.gz` suffix, so this takes the plain-text branch.
+    write_payload(directory, MANIFEST_NAME, manifest_json(manifest))
     return manifest

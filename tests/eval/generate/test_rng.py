@@ -150,12 +150,13 @@ class TestDerivedLabels:
         assert found.kind == "spike"
         assert found.fault_id == f"{CAMERA.asset_id}:spike:5"
 
-    def test_the_lanes_are_the_ones_that_actually_expressed_it(self) -> None:
+    def test_the_lane_is_the_one_that_actually_expressed_it(self) -> None:
         # Derived, not declared: only the telemetry lane is rendered here, so that is the only
-        # lane the answer key may claim carried the signal.
+        # lane the answer key may claim carried the signal. One incident per lane since
+        # ADR-0028 D2, so a single-lane scenario yields exactly one.
         scenario = scenario_of(CAMERA, faults=(SPIKE,))
         (found,) = build(scenario).cases[0].truth.incidents
-        assert found.lanes == frozenset({Lane.TELEMETRY})
+        assert found.lane is Lane.TELEMETRY
 
     def test_every_observed_device_joins_the_roster(self) -> None:
         # Which is what makes "that device should have stayed quiet" measurable: a device with

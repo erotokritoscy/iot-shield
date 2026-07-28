@@ -14,14 +14,32 @@ statement that the harness sits outside the product (ADR-0021 D1).
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from iotshield.contracts import Lane
-from iotshield.eval.score import AlertMetrics, Counts, DetectorMetrics, mean, ratio
+from iotshield.eval.score import AlertMetrics, Counts, DetectorMetrics, LaneCounts, mean, ratio
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _compression(counts: Counts) -> float | None:
+    """Detections per incident / alerts per incident — what the alert layer absorbed.
+
+    The transfer function between the two levels, and the only number that shows the stages
+    interacting: >1 means correlation compressed the detector's output, ~1 means it passed it
+    through, and a clean detector with a ratio below 1 means the alert layer is *splitting*
+    incidents rather than merging them (ADR-0021 D2).
+
+    Takes the counts rather than reading them, so ``summary()`` can aggregate the corpus once
+    and pass the same object in instead of re-pooling every case a second time.
+    """
+    return (
+        ratio(counts.totals.scoreable_detections, counts.scoreable_alerts)
+        if counts.totals.incidents
+        else None
+    )
 
 
 TIMELINE_SPAN_CAP = 2000
@@ -80,12 +98,13 @@ class CaseReport(BaseModel):
     # Asset-aware fields (ADR-0026). Defaulted so an older report still parses, and so a
     # single-asset corpus — where every one of them is 0 or empty — reads unchanged.
     misattributed_detections: int = 0
+    off_lane_detections: int = 0
     unlabelled_detections: int = 0
+    unlabelled_lane_detections: int = 0
     unlabelled_alerts: int = 0
     clean_assets: int = 0
     clean_assets_detected: int = 0
     clean_assets_alerted: int = 0
-    lane_recall: dict[Lane, float | None] = Field(default_factory=dict)
     mean_true_priority: float | None = None
     mean_false_priority: float | None = None
     mean_lanes_per_true_alert: float | None = None
@@ -94,35 +113,84 @@ class CaseReport(BaseModel):
     # than averaged from per-case rates — the only form in which a clean recording's false
     # alarms reach the headline (see ``SpecReport.summary``). Defaulted like the fields above
     # so an older report still parses.
-    scoreable_detections: int = 0
-    true_detections: int = 0
-    incidents_caught: int = 0
-    point_true_positive: int = 0
-    point_false_positive: int = 0
-    point_false_negative: int = 0
+    #
+    # ``lanes`` carries the per-lane tallies, which is what makes every per-lane column
+    # poolable too — including the per-lane recall that ADR-0027 D4 had to leave as a
+    # macro-average because the counts behind it were not in this row (ADR-0028 D4).
+    lanes: dict[Lane, LaneCounts] = Field(default_factory=dict)
+    faults: int = 0
     scoreable_alerts: int = 0
-    incidents_covered: int = 0
+    faults_covered: int = 0
     timeline: CaseTimeline | None = None
 
     @property
     def counts(self) -> Counts:
         """This row's tallies, in the shape ``score`` forms rates from.
 
-        The mean overlap is turned back into its own numerator here, so pooling stays plain
-        addition: ``true_detections`` is exactly the count it was averaged over.
+        Only the lane-free fields are read back: everything with a lane lives in ``lanes`` and
+        ``Counts`` derives its own totals from there, so a per-lane and a pooled copy of one
+        count cannot disagree.
+
+        The mean overlap is turned back into its own numerator, so pooling stays plain addition:
+        ``true_detections`` is exactly the count it was averaged over.
         """
         return Counts(
-            incidents=self.incidents,
-            scoreable_detections=self.scoreable_detections,
-            true_detections=self.true_detections,
-            incidents_caught=self.incidents_caught,
-            point_true_positive=self.point_true_positive,
-            point_false_positive=self.point_false_positive,
-            point_false_negative=self.point_false_negative,
             scoreable_alerts=self.scoreable_alerts,
-            incidents_covered=self.incidents_covered,
+            faults=self.faults,
+            faults_covered=self.faults_covered,
             overlap_total=(self.mean_true_detection_overlap or 0.0) * self.true_detections,
+            lanes=self.lanes,
         )
+
+    # The lane-summed counts, **derived** from `lanes` and still serialized, because a CI gate
+    # keys into `cases[].true_detections` and the JSON is part of this artifact's contract.
+    # `computed_field` is what makes those two facts compatible: one representation in the
+    # model, full shape in the dump. As stored fields they would be a second copy free to
+    # disagree with the breakdown beside them.
+    @property
+    def _pooled(self) -> LaneCounts:
+        """This row's lanes added together — the one place the pooling happens.
+
+        Not ``self.counts``: that reads ``true_detections`` below to rebuild ``overlap_total``,
+        so routing these through it would recurse.
+        """
+        return sum(self.lanes.values(), LaneCounts())
+
+    @computed_field
+    @property
+    def scoreable_detections(self) -> int:
+        return self._pooled.scoreable_detections
+
+    @computed_field
+    @property
+    def true_detections(self) -> int:
+        return self._pooled.true_detections
+
+    @computed_field
+    @property
+    def incidents_caught(self) -> int:
+        return self._pooled.incidents_caught
+
+    @computed_field
+    @property
+    def point_true_positive(self) -> int:
+        return self._pooled.point_true_positive
+
+    @computed_field
+    @property
+    def point_false_positive(self) -> int:
+        return self._pooled.point_false_positive
+
+    @computed_field
+    @property
+    def point_false_negative(self) -> int:
+        return self._pooled.point_false_negative
+
+    @computed_field
+    @property
+    def lane_recall(self) -> dict[Lane, float | None]:
+        """Per-lane event recall, derived — it was the seventh stored copy of ``lanes``."""
+        return {lane: counts.rates()["event_recall"] for lane, counts in sorted(self.lanes.items())}
 
     @classmethod
     def build(
@@ -186,12 +254,19 @@ class SpecReport(BaseModel):
         it passed it through, and a clean detector with a ratio below 1 means the alert
         layer is *splitting* incidents rather than merging them (ADR-0021 D2).
         """
-        counts = self.counts
-        return (
-            ratio(counts.scoreable_detections, counts.scoreable_alerts)
-            if counts.incidents
-            else None
-        )
+        return _compression(self.counts)
+
+    def rates_by_lane(self) -> dict[Lane, dict[str, float | None]]:
+        """Corpus-level rates per lane, **pooled** from the per-case counts.
+
+        The column ADR-0027 D4 had to leave behind. Its own decision established that a
+        corpus-level rate must be pooled from counts rather than averaged from per-case rates —
+        a rate is undefined on a clean recording and averaging skips undefined values — and then
+        per-lane recall stayed a macro-average anyway, printed immediately below, because the
+        counts behind it were not in ``CaseReport``. Now they are (``CaseReport.lanes``), so
+        this is the same rule reaching the last column that escaped it.
+        """
+        return self.counts.rates_by_lane()
 
     def summary(self) -> dict[str, float | None]:
         """The corpus-level numbers, **pooled from counts** rather than averaged from rates.
@@ -216,12 +291,31 @@ class SpecReport(BaseModel):
         the aggregate changes. ``detections`` and ``alerts`` stay means, because those columns
         report "per case" and always did.
         """
+        counts = self.counts
         return {
-            **self.counts.rates(),
+            **counts.rates(),
             "detections": self._mean("detections"),
             "alerts": self._mean("alerts"),
-            "compression_ratio": self.compression_ratio,
+            "compression_ratio": _compression(counts),
         }
+
+    @computed_field
+    @property
+    def pooled(self) -> dict[str, float | None]:
+        """``summary()``, serialized — the headline a CI gate can read without re-pooling.
+
+        ADR-0027 left this as a gap: the report carried the per-case counts but no corpus-level
+        number, so a gate wanting the pooled figure had to sum ``cases[].*`` and divide, which
+        is a third place that would know how a rate is formed. Exposing the *result* of the one
+        definition is not a second definition.
+        """
+        return self.summary()
+
+    @computed_field
+    @property
+    def pooled_by_lane(self) -> dict[Lane, dict[str, float | None]]:
+        """``rates_by_lane()``, serialized, for the same reason as ``pooled``."""
+        return self.rates_by_lane()
 
 
 class EvaluationReport(BaseModel):
@@ -230,6 +324,14 @@ class EvaluationReport(BaseModel):
     fit_protocol: str
     cases: int
     incidents: int
+    faults: int = 0
+    """Distinct causes behind ``incidents`` (ADR-0028 D2).
+
+    Defaulted so an older report parses. Equal to ``incidents`` on a single-lane corpus; lower
+    wherever one fault was observable on more than one modality, and the gap is the corpus's
+    multimodality made visible.
+    """
+
     generated_at: datetime = Field(default_factory=_utc_now)
     specs: list[SpecReport] = Field(default_factory=list)
 
@@ -302,10 +404,16 @@ def _summary_table(specs: list[SpecReport]) -> list[str]:
 def render(report: EvaluationReport) -> str:
     """Render the head-to-head comparison, then per-case detail for each spec."""
     # ASCII-only separators: Windows consoles mangle UTF-8 punctuation (as RunReport found).
+    # Both totals, because they are different denominators and the reader needs to know which
+    # one a column used: the event level divides by projections, the alert level by faults
+    # (ADR-0028 D2). They coincide on a single-lane corpus, where the phrase collapses to what
+    # it always said.
+    scale = f"{report.incidents} labelled incident(s)"
+    if report.faults and report.faults != report.incidents:
+        scale += f" across {report.faults} fault(s)"
     lines = [
         f"corpus: {report.corpus} - {report.corpus_description}",
-        f"  {report.cases} case(s), {report.incidents} labelled incident(s)"
-        f"   fit protocol: {report.fit_protocol}",
+        f"  {report.cases} case(s), {scale}   fit protocol: {report.fit_protocol}",
         "",
     ]
     if report.incidents == 0:
@@ -337,13 +445,20 @@ def render(report: EvaluationReport) -> str:
 
 
 def _attribution(spec: SpecReport) -> list[str]:
-    """Multi-asset facts the fixed-width table has no column for (ADR-0026).
+    """Multi-asset and multi-lane facts the fixed-width table has no column for.
 
-    Printed only when non-zero, so a single-asset corpus renders exactly as it always did.
-    They earn the space because each is a number that used to be invisible: a detection at
-    the right moment on the wrong device scored as a correct catch, an asserted-clean device
-    raising an alert was indistinguishable from a real catch elsewhere, and findings on an
-    unlabelled device were silently folded into rates the corpus could not justify.
+    Printed only when non-zero, so a single-asset single-lane corpus renders exactly as it
+    always did. They earn the space because each is a number that used to be invisible: a
+    detection at the right moment on the wrong device (or the wrong modality) scored as a
+    correct catch, an asserted-clean device raising an alert was indistinguishable from a real
+    catch elsewhere, and findings the corpus cannot adjudicate were folded into rates it could
+    not justify.
+
+    The per-lane lines are the reason the pooled ``ptF1`` column is no longer allowed to stand
+    alone (ADR-0028 D4). Pooling weights each modality by how fast it samples, so a corpus whose
+    flow lane emits a flow every two seconds can report a headline point precision of 0.016
+    while the same run's flow-lane precision *without* one deliberately chatty control device is
+    0.706. Both numbers are true; only the per-lane one is diagnosable.
     """
     facts: list[str] = []
     misattributed = sum(case.misattributed_detections for case in spec.cases)
@@ -351,6 +466,12 @@ def _attribution(spec: SpecReport) -> list[str]:
         facts.append(
             f"{misattributed} detection(s) fired at a faulty moment on a DIFFERENT asset "
             "(counted as false positives, not catches)"
+        )
+    off_lane = sum(case.off_lane_detections for case in spec.cases)
+    if off_lane:
+        facts.append(
+            f"{off_lane} detection(s) fired at a faulty moment on the right asset but a lane "
+            "the corpus says showed nothing (false positives, not catches)"
         )
     alerted = sum(case.clean_assets_alerted for case in spec.cases)
     if alerted:
@@ -362,19 +483,23 @@ def _attribution(spec: SpecReport) -> list[str]:
             f"{unscored} finding(s) on assets the corpus does not label: excluded from "
             "every rate, never counted as false"
         )
-    # Averaged over the cases where each lane is defined, the same rule as every other mean
-    # in this report: a case that labelled no flow incident must not drag flow recall down.
-    lanes: dict[Lane, list[float]] = {}
-    for case in spec.cases:
-        for lane, value in case.lane_recall.items():
-            if value is not None:
-                lanes.setdefault(lane, []).append(value)
-    if lanes:
-        # Averaged inline rather than through `score.mean`: that helper's job is to return
-        # None for "nothing to average", and these lists are non-empty by construction (a
-        # lane only appears here once a defined value was appended).
-        rendered = ", ".join(
-            f"{lane}={sum(values) / len(values):.2f}" for lane, values in sorted(lanes.items())
+    off_clock = sum(case.unlabelled_lane_detections for case in spec.cases)
+    if off_clock:
+        facts.append(
+            f"{off_clock} detection(s) on a lane the corpus keeps no clock for: excluded from "
+            "every rate, in both directions"
         )
-        facts.append(f"per-lane event recall: {rendered}")
+    # Pooled from counts, not averaged over cases — the same rule `summary()` follows, now that
+    # `CaseReport.lanes` carries the counts behind these columns (ADR-0028 D4).
+    by_lane = spec.rates_by_lane()
+    if by_lane:
+        recall = ", ".join(
+            f"{lane}={_cell(rates['event_recall'], 0)}" for lane, rates in by_lane.items()
+        )
+        facts.append(f"per-lane event recall: {recall}")
+        point = ", ".join(
+            f"{lane}=P{_cell(rates['point_precision'], 0)}/R{_cell(rates['point_recall'], 0)}"
+            for lane, rates in by_lane.items()
+        )
+        facts.append(f"per-lane point precision/recall: {point}")
     return facts

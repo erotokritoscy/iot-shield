@@ -1,8 +1,8 @@
-"""Ground truth: collapsing a labelled row timeline into incidents, per asset.
+"""Ground truth: collapsing a labelled instant timeline into incidents, per asset and lane.
 
 The answer key everything else is measured against, so its edges are pinned hard — a wrong
 incident boundary would silently corrupt every event-level metric downstream, and a wrong
-*asset* would silently credit the wrong device (ADR-0026).
+*asset* or *lane* would silently credit the wrong device or modality (ADR-0026, ADR-0028 D2).
 """
 
 from iotshield.contracts import Lane
@@ -10,8 +10,25 @@ from iotshield.eval import AssetTruth, GroundTruth, Incident
 from tests.eval.conftest import ASSET, at, fleet_truth, rows, truth_of
 
 
-def incident(start: int, end: int, asset_id: str = ASSET) -> Incident:
-    return Incident(asset_id=asset_id, start=at(start), end=at(end))
+def incident(
+    start: int,
+    end: int,
+    asset_id: str = ASSET,
+    lane: Lane = Lane.TELEMETRY,
+    fault_id: str = "",
+) -> Incident:
+    """One projection. ``fault_id`` defaults to what ``from_timeline`` synthesizes for run 0.
+
+    Spelled out rather than left empty because it is no longer decorative: the alert level
+    divides by *distinct faults*, so an id is part of an incident's identity (ADR-0028 D2).
+    """
+    return Incident(
+        asset_id=asset_id,
+        lane=lane,
+        start=at(start),
+        end=at(end),
+        fault_id=fault_id or f"{asset_id}:run:0",
+    )
 
 
 class TestCollapse:
@@ -21,7 +38,12 @@ class TestCollapse:
 
     def test_a_quiet_gap_separates_incidents(self) -> None:
         truth = truth_of([True, True, False, False, True])
-        assert truth.incidents == (incident(0, 1), incident(4, 4))
+        # Distinct synthesized fault ids, because two runs are two causes as far as a converted
+        # corpus can tell — and the alert level divides by causes (ADR-0028 D2).
+        assert truth.incidents == (
+            incident(0, 1, fault_id=f"{ASSET}:run:0"),
+            incident(4, 4, fault_id=f"{ASSET}:run:1"),
+        )
 
     def test_a_single_row_is_a_zero_length_incident(self) -> None:
         # Mirrors the contract: a point anomaly is a zero-length window (ADR-0003).
@@ -36,9 +58,9 @@ class TestCollapse:
         truth = truth_of([False, False, False])
         assert truth.incidents == ()
         assert truth.is_clean
-        assert truth.anomalous_rows == 0
+        assert truth.anomalous_instants == 0
 
-    def test_rows_are_sorted_before_collapsing(self) -> None:
+    def test_instants_are_sorted_before_collapsing(self) -> None:
         # A shuffled corpus file would otherwise produce silently wrong boundaries, and a
         # wrong answer key is worse than a loud failure.
         shuffled = [(at(2), True), (at(0), False), (at(1), True)]
@@ -111,15 +133,15 @@ class TestRoster:
         truth = fleet_truth(bravo=[True, False], alpha=[False, True])
         assert [found.asset_id for found in truth.incidents] == ["alpha", "bravo"]
 
-    def test_anomalous_rows_sums_across_the_fleet(self) -> None:
+    def test_anomalous_instants_sum_across_the_fleet(self) -> None:
         truth = fleet_truth(a=[True, True, False], b=[False, True, False])
-        assert truth.anomalous_rows == 3
+        assert truth.anomalous_instants == 3
 
 
 class TestStorageForm:
     """Intervals plus a clock, which is what a bundle stores (ADR-0021 D5)."""
 
-    def test_intervals_and_a_clock_rebuild_the_row_flags(self) -> None:
+    def test_intervals_and_a_clock_rebuild_the_instant_flags(self) -> None:
         clock = [at(second) for second in range(5)]
         asset = AssetTruth.from_incidents(ASSET, {Lane.TELEMETRY: clock}, [incident(1, 2)])
         flags = [flagged for _, flagged in asset.timelines[Lane.TELEMETRY]]
@@ -146,26 +168,80 @@ class TestStorageForm:
         assert asset.timelines[Lane.TELEMETRY] == ((at(0), False), (at(1), False))
 
     def test_descriptive_fields_survive_a_round_trip_in_memory(self) -> None:
-        # kind/fault_id/lanes are what a generated corpus knows and a converted one does not;
-        # they must ride along untouched rather than being recomputed from the flags.
+        # kind/fault_id are what a generated corpus knows and a converted one does not; they
+        # must ride along untouched rather than being recomputed from the flags.
         rich = Incident(
             asset_id=ASSET,
+            lane=Lane.FLOW,
             start=at(1),
             end=at(2),
             kind="compromise",
             fault_id=f"{ASSET}:compromise:1",
-            lanes=frozenset({Lane.FLOW, Lane.LOG}),
         )
         asset = AssetTruth.from_incidents(ASSET, {Lane.FLOW: [at(s) for s in range(4)]}, [rich])
         assert asset.incidents == (rich,)
 
+    def test_an_incident_only_flags_its_own_lanes_clock(self) -> None:
+        """The whole point of a lane axis (ADR-0028 D2).
 
-def test_a_converted_corpus_declares_no_lanes_rather_than_guessing() -> None:
-    """SKAB's `anomaly` column says a fault happened, not which modality showed it.
+        A flow fault must leave the telemetry clock alone. Under the set-valued predecessor an
+        incident with an empty lane set flagged *every* lane, and that fallback is the reason one
+        field had to be read two contradictory ways.
+        """
+        clock = [at(second) for second in range(4)]
+        asset = AssetTruth.from_incidents(
+            ASSET,
+            {Lane.FLOW: clock, Lane.TELEMETRY: clock},
+            [incident(1, 2, lane=Lane.FLOW)],
+        )
+        assert [f for _, f in asset.timelines[Lane.FLOW]] == [False, True, True, False]
+        assert [f for _, f in asset.timelines[Lane.TELEMETRY]] == [False] * 4
 
-    So `lanes` is empty for a converted corpus, and per-lane recall is then *undefined*
-    rather than zero — "the flow lane found nothing" and "nobody claimed it should find
-    anything" must not read alike.
+    def test_incidents_on_selects_one_lanes_projections(self) -> None:
+        clock = [at(second) for second in range(4)]
+        asset = AssetTruth.from_incidents(
+            ASSET,
+            {Lane.FLOW: clock, Lane.LOG: clock},
+            [incident(1, 2, lane=Lane.FLOW), incident(0, 3, lane=Lane.LOG)],
+        )
+        assert [i.lane for i in asset.incidents_on(Lane.FLOW)] == [Lane.FLOW]
+        assert [i.lane for i in asset.incidents_on(Lane.LOG)] == [Lane.LOG]
+        assert asset.incidents_on(Lane.TELEMETRY) == ()
+
+    def test_projections_of_one_cause_are_one_fault(self) -> None:
+        """The alert level's denominator, and why ``fault_id`` is load-bearing now.
+
+        Three lanes seeing one compromise is three incidents and ONE fault; dividing alerts by
+        projections would report a correctly corroborated alert as one-third coverage.
+        """
+        clock = [at(second) for second in range(4)]
+        shared = "cam:compromise:1"
+        asset = AssetTruth.from_incidents(
+            ASSET,
+            {lane: clock for lane in Lane},
+            [incident(1, 2, lane=lane, fault_id=shared) for lane in Lane],
+        )
+        truth = GroundTruth.from_assets([asset])
+        assert len(truth.incidents) == len(list(Lane))
+        assert truth.faults == {(ASSET, shared)}
+
+
+def test_a_converted_corpus_declares_the_one_lane_it_covers() -> None:
+    """SKAB's `anomaly` column says a fault happened, on a telemetry dataset.
+
+    So its incidents name TELEMETRY, which is true, and per-lane recall reports that one lane
+    rather than the empty dict the set-valued shape forced. "The flow lane found nothing" and
+    "nobody claimed it should find anything" still do not read alike — flow simply never
+    appears, because no incident names it (ADR-0028 D2).
     """
     truth = GroundTruth.from_timeline(rows([False, True, True]), asset_id="skab-testbed")
-    assert all(found.lanes == frozenset() for found in truth.incidents)
+    assert [found.lane for found in truth.incidents] == [Lane.TELEMETRY]
+
+
+def test_a_converted_corpus_synthesizes_a_fault_id_per_run() -> None:
+    # Otherwise every run in a recording collapses into one "fault" and the alert level divides
+    # by one however many separate faults the recording contained.
+    truth = GroundTruth.from_timeline(
+        rows([True, False, True, False, True]), asset_id="skab-testbed"
+    )
+    assert len(truth.faults) == 3

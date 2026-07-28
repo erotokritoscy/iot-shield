@@ -7,6 +7,8 @@ could be reported as perfect precision. A flow corpus is mostly innocent devices
 the law that makes one measurable at all.
 """
 
+import pytest
+
 from iotshield.contracts import Lane
 from iotshield.eval import AssetTruth, GroundTruth, Incident, score_alerts, score_detections
 from tests.eval.conftest import ASSET, alert, at, detection, fleet_truth, truth_of
@@ -132,7 +134,11 @@ class TestPerAssetClocks:
 
 
 def declaring(*lanes: Lane) -> GroundTruth:
-    """A generated corpus's shape: one incident that declares which lanes carried it."""
+    """A generated corpus's shape: one cause, one incident per lane that carried it.
+
+    Post-ADR-0028 D2 this is a list rather than one interval with a lane set, and the shared
+    ``fault_id`` is what still identifies them as projections of a single compromise.
+    """
     return GroundTruth.from_assets(
         [
             AssetTruth.from_incidents(
@@ -141,11 +147,13 @@ def declaring(*lanes: Lane) -> GroundTruth:
                 [
                     Incident(
                         asset_id=SCANNER,
+                        lane=lane,
                         start=at(20),
                         end=at(29),
                         kind="compromise",
-                        lanes=frozenset(lanes),
+                        fault_id=f"{SCANNER}:compromise:20",
                     )
+                    for lane in lanes
                 ],
             )
         ]
@@ -154,29 +162,72 @@ def declaring(*lanes: Lane) -> GroundTruth:
 
 class TestLaneRecall:
     def test_it_measures_each_declared_lane_separately(self) -> None:
-        # A three-lane fault caught only on flow: the headline event recall is a perfect 1.00
-        # because *something* found it, which is exactly what per-lane recall exists to
-        # qualify — two of the three modalities the corpus labelled saw nothing.
+        # A three-lane compromise caught only on flow. Post-ADR-0028 D2 the headline event
+        # recall is 1/3 rather than a perfect 1.00, because the three projections are three
+        # incidents and two of them were genuinely missed — the honest statement that per-lane
+        # recall previously had to be bolted on to make.
         truth = declaring(Lane.FLOW, Lane.LOG, Lane.TELEMETRY)
         metrics = score_detections(truth, [detection(SCANNER, 20, 29, Lane.FLOW)])
-        assert metrics.event_recall == 1.0
+        assert metrics.incidents == 3
+        assert metrics.event_recall == pytest.approx(1 / 3)
         assert metrics.lane_recall == {
             Lane.TELEMETRY: 0.0,
             Lane.LOG: 0.0,
             Lane.FLOW: 1.0,
         }
 
-    def test_a_detection_in_the_wrong_lane_does_not_credit_a_declared_one(self) -> None:
-        truth = declaring(Lane.FLOW)
-        metrics = score_detections(truth, [detection(SCANNER, 20, 29, Lane.TELEMETRY)])
-        # The incident was still caught — but not by the modality the corpus says carried it.
-        assert metrics.event_recall == 1.0
-        assert metrics.lane_recall == {Lane.FLOW: 0.0}
+    def test_the_three_projections_are_still_one_fault(self) -> None:
+        # Which is why the alert level's denominator is `faults` and not `incidents`: an analyst
+        # investigates the compromised camera once.
+        truth = declaring(Lane.FLOW, Lane.LOG, Lane.TELEMETRY)
+        assert len(truth.faults) == 1
 
-    def test_a_corpus_that_declares_no_lanes_reports_nothing(self) -> None:
-        # Undefined, not zero: a converted corpus never claimed a modality.
+    def test_a_detection_in_the_wrong_lane_is_a_false_positive(self) -> None:
+        # The asset is *observed* on both modalities but only faulty on one, which is the
+        # configuration that makes the wrong-lane detection scoreable rather than merely
+        # unmeasurable — the telemetry clock exists, and every instant on it is clean.
+        truth = GroundTruth.from_assets(
+            [
+                AssetTruth.from_incidents(
+                    SCANNER,
+                    {lane: [at(s) for s in range(40)] for lane in (Lane.FLOW, Lane.TELEMETRY)},
+                    [
+                        Incident(
+                            asset_id=SCANNER,
+                            lane=Lane.FLOW,
+                            start=at(20),
+                            end=at(29),
+                            fault_id=f"{SCANNER}:scan:20",
+                        )
+                    ],
+                )
+            ]
+        )
+        metrics = score_detections(truth, [detection(SCANNER, 20, 29, Lane.TELEMETRY)])
+        # Right device, right moment, wrong modality. Under lane-blind event matching this
+        # scored as a correct catch; the corpus says telemetry showed nothing, so it is a false
+        # alarm that happened to land at a busy time (ADR-0028 D2).
+        assert metrics.event_recall == 0.0
+        assert metrics.event_precision == 0.0
+        assert metrics.off_lane_detections == 1
+        assert metrics.misattributed_detections == 0  # the *asset* was right
+        assert metrics.lane_recall == {Lane.FLOW: 0.0, Lane.TELEMETRY: None}
+
+    def test_a_detection_on_a_lane_with_no_clock_is_not_scored_at_all(self) -> None:
+        # The lane twin of an unlabelled asset: no instants to be wrong about, so counting it in
+        # event precision alone would be a one-sided penalty nothing disclosed (ADR-0028 D4).
+        truth = declaring(Lane.FLOW)
+        metrics = score_detections(truth, [detection(SCANNER, 20, 29, Lane.LOG)])
+        assert metrics.unlabelled_lane_detections == 1
+        assert not metrics.lanes[Lane.FLOW].scoreable_detections
+        assert metrics.event_precision is None
+
+    def test_a_converted_corpus_reports_the_one_lane_it_covers(self) -> None:
+        # It no longer reports nothing: a single-modality dataset's incidents name that modality,
+        # which is true, so this is a defined rate for the lane that exists rather than an empty
+        # dict standing in for "nobody said".
         metrics = score_detections(FLEET, [detection(SCANNER, 20, 29, Lane.FLOW)])
-        assert metrics.lane_recall == {}
+        assert set(metrics.lane_recall) == {Lane.FLOW}
 
 
 class TestCorroborationEvidence:
@@ -218,6 +269,25 @@ class TestSingleAssetEquivalence:
         metrics = score_detections(truth, [detection(ASSET, 20, 59, Lane.TELEMETRY)])
         assert metrics.event_precision == 1.0 and metrics.event_recall == 1.0
         assert metrics.misattributed_detections == 0
+        assert metrics.off_lane_detections == 0
         assert metrics.unlabelled_detections == 0
+        assert metrics.unlabelled_lane_detections == 0
         assert metrics.clean_assets == 0 and metrics.clean_assets_detected == 0
-        assert metrics.lane_recall == {}
+
+    def test_one_lane_means_the_per_lane_rates_are_the_pooled_ones(self) -> None:
+        """The one deliberate exception to "inert" (ADR-0028 D2, D4).
+
+        ``lane_recall`` used to be ``{}`` here, because a converted corpus declared no lanes and
+        the empty set meant "no claim". Now every incident names a lane, so a single-lane corpus
+        reports that lane — and its rates are *identical* to the pooled ones by construction,
+        which is the strongest possible statement that per-lane counting changed no published
+        single-lane number.
+        """
+        truth = truth_of([20 <= i < 60 for i in range(100)])
+        metrics = score_detections(truth, [detection(ASSET, 20, 59, Lane.TELEMETRY)])
+        assert set(metrics.lanes) == {Lane.TELEMETRY}
+        lane = metrics.lanes[Lane.TELEMETRY].rates()
+        assert lane["event_precision"] == metrics.event_precision
+        assert lane["event_recall"] == metrics.event_recall
+        assert lane["point_precision"] == metrics.point_precision
+        assert lane["point_recall"] == metrics.point_recall

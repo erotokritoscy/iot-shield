@@ -166,4 +166,4 @@ def test_point_metrics_score_each_lane_against_its_own_rows() -> None:
     )
     metrics = score_detections(truth, [detection(start=0, end=9, lane=Lane.FLOW)])
     # One flow row covered, and no telemetry row touched: 1 false positive, not 11.
-    assert metrics.point_false_positive == 1
+    assert metrics.lanes[Lane.FLOW].point_false_positive == 1
