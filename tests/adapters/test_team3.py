@@ -12,8 +12,9 @@ import pytest
 
 from iotshield.contracts import EventKind, Lane, NormalizedEvent
 from iotshield.detect._fitted import NotFitted
+from iotshield.detect._runs import classify_run
 from iotshield.detect.team3.artifact import Team3State, load_artifact, parse_artifact
-from iotshield.detect.team3.detector import Team3ZScoreDetector, _classify
+from iotshield.detect.team3.detector import Team3ZScoreDetector
 from iotshield.detect.team3.params import Team3Params
 from iotshield.detect.team3.train import train_state
 from tests.team3_fixtures import make_detector, normal_frame
@@ -76,10 +77,13 @@ class TestEpisodes:
         assert make_detector(["Pressure"], min_segment_length=1000).detect(events) == []
 
     def test_classify_maps_run_length_to_event_kind(self) -> None:
-        assert _classify(1) == EventKind.POINT
-        assert _classify(2) == EventKind.CONTEXTUAL
-        assert _classify(3) == EventKind.COLLECTIVE
-        assert _classify(50) == EventKind.COLLECTIVE
+        # The rule now lives in detect/_runs.py so both telemetry detectors share it;
+        # tests/detect/test_runs.py owns the boundaries. This keeps team3's own coverage
+        # of the mapping it depends on.
+        assert classify_run(1) == EventKind.POINT
+        assert classify_run(2) == EventKind.CONTEXTUAL
+        assert classify_run(3) == EventKind.COLLECTIVE
+        assert classify_run(50) == EventKind.COLLECTIVE
 
 
 class TestPivotAndGuards:
