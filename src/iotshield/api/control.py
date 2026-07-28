@@ -82,6 +82,15 @@ class ModuleInfo(BaseModel):
     produces: list[str]
     formats: list[str]  # input formats decoded from `consumes` (normalizers); [] otherwise
     params: list[ParamInfo]
+    artifact_param: str | None = None
+    """Which param names a cached fit, when the adapter needs one to judge (ADR-0022).
+
+    Published here — not only on the Evaluate side's ``DetectorSummary`` — because it is
+    what separates "ready to run" from "untrained until you name weights", and a *run*
+    refuses the latter outright. Without it the compose page can only rank detectors by
+    lane, so it will happily open on a chain that cannot run (which is what `meter_iforest`
+    did on arrival, sorting ahead of `stub_threshold`). Declared, never name-sniffed.
+    """
 
 
 class SinkInfo(BaseModel):
@@ -222,6 +231,7 @@ def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:
         produces=sorted(token.render() for token in capability.produces),
         formats=sorted(formats_in(capability.consumes)),
         params=describe_params(spec.factory, spec.params_type),
+        artifact_param=spec.artifact_param,
     )
 
 

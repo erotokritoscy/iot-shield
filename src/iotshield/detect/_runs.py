@@ -19,6 +19,30 @@ is what makes the event-level comparison apples-to-apples (ADR-0021).
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from iotshield.contracts import EventKind
+
+MIN_COLLECTIVE = 3
+"""Run length at/above which an episode is collective rather than contextual.
+
+Vendored from team3's ``evaluation/postprocess.py:classify_event_type`` (ADR-0012) and
+promoted here when the meter detector became the second row-scoring adapter to need it.
+It lives beside ``merge_runs`` because it is the other half of the same step: that turns a
+verdict mask into spans, this says what a span's *length* means.
+"""
+
+
+def classify_run(run_length: int) -> EventKind:
+    """The shape of an episode, from how many consecutive rows it covers.
+
+    One definition, so two detectors cannot label the same episode differently — which is
+    exactly what a copy in each adapter would eventually do.
+    """
+    if run_length <= 1:
+        return EventKind.POINT
+    if run_length >= MIN_COLLECTIVE:
+        return EventKind.COLLECTIVE
+    return EventKind.CONTEXTUAL
+
 
 def merge_runs(mask: Iterable[Any]) -> Iterator[tuple[int, int]]:
     """Yield the inclusive ``(start, end)`` index range of each maximal run of truthy values.

@@ -444,7 +444,16 @@ class TestEvaluateRun:
         # widget's value across the change, and `flow_burst` is not an option here.
         at.selectbox(key="eval_corpus").set_value("synthetic").run()
         assert not at.exception
-        assert at.multiselect(key="eval_e0_dets").options == ["stub_threshold", "team3_zscore"]
+        # Every TELEMETRY detector is eligible, including ones that will find nothing here:
+        # `meter_iforest` needs meter metadata on its events and `team3_zscore` needs SKAB's
+        # channels, so both report as silent on this corpus. That is the ADR-0026 amendment
+        # working as intended — a silent detector is a real measurement, reported with its
+        # reason, not an option withheld from the operator.
+        assert at.multiselect(key="eval_e0_dets").options == [
+            "meter_iforest",
+            "stub_threshold",
+            "team3_zscore",
+        ]
 
     def test_one_entry_can_hold_several_detectors_that_run_together(
         self,

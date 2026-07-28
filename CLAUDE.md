@@ -169,9 +169,11 @@ which overrides the config file's `database_url` (ADR-0010); the config file
 keeps its SQLite default for host runs. Schema creation is owned by the one-shot
 `python -m iotshield.storage.init` step (which the API, dashboard, and runner
 depend on in compose); the read-only API never creates the schema, and the
-runner still creates it for standalone host runs. The first real detector (team3,
-ADR-0012) settled the runtime dependency surface as **numpy-only** (sklearn/torch
-deferred to future per-model ADRs); image hardening is now unblocked but not yet done.
+runner still creates it for standalone host runs. The runtime dependency surface was
+numpy-only from team3 (ADR-0012) until the meter detector brought **scikit-learn** in
+(ADR-0028) — the first model library in the image, ~100 MB with scipy, which makes image
+hardening more valuable rather than less. `statsmodels` stays out (MSTL only). torch is
+still deferred to its own per-model ADR.
 
 A run ingests **one or more sources** (ADR-0019): `PipelineSpec.sources` is a list of
 `{normalizer, source_format, path?, params?}`, each routed to its normalizer by its declared
@@ -194,6 +196,21 @@ because flow is the first modality whose payload outgrows the contract's own fie
 (ADR-0023 D5). Flows identify a device by **IP**; telemetry and logs identify by name, so
 cross-lane correlation involving flows currently requires the sources to agree on an
 identifier (asset aliasing is an open item — ADR-0023 Consequences).
+
+**Utility meters are the second vocabulary module** (`src/iotshield/meter.py`, ADR-0028), for
+the same reason: a meter reports a **cumulative counter**, but the meaningful observation is
+**consumption over an interval**, and one `value` cannot hold both. So consumption is the
+event's `value` and the raw counter, interval width and utility ride in `metadata` behind the
+typed `MeterReading` — which is what keeps the boundary **invertible** (a renderer is the
+inverse of a normalizer) and lets a later data-quality detector see a rollback with no second
+ingest path. A consumption event is stamped at the interval's **END**, the *opposite* of the
+FLOW lane's start-stamp; neither is inferable from a timestamp, so `interval_hours` travels
+with every event. A **gap** yields no event at all (hourly consumption across it is unknown;
+inventing it is the "gap-boundary false spike"), and a **counter rollback** is quarantined —
+real data, but consumption across a reset is undefined, so we refuse visibly rather than
+invent. Differencing lives in the normalizer; the commissioning/service-start trims and the
+usability verdict are modelling judgments and live in the detector, because a normalizer that
+silently dropped a meter's first months could not be inverted (ADR-0028 D3/D4).
 
 Eleven demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
 `config/demo.yaml` + `data/demo/demo.csv`
@@ -235,6 +252,36 @@ record, non-JSON line), the `stub_threshold` detector ranks the pump's two corre
 above the discovered sensor — the smallest adapter that honors every port law, and the first
 normalizer whose produced lane is a config **param** so the guard stays accurate — ADR-0025).
 
+`config/demo_meter.yaml` + `data/demo/demo_meter.csv` and `data/demo/demo_meter_sensipro.csv`
+(**two different meter platforms in ONE run, judged by the same detector** — ADR-0028: an EOA
+water CSV written newest-first in naive Cyprus local time, plus a SensiPro hourly export
+carrying water *and* electricity → the `meter` normalizer's two dialects difference both
+counters gap-safely → 332 + 1006 consumption events, 3 quarantined rows, a 2-hour gap that
+correctly yields nothing → the `meter_iforest` detector flags ONE thing: a continuous
+overnight draw at ~2x the evening peak held for three hours, score 0.7994 vs a threshold
+0.7513 *learned* on ten weeks of that meter's own clean history at ~1 false alarm per
+meter-month. The evidence names `deviation` at z=25.4 — "consumption far above the usual level
+for this hour of the week" — which is the case a magnitude threshold cannot express, since the
+volume is ordinary for an evening and extraordinary for 3am. The SensiPro meters have no
+fitted model in the demo artifact, so they are **skipped, not scored**, which is what
+one-model-per-meter means.)
+
+The meter artifact is committed (`src/iotshield/detect/meter/artifacts/demo_meter.json`) and
+regenerated with `uv run python -m iotshield.detect.meter.train`. Its format differs from
+team3's deliberately (ADR-0028 D6): it stores the **clean history each meter was fitted on**
+rather than the fitted weights, and re-fits on load. A 200-tree forest is megabytes of
+unreviewable JSON or a version-fragile pickle; the training matrix is smaller than the model
+it produces, is what a reviewer actually wants to see, and makes model and threshold
+impossible to get out of step. That also bounds where the format is appropriate: an artifact
+carries data, so committing one is only acceptable for data we may commit (the demo meter is
+synthetic). There is **no universal meter model** — a fleet of 1,656 meters needs 1,656 fits,
+done at deployment from each meter's own clean history.
+
+`meter_iforest` is the first registered detector that is **untrained by default**, and
+`ModuleInfo` now publishes `artifact_param` so the compose page preselects a detector that is
+*ready to run* — without it the page opened on `meter_iforest` (it sorts first) and therefore
+on a chain `compute_run` refuses.
+
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
 Its layout is schema v2 — `{params, state}`, the ADR-0022 split made visible in the file:
@@ -248,8 +295,9 @@ src/iotshield/
   contracts/       frozen data contracts (pydantic v2) — the product's core
   capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
   flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
-  normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, passthrough=validate-and-envelope pre-normalized JSONL, ...); a run routes each of its sources here by format (ADR-0019)
-  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, ...)
+  meter.py         METER vocabulary: the typed MeterReading (counter + interval + utility) (ADR-0028)
+  normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, meter+dialects=EOA/SensiPro cumulative counters -> hourly consumption, passthrough=validate-and-envelope pre-normalized JSONL, ...); a run routes each of its sources here by format (ADR-0019)
+  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, meter iforest, ...)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)

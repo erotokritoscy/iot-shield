@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
-from iotshield.api.control import ParamInfo
+from iotshield.api.control import ModuleInfo, ParamInfo
 from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import (
     case_timeline,
@@ -289,17 +289,41 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     return values
 
 
-def _first_index(names: list[str], fits: Callable[[str], bool]) -> int:
-    """Preselect the first name that fits, else fall back to the first entry.
+def _preferred_index(names: list[str], *ranked: Callable[[str], bool]) -> int:
+    """Preselect by the first predicate that matches anything, in order of preference.
 
-    Both pickers need this and neither may preselect "whichever name sorts first": that was
-    silently wrong for detectors the moment a second lane arrived (ADR-0020), and it became
-    wrong for sources when ``flow`` was registered, since it sorts before ``stub`` — a fresh
-    session would have opened on a flow chain fed telemetry CSV. Falling back to 0 rather
-    than to nothing is deliberate: the guard reports a mismatched chain, which is more
-    useful than a row that contributes no adapter at all.
+    No picker here may preselect "whichever name sorts first": that was silently wrong for
+    detectors the moment a second lane arrived (ADR-0020), and wrong for sources once
+    ``flow`` was registered, since it sorts before ``stub`` — a fresh session would have
+    opened on a flow chain fed telemetry CSV.
+
+    Each predicate is tried in turn and only a real match wins, so a second-choice rule can
+    back up a first-choice one. Falling back to 0 when nothing matches is deliberate: the
+    guard reports a mismatched chain, which is more useful than a row contributing no
+    adapter at all.
     """
-    return next((index for index, name in enumerate(names) if fits(name)), 0)
+    for fits in ranked:
+        match = next((index for index, name in enumerate(names) if fits(name)), None)
+        if match is not None:
+            return match
+    return 0
+
+
+def _feeds(detector: ModuleInfo, produced: set[str]) -> bool:
+    """Whether this detector consumes a lane the page's sources actually produce."""
+    return bool(set(detector.consumes) & produced)
+
+
+def _ready(detector: ModuleInfo) -> bool:
+    """Whether this detector can judge without an artifact being named first.
+
+    Declared, not name-sniffed: ``artifact_param`` is published by ``/modules`` precisely so
+    a caller can tell "needs trained weights" from "ready to run" (ADR-0022). Read as a
+    typed attribute rather than via ``getattr`` — a default would silently restore the very
+    regression the field exists to prevent, and against an older API the honest failure is
+    the response model's, not a preselection that quietly reverts.
+    """
+    return detector.artifact_param is None
 
 
 def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
@@ -316,7 +340,7 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
         names,
         # By the format the reference normalizer accepts, not by its name — follows the
         # registry rather than restating it.
-        index=_first_index(names, lambda name: STUB_CSV_FORMAT in normalizers[name].formats),
+        index=_preferred_index(names, lambda name: STUB_CSV_FORMAT in normalizers[name].formats),
         key=f"src_{index}_norm",
     )
     formats = normalizers[normalizer_name].formats
@@ -364,14 +388,25 @@ def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str])
     name = st.selectbox(
         f"Detector {index + 1}",
         names,
-        # Preselect a detector the page's sources can actually feed. Streamlit honours
-        # `index=` only on a widget's first render, so this reads the sources at their
-        # defaults; switching the source afterwards leaves the operator's choice alone (and
-        # the guard speaks up if it no longer fits). Matching rendered tokens is safe only
-        # because normalizers produce lane tokens and detectors consume them — the typed
-        # version of this joint is `compat.lanes_in`.
+        # Preselect a detector the page's sources can actually feed AND that is ready to
+        # run. Streamlit honours `index=` only on a widget's first render, so this reads the
+        # sources at their defaults; switching the source afterwards leaves the operator's
+        # choice alone (and the guard speaks up if it no longer fits). Matching rendered
+        # tokens is safe only because normalizers produce lane tokens and detectors consume
+        # them — the typed version of this joint is `compat.lanes_in`.
+        #
+        # "Ready to run" is the second condition, and it is not cosmetic: a detector with an
+        # `artifact_param` is *untrained* until one is named, and a run refuses an untrained
+        # detector outright (ADR-0022). Preferring one that needs no cached fit is what stops
+        # the page opening on a chain that cannot run — which is exactly what happened when
+        # `meter_iforest` joined the registry and sorted ahead of `stub_threshold`. Declared,
+        # not name-sniffed: `artifact_param` is published by /modules for this purpose.
         index=(
-            _first_index(names, lambda n: bool(set(detectors[n].consumes) & produced))
+            _preferred_index(
+                names,
+                lambda n: _feeds(detectors[n], produced) and _ready(detectors[n]),
+                lambda n: _feeds(detectors[n], produced),
+            )
             if index == 0
             else 0
         ),
