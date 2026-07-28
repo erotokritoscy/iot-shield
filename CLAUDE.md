@@ -51,6 +51,16 @@ scripts/check.sh        # all of the above (CI runs the same)
 Run all four before considering any task done.
 
 ```
+cd web && npm install   # the React dashboard's toolchain (node >= 20)
+npm run dev             # :5173, proxying /api and /pipeline to the two APIs
+npm run check           # typecheck + lint + vitest + build — the web gate, CI runs it too
+npm run gen:types       # regenerate the TS view of both APIs after changing either one
+```
+
+`web/` has its own gate; a change that touches it is not done until `npm run check` is
+green, exactly as `scripts/check.sh` gates the Python side.
+
+```
 # Benchmark against labelled data (ADR-0021) — the other half of the port suite:
 # pytest says whether an adapter FITS, this says whether it is GOOD.
 uv run python -m iotshield.eval list                 # what corpora exist here
@@ -255,7 +265,7 @@ reason instead of reading like a bad detector. Reported, not refused: a delibera
 detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
-docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8501)
+docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboards (:8080 React, :8501 Streamlit)
 docker compose run --rm runner  # batch job (profile "jobs"): populate the DB
 docker compose down -v          # stop and drop the Postgres volume
 ```
@@ -399,11 +409,19 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app (consumes the APIs only: Monitor = Triage/Assets/Health; Operate = Compose & run; Evaluate = benchmarks + hyperparameter sweeps over *entries*, env-gated)
+  dashboard/    Streamlit app, the original UI (consumes the APIs only; same three planes as web/ below). Kept runnable on :8501 during the changeover (ADR-0031)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)
                 generate/ = synthetic corpora: world + Behaviour/Renderer ports + scenarios
+web/            the React dashboard (ADR-0031) — the product UI, served by nginx on :8080
+  src/lib/api/    the ONE door into both APIs: types generated from their /openapi.json
+                  (committed) + zod validation per response, so drift fails loudly here
+  src/charts/     the six Vega-Lite builders, ported one-to-one from dashboard/charts.py
+  src/pages/      Monitor (Triage/Assets/DataHealth), Operate (Compose), evaluate/
+  src/index.css   the design tokens — change the look here, never with a hex in a component
+  nginx.conf.template  serves the SPA and proxies /api + /pipeline, which is why the
+                  browser makes only same-origin requests and neither API needs CORS
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
