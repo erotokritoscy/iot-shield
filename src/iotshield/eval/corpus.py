@@ -201,8 +201,7 @@ def _asset_truth(label: AssetLabel) -> AssetTruth:
             Incident(
                 asset_id=label.asset_id,
                 lane=Lane(incident.lane),
-                start=incident.start,
-                end=incident.end,
+                spans=tuple(incident.spans),
                 kind=incident.kind,
                 fault_id=incident.fault_id,
             )
@@ -231,13 +230,12 @@ def _asset_label(asset: AssetTruth) -> AssetLabel:
         # that second ordering problem rather than solving it again.
         incidents=[
             IncidentLabel(
-                start=incident.start,
-                end=incident.end,
+                spans=list(incident.spans),
                 lane=incident.lane.value,
                 kind=incident.kind,
                 fault_id=incident.fault_id,
             )
-            for incident in sorted(asset.incidents, key=lambda i: (i.lane.value, i.start, i.end))
+            for incident in sorted(asset.incidents, key=lambda i: (i.lane.value, i.spans))
         ],
     )
 

@@ -132,23 +132,41 @@ class TestDerivedLabels:
     def test_the_labelled_interval_is_the_span_that_actually_changed(self) -> None:
         """Read off the perturbed instants, not off the declared window.
 
-        `SPIKE` is declared at step 5 for 4 steps, and the label is **6..7**. A spike is a
-        half-sine over its span, `sin(linspace(0, pi, 4))` = `[0, .87, .87, 0]`, so the first
-        and last samples add exactly nothing: steps 5 and 8 render byte-identical to the
-        unfaulted world. Labelling them anyway claims an anomaly no detector can see and no
-        reader can diagnose — an unwinnable recall miss baked into a committed corpus.
+        `SPIKE` runs steps 5..8 and every one of those samples changes, so here the two agree.
+        They agree *because the shape was fixed*, and it is worth recording what this test used
+        to assert: the label was 6..7, because `sin(linspace(0, pi, 4))` is `[0, .87, .87, 0]`
+        and a spike's first and last samples added exactly nothing. That was never a property
+        worth having — it silently cost every spike two instants, and on a device sampled
+        coarsely enough to cover one or two samples it cost the fault *entirely* (`_bump`).
 
-        This is the whole reason the interval comes from `Observed.expressed` rather than from
-        `FaultSpec`: intent and effect are different things, and only one of them is in the
-        file the detector reads.
+        The property under test is that the interval comes from `Observed.expressed` rather than
+        from `FaultSpec`, which the neighbouring test exercises where the two genuinely differ.
         """
         scenario = scenario_of(CAMERA, faults=(SPIKE,))
         (case,) = build(scenario).cases
         (found,) = case.truth.incidents
-        assert found.start == CLOCK.at(6)
-        assert found.end == CLOCK.at(7)  # closed interval: the last affected instant
+        assert found.start == CLOCK.at(5)
+        assert found.end == CLOCK.at(8)  # closed interval: the last affected instant
         assert found.kind == "spike"
         assert found.fault_id == f"{CAMERA.asset_id}:spike:5"
+
+    def test_a_fault_running_past_the_recording_is_labelled_only_where_it_was_observed(
+        self,
+    ) -> None:
+        """Where intent and effect genuinely part company: the end of the clock.
+
+        The fault is declared to run from step 18 for 10 steps, which is eight steps past the
+        last instant this 20-step recording has. The damage is clamped to the array; the label
+        is read off the damage, so it ends at step 19.
+
+        Computing it from `FaultSpec` instead — which is what the builder used to do — placed the
+        label past the last instant, an unwinnable recall miss no detector could ever score
+        against, because the recording contains no reading there to flag.
+        """
+        overrun = FaultSpec(kind="spike", asset_id=CAMERA.asset_id, start_step=18, length_steps=10)
+        (found,) = build(scenario_of(CAMERA, faults=(overrun,))).cases[0].truth.incidents
+        assert found.start == CLOCK.at(18)
+        assert found.end == CLOCK.at(19)
 
     def test_the_lane_is_the_one_that_actually_expressed_it(self) -> None:
         # Derived, not declared: only the telemetry lane is rendered here, so that is the only

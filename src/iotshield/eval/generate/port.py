@@ -118,8 +118,15 @@ class Observed:
 
     Keyed by the spec object rather than by ``fault_id``: that id is a readable display string
     (``asset:kind:start_step``), so two faults sharing one would silently merge into a single
-    label, with a comment in the builder asserting uniqueness as the only guard. ``FaultSpec``
-    is frozen and therefore hashable, so the structure guarantees what the comment asserted.
+    label. ``FaultSpec`` is frozen and therefore hashable, which distinguishes two faults that
+    differ in *any* field — including the intensity a shared display id would hide.
+
+    It does **not** distinguish two faults that are equal in every field, because a frozen
+    dataclass hashes by value: two identical specs are one key. That is the right answer (they
+    describe the same fault twice) but it is not the structural guarantee this docstring used to
+    claim, and it is worth being exact about, since the neighbouring collision — one *fault*
+    reaching two devices, where the builder's merge would keep only the last — is prevented by
+    ``Recording.__post_init__`` making an asset id name exactly one device, not by this key.
 
     Instants rather than a bare ``True``, because the boolean was answering the wrong
     question. It was set when a *handler existed* for the fault kind, which is a statement

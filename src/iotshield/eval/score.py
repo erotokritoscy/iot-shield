@@ -580,8 +580,11 @@ def _lane_tallies(truth: GroundTruth, scoreable: Sequence[DetectionResult]) -> _
                     # found it slowly), and recall already reports the misses.
                     latencies.append(max(0.0, (first - incident.start).total_seconds()))
 
+            # Flattened over spans, not incidents: an incident is a projection whose extent
+            # may have gaps (ADR-0029), and merging `start`..`end` would re-fill them — turning
+            # every quiet instant a fault straddled back into a labelled one.
             spans = spans_of[(asset.asset_id, lane)] = _Spans(
-                (i.start, i.end) for i in lane_incidents
+                span for i in lane_incidents for span in i.spans
             )
             tallies[lane] = tallies.get(lane, LaneCounts()) + LaneCounts(
                 point_true_positive=true_positive,
@@ -627,7 +630,7 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
     # when it overlaps an incident on its own asset AND its own lane, which is a bisection into
     # the index `_lane_tallies` already built rather than a rescan of that lane's incidents.
     incidents_of = _incidents_of(truth)
-    elsewhere = _Spans((incident.start, incident.end) for incident in truth.incidents)
+    elsewhere = _Spans(span for incident in truth.incidents for span in incident.spans)
     # Merged per-asset spans, built lazily and only for the assets a *false* detection actually
     # lands on: on a 30-asset fleet with two faulty hosts, eagerly indexing the roster builds 28
     # empty ones per case, and a spec with no false detections consults none of them.
@@ -645,8 +648,9 @@ def score_detections(truth: GroundTruth, detections: Sequence[DetectionResult]) 
             continue
         if detection.asset_id not in same_asset:
             same_asset[detection.asset_id] = _Spans(
-                (incident.start, incident.end)
+                span
                 for incident in incidents_of.get(detection.asset_id, ())
+                for span in incident.spans
             )
         if same_asset[detection.asset_id].overlaps(*window):
             # Right device, right moment, WRONG modality: the corpus says this lane showed

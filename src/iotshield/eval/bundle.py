@@ -68,7 +68,7 @@ labels were *larger* than the compressed readings they annotate (264 KB vs 220 K
 one by hand with ``gzip -dc``.
 """
 
-LABELS_VERSION = 4
+LABELS_VERSION = 5
 """On-disk answer-key schema.
 
 The version history is one coordinate system being completed one axis at a time, which is
@@ -79,18 +79,32 @@ v1   one global clock, bare ``(start, end)`` pairs. "Something was wrong at 00:0
 v2   the **asset** axis (ADR-0026). "The camera was wrong at 00:05."
 v3   the **lane** axis, on the clock (ADR-0027 D2). "The camera's network was wrong."
 v4   the lane axis on the **incident** (ADR-0028 D2), so no field is read two ways.
+v5   an incident's extent is a **list of spans** (ADR-0029), so it is a projection not a run.
 ===  ==================================================================================
 
 v3 gave the clock a lane but left an incident carrying a *set* of them, and that set had to
 mean "every lane" to point scoring and "no claim" to per-lane recall. v4 makes a lane an axis
 of the incident: one incident per (fault, lane), sharing a ``fault_id``.
 
-An older file is *rejected* with the command to regenerate rather than upgraded, for the same
-reason a v1 team3 artifact is: an upgrade would have to invent the missing dimension, and the
-only place to find it is the readings — which is precisely what this format exists to avoid
-needing. Here it is sharper than usual: splitting a v3 incident's lane set into v4 incidents
-would have to guess each projection's *extent*, and the union it stored is the one thing that
-cannot be un-unioned. A guessed lane is a number nobody measured.
+v5 finishes that sentence. v4 stored one interval per incident, so a fault whose perturbed
+instants had a gap in them became *several* incidents — and since ``incidents`` is event
+recall's denominator, the fragment count changed the score. It is an accident of arithmetic
+(whether a device's routine event lands between two injected ones or on top of one), so two
+identical faults could contribute different denominators. Storing the runs *inside* one
+incident keeps the gaps the point metrics need and gives the event metrics one row per
+projection.
+
+An older file is *rejected* with the command to regenerate rather than upgraded. For v1-v3 that
+is forced: an upgrade would have to invent the missing dimension, and the only place to find it
+is the readings — precisely what this format exists to avoid needing. Splitting a v3 incident's
+lane set into v4 incidents would have to guess each projection's *extent*, and the union it
+stored cannot be un-unioned.
+
+**v4 is the exception**: a v4 incident is a v5 incident with one span, so it is mechanically
+upgradable. It is still refused, because the upgrade would be *lossless but wrong* — v4 wrote
+one row per run, so re-reading those rows as one-span projections would preserve exactly the
+inflated denominator v5 exists to remove, and silently. Regenerating re-derives the grouping
+from the fault ids the generator knew all along.
 """
 
 # Extension per source format, so a bundle's readings are recognisable on sight rather than
@@ -164,8 +178,19 @@ class IncidentLabel(_Model):
     records that a fault happened, not what shape it had.
     """
 
-    start: datetime
-    end: datetime
+    spans: list[tuple[datetime, datetime]] = Field(min_length=1)
+    """The contiguous runs this projection actually showed at, earliest first.
+
+    A list rather than a ``start``/``end`` pair because an incident is a projection, not an
+    interval (ADR-0029): a fault on an additive lane is interrupted wherever the device emitted
+    something routine, and those gaps belong to the point metrics while the *count* of incidents
+    belongs to the event metrics. ``min_length=1`` because an incident with no extent flags
+    nothing and can only ever be a denominator.
+
+    Serialized as arrays of two timestamps, which keeps a hand-editable answer key legible:
+    ``"spans": [["...T00:06:40Z", "...T00:06:55Z"]]``.
+    """
+
     lane: str = Field(min_length=1)
     kind: str = ""
     fault_id: str = ""
@@ -196,7 +221,7 @@ class Labels(_Model):
     recognise (``extra="forbid"`` would otherwise reject them one at a time).
     """
 
-    schema_version: Literal[4] = LABELS_VERSION
+    schema_version: Literal[5] = LABELS_VERSION
     assets: list[AssetLabel] = Field(min_length=1)
 
 
@@ -268,8 +293,8 @@ def read_labels(path: Path) -> Labels:
     if version != LABELS_VERSION:
         raise BundleError(
             f"{path} is a v{version} answer key; this build reads v{LABELS_VERSION}, in which "
-            "each incident names exactly one lane rather than carrying a set of them. "
-            f"{REGENERATE_HINT}"
+            "an incident carries the list of spans its fault actually showed at rather than one "
+            f"interval per contiguous run. {REGENERATE_HINT}"
         )
     try:
         return Labels.model_validate(found)

@@ -30,7 +30,7 @@ from iotshield.eval.generate.port import (
     Streams,
     one_boundary,
 )
-from iotshield.eval.generate.world import Clock, Device, FaultSpec
+from iotshield.eval.generate.world import Clock, Device, FaultSpec, GenerationError
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 
 THRESHOLD = 80.0
@@ -111,6 +111,92 @@ is where the old generator applied it too (``frame.round(6)``)."""
 _Series: TypeAlias = dict[str, np.ndarray]
 """One recording's channels, mutable in place — what a fault handler damages."""
 
+_MIN_SAMPLES: dict[str, int] = {"stuck": 2}
+"""Fault kinds that need more than one of a device's own samples to express anything at all.
+
+Only ``stuck`` does, and its minimum is *semantic* rather than an artifact: "the sensor froze at
+its last plausible value" is a statement about two readings being identical, so a span covering
+one reading cannot say it. ``spike`` and ``drift`` used to belong here for a much worse reason —
+their shapes were built from ``linspace``, which spends its endpoints on the boundary values, so
+a one-sample spike multiplied its amplitude by ``sin(0)`` and a one-sample drift by the ramp's
+starting zero. Both silently produced nothing. ``_bump`` and ``_ramp`` fix that at the source
+rather than declaring a minimum for it, which is why this table has one entry instead of three.
+"""
+
+
+def _bump(samples: int) -> np.ndarray:
+    """A hump peaking at exactly 1.0, well-defined for **every** ``samples >= 1``.
+
+    ``sin(linspace(0, pi, n))`` is the obvious spelling and it is wrong at the narrow end:
+    ``linspace`` includes both endpoints, and sine is zero at both, so ``n=1`` gives ``[0.0]``
+    and ``n=2`` gives ``[0.0, 0.0]``. A spike needed three samples before it perturbed anything.
+    That is invisible on a 1 Hz rig (a 40-step fault is 40 samples) and fatal on an appliance
+    sampling twice a minute, where the same fault covers one — measured, a 40-step spike on a
+    gateway changed no reading at all and the scenario was refused with a message about its label.
+
+    Sampling the **interior** removes the special case: the shape is a hump inside the span
+    rather than one anchored to zero at both ends, which is also the more honest picture of a
+    spike (a real one does not begin at exactly baseline). Normalizing by its own maximum keeps
+    ADR-0028 D6's contract intact at every width — ``intensity=1.0`` must peak *at* the boundary,
+    and an un-normalized 2-sample hump would peak at 0.87 of it.
+    """
+    shape = np.sin(np.linspace(0.0, math.pi, samples + 2)[1:-1])
+    return shape / shape.max()
+
+
+def _ramp(samples: int, rise: float) -> np.ndarray:
+    """A ramp **ending** at ``rise``, well-defined for every ``samples >= 1``.
+
+    Same defect, same cure. ``linspace(0, rise, 1)`` is ``[0.0]``, so a drift covering one sample
+    ended where it started. Dropping the leading zero means the ramp ends at ``rise`` whatever
+    its width — which is what the shape's docstring always claimed ("a slow ramp ending past the
+    threshold") — and costs nothing at the wide end, where the first step is ``rise/n``.
+    """
+    return np.linspace(0.0, rise, samples + 1)[1:]
+
+
+def _rise(series: _Series, channel: str, fault: FaultSpec) -> float:
+    """How far ``channel`` must move to reach ``intensity`` multiples of the boundary.
+
+    The ADR-0028 D6 conversion for an *absolute-valued* lane, in one place. All three magnitude
+    handlers reach a target rather than add a delta — that is what lets one intensity mean the
+    same thing on a rig's pressure and an appliance's CPU load — and each wrote
+    ``CALIBRATION.scaled(...) - median(...)`` for itself.
+
+    ## Why a non-positive rise has to be refused
+
+    D6 promises ``intensity`` is dimensionless: multiples of the alarm line, ``1.0`` meaning
+    "exactly at it". The implementation reaches an absolute target, and the two agree only while
+    that target sits **above** the channel's own baseline. Below it the arithmetic quietly
+    reverses the fault's direction: the reading dips instead of climbing, while the answer key
+    still calls it a spike or a drift.
+
+    The crossover is ``baseline / boundary``, so it is per channel, and it is not far away. A
+    rig's Temperature sits at 75 against a boundary of 80, so anything under **0.938** inverts —
+    squarely inside the range an author reaches for to write "deliberately marginal, just below
+    the line", which is the exact intent D6 exists to make writable. You would get a downward
+    drift, labelled as a drift, correctly failing to trip a ``>`` threshold, and it would look
+    like it worked. At the extreme, ``intensity=0.0`` drove a rig's Pressure to -0.7 and ``-2.0``
+    to -160.5, both shipped labelled.
+
+    The guard that was supposed to catch this cannot: ``_apply`` asks "did the rendered values
+    change?", and a crater changes them exactly as much as a peak. So the check has to be here,
+    where the sign is decided. Refused rather than clamped, because clamping would hand back a
+    different intensity than the scenario asked for — the same dishonesty one layer down.
+    """
+    baseline = float(np.median(series[channel]))
+    rise = CALIBRATION.scaled(fault.intensity) - baseline
+    if rise <= 0:
+        floor = baseline / CALIBRATION.value
+        raise GenerationError(
+            f"fault {fault.fault_id!r} declares intensity {fault.intensity} on channel "
+            f"{channel!r}, whose baseline is {baseline:.1f} against a boundary of "
+            f"{CALIBRATION.value:.1f}. That asks for a rise of {rise:+.1f}: the fault would run "
+            f"downward while still being labelled {fault.kind!r}. The lowest intensity that "
+            f"raises this channel is {math.nextafter(floor, math.inf):.3f}"
+        )
+    return rise
+
 
 class SensorRig(LaneBehaviour):
     """Independent gaussian channels per device kind, damaged over the span a fault names."""
@@ -121,7 +207,10 @@ class SensorRig(LaneBehaviour):
         # The dispatch table *is* the declaration of what this lane can show: `expresses` is
         # its keys, so a handler and its claim cannot disagree (`faults.lanes_of` then derives
         # the reverse direction from the same source).
-        self._handlers: dict[str, Callable[[_Series, _Profile, float, slice], None]] = {
+        # Handlers take the whole `FaultSpec` rather than a bare intensity: the magnitude ones
+        # now refuse an intensity that would invert the fault (`_rise`), and an error naming
+        # only a float would leave the author hunting for which fault it came from.
+        self._handlers: dict[str, Callable[[_Series, _Profile, FaultSpec, slice], None]] = {
             "spike": self._spike,
             "drift": self._drift,
             "stuck": self._stuck,
@@ -212,22 +301,28 @@ class SensorRig(LaneBehaviour):
         # does anything is keeping the span non-empty and inside the array.
         first = min(bisect_left(indices, fault.start_step), len(indices) - 1)
         last = max(bisect_left(indices, fault.start_step + max(1, fault.length_steps)), first + 1)
-        handler(series, profile, fault.intensity, slice(first, last))
+        minimum = _MIN_SAMPLES.get(fault.kind, 1)
+        if last - first < minimum:
+            raise GenerationError(
+                f"fault {fault.fault_id!r} covers {last - first} sample(s) of a device sampled "
+                f"every {profile.every_steps} step(s), but {fault.kind!r} needs at least "
+                f"{minimum} to express anything; lengthen the fault or aim it at a device that "
+                "samples faster"
+            )
+        handler(series, profile, fault, slice(first, last))
         changed = np.zeros(len(indices), dtype=bool)
         for channel, values in series.items():
             changed |= np.round(values, _DECIMALS) != before[channel]
         return frozenset(clock.at(indices[int(pos)]) for pos in np.flatnonzero(changed))
 
-    def _spike(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
+    def _spike(self, series: _Series, profile: _Profile, fault: FaultSpec, span: slice) -> None:
         # A violent excursion peaking mid-span. The floor: every detector should catch this at a
-        # reasonable intensity, so one that misses it is broken.
-        shape = np.sin(np.linspace(0.0, math.pi, span.stop - span.start))
-        surge = series[profile.surge]
-        # The peak reaches the target; the amplitude is whatever it takes from this channel's
-        # own baseline, which is what lets one intensity mean the same thing on a rig's pressure
-        # and an appliance's CPU load.
-        amplitude = CALIBRATION.scaled(intensity) - float(np.median(surge))
-        surge[span] += amplitude * shape
+        # reasonable intensity, so one that misses it is broken. The peak reaches the target; the
+        # amplitude is whatever it takes from this channel's own baseline, which is what lets one
+        # intensity mean the same thing on a rig's pressure and an appliance's CPU load.
+        amplitude = _rise(series, profile.surge, fault)
+        shape = _bump(span.stop - span.start)
+        series[profile.surge][span] += amplitude * shape
         for channel, values in series.items():
             # Co-perturbation on the other channels, so a spike reads as a correlated event
             # rather than one lonely column. Deliberately small: it must not itself cross the
@@ -235,29 +330,29 @@ class SensorRig(LaneBehaviour):
             if channel is not profile.surge:
                 values[span] += 0.1 * float(np.std(values)) * shape
 
-    def _drift(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
+    def _drift(self, series: _Series, profile: _Profile, fault: FaultSpec, span: slice) -> None:
         # A slow ramp ending at the target but never locally sudden, so a fixed rule catches it
         # only once it crosses — this shape is where *latency* separates detectors that a
         # hit/miss score would tie.
-        warm = series[profile.warm]
-        rise = CALIBRATION.scaled(intensity) - float(np.median(warm))
-        warm[span] += np.linspace(0.0, rise, span.stop - span.start)
+        series[profile.warm][span] += _ramp(
+            span.stop - span.start, _rise(series, profile.warm, fault)
+        )
 
-    def _stuck(self, series: _Series, profile: _Profile, intensity: float, span: slice) -> None:
+    def _stuck(self, series: _Series, profile: _Profile, fault: FaultSpec, span: slice) -> None:
         # The sensor freezes at its last plausible value: in range the entire time, so a fixed
         # threshold is structurally blind. Only a detector that models *normal* can see it.
-        # This is the discriminating shape, and the one with no magnitude to scale.
-        del intensity
+        # This is the discriminating shape, and the one with no magnitude to scale — so it reads
+        # no intensity, and `_MIN_SAMPLES` rather than `_rise` is what constrains it.
+        del fault
         series[profile.surge][span] = series[profile.surge][span.start]
 
     def _thermal_rise(
-        self, series: _Series, profile: _Profile, intensity: float, span: slice
+        self, series: _Series, profile: _Profile, fault: FaultSpec, span: slice
     ) -> None:
         # The thermal half of a compromise: the board runs hot while malware works. A step, not
         # a ramp — the name said "rise" while the code added a constant, and the constant is the
         # honest shape for "it is working hard and stays hot".
-        warm = series[profile.warm]
-        warm[span] += CALIBRATION.scaled(intensity) - float(np.median(warm))
+        series[profile.warm][span] += _rise(series, profile.warm, fault)
 
 
 class StubCsvRenderer:

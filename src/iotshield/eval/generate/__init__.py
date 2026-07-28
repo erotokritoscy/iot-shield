@@ -46,7 +46,7 @@ from iotshield.eval.generate.faults import FAULTS, lanes_of
 from iotshield.eval.generate.flow import FlowCsvRenderer, NetworkHost, ZeekConnRenderer
 from iotshield.eval.generate.port import BEHAVIOURS, RENDERERS, Renderer
 from iotshield.eval.generate.rng import stream
-from iotshield.eval.generate.scenarios import DEFAULT_SCENARIO, SCENARIOS
+from iotshield.eval.generate.scenarios import SCENARIOS
 from iotshield.eval.generate.syslog import LogSource, Rfc5424Renderer
 from iotshield.eval.generate.telemetry import SensorRig, StubCsvRenderer
 from iotshield.eval.generate.world import (
@@ -71,7 +71,7 @@ for _renderer in (StubCsvRenderer(), Rfc5424Renderer(), FlowCsvRenderer(), ZeekC
     RENDERERS[_renderer.source_format] = _renderer
 
 
-def write(root: Path, name: str = DEFAULT_SCENARIO) -> Corpus:
+def write(root: Path, name: str) -> Corpus:
     """Build one scenario and write its bundle under ``root``. Same input, same bytes."""
     scenario = lookup("scenario", SCENARIOS, name)
     corpus = build(scenario)
@@ -90,7 +90,6 @@ def write_all(root: Path) -> list[Corpus]:
 # takes; `to_stub_csv` likewise, whose one caller uses the submodule.
 __all__ = [
     "BEHAVIOURS",
-    "DEFAULT_SCENARIO",
     "FAULTS",
     "RENDERERS",
     "SCENARIOS",

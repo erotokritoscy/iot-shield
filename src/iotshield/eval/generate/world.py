@@ -17,6 +17,7 @@ Multimodal is not a special case in this model: ``Scenario.lanes`` is a tuple, a
 single-lane corpus is the one where it has one element.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -131,6 +132,38 @@ class FaultSpec:
     length_steps: int
     intensity: float = 1.0
 
+    def __post_init__(self) -> None:
+        """Refuse the values no lane could ever render.
+
+        Validated here rather than in ``build`` because these are wrong *about the object*, not
+        about the scenario it sits in: a negative intensity is meaningless on every lane at once.
+        A frozen dataclass that checks in ``__post_init__`` cannot exist in a broken state, which
+        is strictly stronger than a check some path might skip.
+
+        A negative ``intensity`` used to reach the telemetry handlers as a negative amplitude and
+        drive a rig's pressure to -160 while the answer key still called it a spike; the flow and
+        log lanes hid it instead, since ``Calibration.units`` floors at one record. Two different
+        wrong answers to one meaningless input.
+
+        ``start_step`` mirrors it. A negative one was silently clamped to the recording's start
+        while a start *past* the end was refused by the unexpressed-fault guard — the same class
+        of mistake handled two ways, with the quiet one producing a label the author never asked
+        for. The magnitude ceiling is deliberately absent: how *large* an intensity may be is a
+        per-channel question (``telemetry._rise``), so it cannot be answered here.
+        """
+        if self.intensity < 0:
+            raise GenerationError(
+                f"fault {self.fault_id!r} declares intensity {self.intensity}: intensity is "
+                "multiples of a detector boundary (ADR-0028 D6), so a negative one describes no "
+                "fault any lane can express"
+            )
+        if self.start_step < 0 or self.length_steps < 0:
+            raise GenerationError(
+                f"fault {self.fault_id!r} declares start_step={self.start_step}, "
+                f"length_steps={self.length_steps}: a fault happens inside the recording, and a "
+                "window before it starts would be labelled at an instant nothing was observed at"
+            )
+
     @property
     def fault_id(self) -> str:
         """A stable, readable identity, so the labels file can be read by eye."""
@@ -139,12 +172,53 @@ class FaultSpec:
 
 @dataclass(frozen=True)
 class Recording:
-    """One labelled example — what a bundle stores as a *case*."""
+    """One labelled example — what a bundle stores as a *case*.
+
+    ``devices`` is written as a tuple because that reads well in a scenario, but it *means* a
+    set keyed by ``asset_id``: every consumer looks a device up by that id, never by position.
+    ``__post_init__`` enforces the identity the type cannot express.
+    """
 
     name: str
     clock: Clock = field(default_factory=Clock)
     devices: tuple[Device, ...] = ()
     faults: tuple[FaultSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        """One asset id names one device, and a recording describes something.
+
+        ## Why uniqueness is load-bearing rather than tidy
+
+        ``asset_id`` is the key the whole pipeline correlates on, so everything downstream keys
+        on it too: ``faults_on`` looks faults up by it, the builder's clock is a dict of it, the
+        roster is a set of it. Two devices sharing one id therefore have no answer to "what is
+        this asset's sampling profile?" — ``Device.kind`` selects one, and there would be two.
+
+        The concrete damage was silent. ``faults_on`` handed both devices the **same**
+        ``FaultSpec``, both reported perturbed instants under it, and the builder's
+        ``expressed |= observed.expressed`` kept only the last writer. Measured on a rig and a
+        camera sharing an id: the rig's 118 perturbed instants were discarded and the camera's 22
+        survived, which — being sparse against the rig's 900-instant clock — split into **22
+        single-instant incidents** where the corpus should have had one. No error, no warning, a
+        plausible-looking answer key off by a factor of twenty-two.
+
+        A recording with no devices is refused for the neighbouring reason: ``_validate`` already
+        refuses a device that emitted nothing, and a recording that describes nothing is the same
+        statement one level up. It built an empty case that contributed a name and no data.
+        """
+        if not self.devices:
+            raise GenerationError(
+                f"recording {self.name!r} declares no devices; a recording is a small world, and "
+                "an empty one contributes a case name with nothing in it"
+            )
+        counted = Counter(device.asset_id for device in self.devices)
+        clashing = sorted(asset_id for asset_id, count in counted.items() if count > 1)
+        if clashing:
+            raise GenerationError(
+                f"recording {self.name!r} declares {clashing} more than once; an asset id names "
+                "exactly one device, because it selects that device's profile and is the key its "
+                "faults, its clock and its roster entry are all looked up by"
+            )
 
     def faults_on(self, asset_id: str) -> tuple[FaultSpec, ...]:
         return tuple(fault for fault in self.faults if fault.asset_id == asset_id)

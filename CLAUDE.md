@@ -84,10 +84,10 @@ root is `IOTSHIELD_CORPUS_PATH`-overridable (default `data/eval/`).
 **Truth is indexed by (asset, lane, instant) — ADR-0028 D1, and everything below follows from
 it.** That is the whole of what a detector claims (`DetectionResult(asset_id, lane,
 window_start, window_end)`), so it is the only coordinate system truth can be compared in: the
-unit is forced by the other side, not chosen. Four labels-schema versions were this system being
+unit is forced by the other side, not chosen. Five labels-schema versions were this system being
 completed one axis at a time (v1 "something was wrong", v2 the asset, v3 the lane *on the clock*,
-v4 the lane *on the incident*) — which reads as four patches only because nobody wrote the system
-down first.
+v4 the lane *on the incident*, v5 the incident's extent as a list of **spans**) — which reads as
+five patches only because nobody wrote the system down first.
 
 It is **not a row**: a row count is a fact about an encoding, not the world. The same SKAB
 recording is 1,148 rows wide-form and 9,184 in our long-form contract (ADR-0003 D1 fans a
@@ -106,6 +106,20 @@ derivable** — the event level divides by projections (a telemetry detector can
 about the telemetry projection), the alert level by distinct **faults** (an alert carries no
 lane, and an analyst investigates the cause once). `device_trimodal` is 7 projections of 3
 faults; a single-lane corpus has them equal.
+
+**An incident is that projection, not an interval: its extent is a list of `spans` (ADR-0029).**
+Two questions were sharing one shape. Point scoring needs the **gaps** — a quiet instant inside a
+fault is genuinely not faulty, and labelling it charges a detector for correctly staying silent.
+Event scoring must **ignore** them — one fault on one lane is one thing. D3 answered the first by
+emitting one incident per contiguous run, which made the second's denominator an accident: on the
+log and flow lanes a fault *adds* records while routine traffic continues, so whether a heartbeat
+lands between two injections or on top of one decides the fragment count. Measured, two identical
+error storms produced 2 incidents and 1, moving event recall 0.50 → 0.60 and turning a genuine
+tie between two `log_burst` presets into 0.57 vs 0.75. Now the runs live inside one incident:
+point scoring reads every span, the event level counts incidents, `ovl` still measures against
+the union (so a gapped catch scores 0.93, not 1.00), and the timeline draws one bar per span
+rather than painting over the quiet stretches. Telemetry never showed this — a fault there
+*modifies* readings that already exist, so nothing interleaves.
 
 A detection is matched on **(asset, lane, time)**; an alert on (asset, time). So there are two
 shapes of "nearly right", reported separately because one number would name the wrong cause:
@@ -135,10 +149,12 @@ Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shape
 **GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
 bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
 clone — but an **unknown** corpus name is exit 2, because a typo in a CI job must not pass green
-having measured nothing. **Labels are v4**; an older bundle is rejected with the command to
+having measured nothing. **Labels are v5**; an older bundle is rejected with the command to
 regenerate, because an upgrade would have to invent the missing dimension — for v3→v4 it would
 have to guess each projection's extent out of the union it stored, which is the one thing that
-cannot be un-unioned.
+cannot be un-unioned. v4→v5 is the exception that proves the rule: it *is* mechanically
+upgradable (one span each), and is still refused, because that upgrade would faithfully preserve
+the inflated denominator v5 exists to remove.
 
 `--corpus` and `--spec` are **required and have no defaults**. Which pairs are legal is derived
 from both sides' declared shapes (`eval/bench.py`), and `eval list` prints the table; omitting
@@ -151,13 +167,30 @@ fault does to it) and a `Renderer` per wire format (events → text). **A label 
 instants a behaviour actually perturbed** (`Observed.expressed`), never of the declared fault
 window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1) — and
 those instants are split into contiguous runs of the lane's **own** clock with the same
-`merge_runs` a detector uses, so a quiet stretch mid-fault is not labelled (ADR-0028 D3). A
-fault that changes nothing is refused at generation time rather than shipped labelled. Adding a
+`merge_runs` a detector uses, so a quiet stretch mid-fault is not labelled (ADR-0028 D3) — the
+runs becoming the *spans of one incident* rather than several (ADR-0029). A fault that changes
+nothing is refused at generation time rather than shipped labelled, and so is one that could not
+change anything: an **asset id names exactly one device** (two would be handed the same
+`FaultSpec` and the builder's merge would keep one device's instants), a scenario records **one
+format per lane** (a run pools its sources, so two dialects of one lane double every event
+against a truth that counted each once), and an intensity that would make a fault run
+**downward** is refused with the per-channel floor named — `intensity` is multiples of an alarm
+line, but the handlers reach an absolute target, so anything under `baseline/boundary` (0.938 for
+a rig's Temperature) inverted the fault while the label still named it. Adding a
 lane is one behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A
 renderer is the **inverse of a normalizer**, and the meta-test that composes the two (emit →
 parse → compare, every field) is what caught an RFC 3164 corpus silently scoring zero after New
 Year; a companion test refuses a bundle-storable format with no renderer. Streams are seeded by
 *name*, so adding a device leaves every other device's bytes untouched.
+
+A fault shape must also be well-defined at **one sample**, because a device's sampling rate
+decides how many readings a declared window covers: 40 steps is 40 samples on a 1 Hz rig and one
+on a gateway reporting twice a minute. `spike` and `drift` were built from `linspace`, which
+spends its endpoints on the boundary values — so a one-sample spike multiplied its amplitude by
+`sin(0)` and perturbed nothing, and the scenario was refused for having an unfindable *label*.
+`_bump`/`_ramp` sample the interior instead. Only `stuck` keeps a declared minimum (`_MIN_SAMPLES`),
+because "the sensor froze" is a claim about two readings being identical and is genuinely
+inexpressible in one.
 
 **`FaultSpec.intensity` is dimensionless: multiples of the detector boundary a behaviour
 declares for that fault kind (ADR-0028 D6).** `1.0` means "exactly at the alarm line" on every

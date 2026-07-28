@@ -22,11 +22,11 @@ def incident(
     Spelled out rather than left empty because it is no longer decorative: the alert level
     divides by *distinct faults*, so an id is part of an incident's identity (ADR-0028 D2).
     """
-    return Incident(
+    return Incident.over(
+        at(start),
+        at(end),
         asset_id=asset_id,
         lane=lane,
-        start=at(start),
-        end=at(end),
         fault_id=fault_id or f"{asset_id}:run:0",
     )
 
@@ -170,11 +170,11 @@ class TestStorageForm:
     def test_descriptive_fields_survive_a_round_trip_in_memory(self) -> None:
         # kind/fault_id are what a generated corpus knows and a converted one does not; they
         # must ride along untouched rather than being recomputed from the flags.
-        rich = Incident(
+        rich = Incident.over(
+            at(1),
+            at(2),
             asset_id=ASSET,
             lane=Lane.FLOW,
-            start=at(1),
-            end=at(2),
             kind="compromise",
             fault_id=f"{ASSET}:compromise:1",
         )

@@ -288,14 +288,23 @@ class SpecReport(BaseModel):
         there is no second place where event precision's denominator is decided.
 
         The per-case table keeps its own rates and its ``-`` where a rate does not exist; only
-        the aggregate changes. ``detections`` and ``alerts`` stay means, because those columns
-        report "per case" and always did.
+        the aggregate changes.
+
+        ``detections`` and ``alerts`` are **corpus totals**, and used to be per-case means — the
+        last two macro-averages in a row this docstring criticises macro-averaging for. Being
+        means they also needed decimals to be readable, and did not have them: a spec that fired
+        on two of four recordings has a mean of 0.5, which formats at zero decimal places as
+        ``0`` (Python rounds halves to even, so not even ``1``). The headline therefore read
+        ``det 0  alerts 0`` for a detector the per-case table two lines below showed firing —
+        exactly the "row of zeros indistinguishable from a bad detector" this harness exists to
+        prevent. A total is an integer, so it is honest at zero decimal places, and it answers
+        the question a reader has of an absolute column: how much did this spec produce?
         """
         counts = self.counts
         return {
             **counts.rates(),
-            "detections": self._mean("detections"),
-            "alerts": self._mean("alerts"),
+            "detections": float(sum(case.detections for case in self.cases)),
+            "alerts": float(sum(case.alerts for case in self.cases)),
             "compression_ratio": _compression(counts),
         }
 
@@ -336,6 +345,15 @@ class EvaluationReport(BaseModel):
     specs: list[SpecReport] = Field(default_factory=list)
 
 
+def _clip(text: str, width: int) -> str:
+    """Truncate with an ellipsis, so a cut-off value cannot be mistaken for a complete one.
+
+    A three-detector spec rendered as ``stub_threshold,log_burst,fl`` — which reads as a
+    detector named ``fl`` rather than as a list that did not fit.
+    """
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
 def _cell(value: float | None, width: int = 8, places: int = 2) -> str:
     return f"{'-':>{width}}" if value is None else f"{value:>{width}.{places}f}"
 
@@ -364,6 +382,7 @@ _SUMMARY_COLUMNS = (
     _Column("det/inc", "detections_per_incident", 9),
     _Column("alt/inc", "alerts_per_incident", 9),
     _Column("cover", "incident_coverage"),
+    # Corpus totals, not per-case means, so zero decimal places is honest (see `summary`).
     _Column("det", "detections", 8, 0),
     _Column("alerts", "alerts", 8, 0),
 )
@@ -396,7 +415,8 @@ def _summary_table(specs: list[SpecReport]) -> list[str]:
         )
         fitted = f"{spec.cases_fitted}/{len(spec.cases)}"
         rows.append(
-            f"{spec.spec[:cell]:<{cell + 1}}{','.join(spec.detectors)[:27]:<28}{cells}{fitted:>8}"
+            f"{spec.spec[:cell]:<{cell + 1}}{_clip(','.join(spec.detectors), 27):<28}"
+            f"{cells}{fitted:>8}"
         )
     return [f"{heading}{'fitted':>8}", *rows]
 

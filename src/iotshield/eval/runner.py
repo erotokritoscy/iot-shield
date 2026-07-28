@@ -104,7 +104,10 @@ def _timeline(
     detection_spans = [(d.window_start, d.window_end) for d in detections]
     alert_spans = [(a.window_start, a.window_end) for a in alerts]
     return CaseTimeline(
-        truth=[(incident.start, incident.end) for incident in truth.incidents],
+        # One bar per *span*, not per incident: a projection's extent is a list of runs
+        # (ADR-0029), and drawing `start`..`end` would paint over the quiet stretches the point
+        # metrics beside it are scoring as clean — the chart contradicting the table it explains.
+        truth=[span for incident in truth.incidents for span in incident.spans],
         detections=detection_spans[:TIMELINE_SPAN_CAP],
         alerts=alert_spans[:TIMELINE_SPAN_CAP],
         truncated=max(len(detection_spans), len(alert_spans)) > TIMELINE_SPAN_CAP,

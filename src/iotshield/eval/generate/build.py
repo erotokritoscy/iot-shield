@@ -92,21 +92,37 @@ def _incidents(
     by one rule at both ends, which is what makes the event comparison apples-to-apples.
     Per-lane incidents are what allow it to be the lane's own clock: a union interval would
     have had to walk the asset's *pooled* clock and split on gaps no single lane saw.
+
+    ## The runs stay *inside* one incident (ADR-0029)
+
+    D3's split originally emitted one incident per run, and that made the fragment count a
+    denominator. It is an accident: on an additive lane the fault injects records *between* the
+    device's own routine ones, so whether a heartbeat lands in a gap or coincides with an
+    injection decides how many pieces the label has. Measured, two identical error storms on one
+    device produced two incidents and one, moving event recall from 0.50 to 0.60.
+
+    So this returns one incident per **lane**, carrying every run as a span. The gaps survive
+    for point scoring, and the event level counts projections — which is what the sentence
+    "one incident per (fault, lane)" said all along.
     """
     incidents: list[Incident] = []
     for lane, instants in sorted(perturbed.items()):
         clock = clocks[lane]
         flags = [moment in instants for moment in clock]
-        incidents.extend(
+        spans = tuple((clock[start], clock[end]) for start, end in merge_runs(flags))
+        if not spans:
+            # Only reachable if a behaviour reported instants that are not on its own clock,
+            # which `Observed` forbids; an empty extent would be a denominator nothing can
+            # catch, so it is dropped rather than constructed.
+            continue
+        incidents.append(
             Incident(
                 asset_id=fault.asset_id,
                 lane=lane,
-                start=clock[start],
-                end=clock[end],
+                spans=spans,
                 kind=fault.kind,
                 fault_id=fault.fault_id,
             )
-            for start, end in merge_runs(flags)
         )
     return incidents
 
@@ -145,8 +161,11 @@ def _observe_lane(
                 f"observing {device.asset_id!r}: a behaviour speaks only for its own device"
             )
         pooled.extend(observed.events)
-        # Faults are pre-filtered to this device, so no two devices contribute the same key
-        # and a plain update cannot lose instants.
+        # A plain update cannot lose instants because a fault belongs to exactly one asset id
+        # and an asset id names exactly one device — enforced by `Recording.__post_init__`,
+        # which is what this line used to assert in a comment instead. When two devices shared
+        # an id they were handed the *same* FaultSpec, both reported under it, and this kept
+        # only the last writer's instants.
         expressed |= observed.expressed
 
     # Time order across devices, with the asset id as the tie-break so a recording is
@@ -239,8 +258,41 @@ def _case(scenario: Scenario, recording: Recording) -> Case:
     )
 
 
+def _check_lanes(scenario: Scenario) -> None:
+    """One lane per scenario, because a run **pools** its sources rather than choosing between them.
+
+    ``Scenario.formats`` is a list of wire formats, and two of them may legitimately name the same
+    lane — ``flow-csv`` and ``zeek-conn`` are two dialects of one modality, which is the whole
+    reason a renderer is a separate object from a behaviour. Positionally the corpus is still
+    valid: a spec declares one source per input, in order, and both would parse.
+
+    What breaks is one joint later. A run routes every source to its normalizer and **pools** the
+    results into lanes (ADR-0019), so two flow inputs mean every flow event reaches the detector
+    twice: peer counts, byte totals and burst counts all silently double. The answer key does not
+    double — a clock is a set of instants, so the duplicate timestamps collapse — which is what
+    makes it invisible. The corpus looks fine and every volumetric detector is fed a world with
+    twice the traffic in it.
+
+    Refused rather than deduplicated: comparing two dialects is a real thing to want, and the
+    shape that expresses it is two corpora (or two cases), not two sources in one run where they
+    are additive.
+    """
+    lanes: dict[Lane, str] = {}
+    for source_format in scenario.formats:
+        renderer, _ = _resolve(source_format)
+        first = lanes.setdefault(renderer.lane, source_format)
+        if first != source_format or scenario.formats.count(source_format) > 1:
+            raise GenerationError(
+                f"scenario {scenario.name!r} records {first!r} and {source_format!r}, which are "
+                f"both {renderer.lane} formats. A run pools its sources into lanes, so every "
+                f"{renderer.lane} event would reach the detectors twice while the answer key "
+                "counted it once; compare dialects as two corpora instead"
+            )
+
+
 def build(scenario: Scenario) -> Corpus:
     """Build one scenario in memory. Deterministic: same scenario, same bytes."""
+    _check_lanes(scenario)
     return Corpus(
         name=scenario.name,
         # The size is appended rather than written into the description: hand-typed counts

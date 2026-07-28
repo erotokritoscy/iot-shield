@@ -258,5 +258,8 @@ SCENARIOS: dict[str, Scenario] = {
     scenario.name: scenario for scenario in (SYNTHETIC, FLEET_SCAN, TRIMODAL)
 }
 
-DEFAULT_SCENARIO = SYNTHETIC.name
-"""What ``--corpus`` defaults to: the one corpus a fresh clone is guaranteed to have."""
+# There is deliberately no `DEFAULT_SCENARIO`. It described itself as "what `--corpus` defaults
+# to", which stopped being true when both benchmark flags became required (`eval.__main__`):
+# the old defaults benchmarked `synthetic` with team3, the one pairing that cannot work. It
+# survived only as `write()`'s default argument, which nothing passed — so it was a constant
+# whose only remaining job was to be stale.

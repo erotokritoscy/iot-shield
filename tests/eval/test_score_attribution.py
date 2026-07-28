@@ -145,11 +145,11 @@ def declaring(*lanes: Lane) -> GroundTruth:
                 SCANNER,
                 {lane: [at(second) for second in range(40)] for lane in lanes},
                 [
-                    Incident(
+                    Incident.over(
+                        at(20),
+                        at(29),
                         asset_id=SCANNER,
                         lane=lane,
-                        start=at(20),
-                        end=at(29),
                         kind="compromise",
                         fault_id=f"{SCANNER}:compromise:20",
                     )
@@ -192,11 +192,11 @@ class TestLaneRecall:
                     SCANNER,
                     {lane: [at(s) for s in range(40)] for lane in (Lane.FLOW, Lane.TELEMETRY)},
                     [
-                        Incident(
+                        Incident.over(
+                            at(20),
+                            at(29),
                             asset_id=SCANNER,
                             lane=Lane.FLOW,
-                            start=at(20),
-                            end=at(29),
                             fault_id=f"{SCANNER}:scan:20",
                         )
                     ],

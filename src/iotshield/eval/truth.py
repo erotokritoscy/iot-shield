@@ -146,9 +146,40 @@ class Incident:
     why a lane is an axis rather than an attribute. A fault observable on three modalities is
     three incidents sharing one ``fault_id``.
 
+    ## Why the extent is a list of spans (ADR-0029)
+
+    An incident is a **projection**, not an interval. It used to be an interval, and that made
+    two different questions share one shape:
+
+    - *point* scoring asks "at instant t, was this asset faulty on this lane?" — which needs the
+      **gaps**, because a quiet instant inside a fault genuinely is not faulty and labelling it
+      charges a detector for correctly staying silent;
+    - *event* scoring asks "how many distinct things went wrong, and did the detector notice
+      each?" — which must **ignore** the gaps, because one fault on one lane is one thing.
+
+    ADR-0028 D3 answered the first by splitting a fault's perturbed instants into contiguous
+    runs and emitting one incident per run. That is right about the instants and wrong about the
+    count, and the count is a *denominator*: ``incidents`` is what event recall divides by.
+
+    How many pieces a fault falls into turns out to be an accident of arithmetic. A fault on the
+    log or flow lane **adds** records while normal traffic continues underneath, so whether a
+    normal event lands *between* two injected ones or *on top of* one decides the fragment count.
+    Measured on a syslog corpus: an identical 8-line error storm produced two incidents in one
+    recording (a heartbeat fell in a gap) and one in another (a heartbeat coincided with an
+    injection and vanished into the instant set), moving reported event recall from 0.50 to 0.60
+    for identical detector behaviour. The telemetry lane never shows it, because a fault there
+    *modifies* readings that already exist and nothing interleaves.
+
+    So the extent becomes ``spans`` and the object stops being an interval. Point scoring reads
+    every span, event scoring counts incidents, and D2's own sentence — one incident per
+    (fault, lane) — is true by construction rather than true whenever nothing interleaves.
+
+    ``start`` and ``end`` remain as derived bounds, because "when did this fault begin" is a real
+    question (latency measures against it) that no individual span answers.
+
     Constructed by keyword only. The previous shape relied on ``asset_id`` being positionally
     first so that a call written against a older signature would bind a datetime into an asset
-    field and fail loudly; that trick protects exactly one refactor and this is the second one.
+    field and fail loudly; that trick protects exactly one refactor and this is the third one.
     A plain dataclass performs no validation, so a mis-ordered positional call would have bound
     a ``datetime`` into ``lane`` in silence. Keyword-only makes every future field addition safe
     by construction instead.
@@ -161,13 +192,63 @@ class Incident:
 
     asset_id: str
     lane: Lane
-    start: datetime
-    end: datetime
+    spans: tuple[tuple[datetime, datetime], ...]
     kind: str = ""
     fault_id: str = ""
 
+    def __post_init__(self) -> None:
+        """Normalize and validate the extent, so ``start``/``end`` are meaningful by construction.
+
+        Sorted here rather than trusted from the caller: the bounds below index into the tuple,
+        and a bundle is untrusted data that may list its spans in any order. The shape check
+        catches the one mistake this field invites — ``spans=((a, b))`` without the trailing
+        comma is a *pair of datetimes*, not a one-element tuple of pairs, and would otherwise
+        fail much later with an unrecognisable message.
+        """
+        for span in self.spans:
+            if not isinstance(span, tuple) or len(span) != 2:
+                raise ValueError(
+                    f"incident on {self.asset_id!r} has extent {span!r}; spans is a sequence of "
+                    "(start, end) pairs — a single span is written ((start, end),)"
+                )
+            if span[0] > span[1]:
+                raise ValueError(
+                    f"incident on {self.asset_id!r} has span {span!r} ending before it begins"
+                )
+        if not self.spans:
+            raise ValueError(
+                f"incident on {self.asset_id!r} declares no spans; an incident with no extent "
+                "flags no instant and can never be caught, so it is a denominator and nothing else"
+            )
+        object.__setattr__(self, "spans", tuple(sorted(self.spans)))
+
+    @classmethod
+    def over(cls, start: datetime, end: datetime, **fields: object) -> "Incident":
+        """A single-span incident — the shape a converted corpus and a hand-written bundle have.
+
+        Only a generator that measured *which instants it perturbed* can produce a gapped
+        projection. A dataset with a per-row anomaly column has one run per incident by
+        construction, so making that case a one-liner keeps the common form readable.
+        """
+        return cls(spans=((start, end),), **fields)  # type: ignore[arg-type]
+
+    @property
+    def start(self) -> datetime:
+        """When this projection first showed — what latency is measured against."""
+        return self.spans[0][0]
+
+    @property
+    def end(self) -> datetime:
+        """When it last showed. Read from the maximum rather than the last span's end, because
+        sorting orders by start and a bundle may declare overlapping spans."""
+        return max(end for _, end in self.spans)
+
     def overlaps(self, window_start: datetime, window_end: datetime) -> bool:
         """Whether a detection/alert window touches this incident *in time*.
+
+        Any span counts: a detector that found one burst of a gapped fault has found the fault.
+        Testing ``start``..``end`` instead would credit a detection landing squarely in a gap,
+        which is the convex hull this design replaced.
 
         Deliberately says nothing about the asset or the lane: the caller compares those,
         because only the caller knows whether it is asking "did anything fire here?" (scoring)
@@ -175,7 +256,7 @@ class Incident:
         from one predicate is what lets ``score`` report a misattribution rather than merely
         counting it wrong.
         """
-        return overlaps(window_start, window_end, self.start, self.end)
+        return any(overlaps(window_start, window_end, start, end) for start, end in self.spans)
 
 
 def _flagged(
@@ -190,16 +271,19 @@ def _flagged(
     against nothing.
     """
     ordered = sorted(moments)
-    # The clock is sorted, so each incident marks one contiguous slice — found by bisection
-    # rather than by testing every instant against every incident, which was measured at
-    # 7-16x slower and is the larger cost in loading a corpus.
+    # The clock is sorted, so each *span* marks one contiguous slice — found by bisection rather
+    # than by testing every instant against every incident, which was measured at 7-16x slower
+    # and is the larger cost in loading a corpus. Iterating spans rather than one interval per
+    # incident is what preserves the gaps (ADR-0029): flagging `start`..`end` would re-label
+    # every quiet instant a fault happened to straddle, which is the hull ADR-0028 D3 removed.
     flags = [False] * len(ordered)
     for incident in incidents:
         if incident.lane is not lane:
             continue
-        low = bisect_left(ordered, incident.start)
-        high = bisect_right(ordered, incident.end)
-        flags[low:high] = [True] * (high - low)
+        for start, end in incident.spans:
+            low = bisect_left(ordered, start)
+            high = bisect_right(ordered, end)
+            flags[low:high] = [True] * (high - low)
     return tuple(zip(ordered, flags, strict=True))
 
 
@@ -279,15 +363,20 @@ class AssetTruth:
         but the alert level counts *distinct faults* rather than projections, so leaving the id
         empty would have collapsed every run in a recording into a single fault and divided the
         alert metrics by one.
+
+        One run is one incident with a **single span** (ADR-0029). Unchanged in meaning: a
+        per-row anomaly column carries no way to say that two runs are the same cause, so each
+        run genuinely is its own fault here. Only a generator that measured which instants it
+        perturbed can produce a gapped projection.
         """
         ordered = tuple(sorted(rows, key=lambda row: row[0]))
         flags = [flagged for _, flagged in ordered]
         incidents = tuple(
-            Incident(
+            Incident.over(
+                ordered[start][0],
+                ordered[end][0],
                 asset_id=asset_id,
                 lane=lane,
-                start=ordered[start][0],
-                end=ordered[end][0],
                 fault_id=f"{asset_id}:run:{index}",
             )
             for index, (start, end) in enumerate(merge_runs(flags))
