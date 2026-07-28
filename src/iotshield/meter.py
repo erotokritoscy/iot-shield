@@ -1,4 +1,4 @@
-"""METER vocabulary: what crosses normalize -> detect for a utility meter (ADR-0028).
+"""METER vocabulary: what crosses normalize -> detect for a utility meter (ADR-0030).
 
 The second lane vocabulary module, for the same reason ``flow.py`` is the first: a
 utility meter's payload outgrows the contract's own fields. A meter reports a
@@ -18,7 +18,7 @@ Three facts have to survive the normalize->detect boundary, and none of them fit
 So they ride in ``NormalizedEvent.metadata`` behind this typed record, exactly as
 ``FlowRecord`` does for the FLOW lane.
 
-Timestamp convention (ADR-0028 D3)
+Timestamp convention (ADR-0030 D3)
 ----------------------------------
 A consumption event is stamped at the interval's **END**: ``consumption[t] = counter[t]
 - counter[t-1]``, which is the upstream convention (``meterdetect.cleaning``) and the

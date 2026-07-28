@@ -1,4 +1,4 @@
-"""Meter anomaly detector: Isolation Forest over hour-of-week features (ADR-0028).
+"""Meter anomaly detector: Isolation Forest over hour-of-week features (ADR-0030).
 
 The Detector port adapter. It does the work the upstream project's orchestration did
 around the model, rewritten to our contract:

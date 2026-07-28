@@ -1,6 +1,6 @@
 """Meter normalizer: cumulative utility-counter exports -> TELEMETRY consumption events.
 
-One adapter, one dialect per source (ADR-0028 D2)
+One adapter, one dialect per source (ADR-0030 D2)
 ------------------------------------------------
 A utility meter reports a **cumulative counter**; the meaningful observation is
 **consumption over an hour**. Every meter source therefore needs the same three steps —
@@ -70,7 +70,7 @@ a non-finite ``value``, so a NaN row could not become an event anyway.
 What deliberately stays in the detector, not here: the commissioning trim, the
 service-start trim and the usability verdict. Those are modelling judgments, not parsing,
 and a normalizer that silently discarded a meter's first months could not be inverted by
-a renderer (ADR-0028 D4).
+a renderer (ADR-0030 D4).
 """
 
 from __future__ import annotations

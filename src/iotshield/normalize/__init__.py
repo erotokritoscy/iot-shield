@@ -6,7 +6,7 @@ LOG-lane records, re-implemented from team4-log-normalizer — ADR-0011); FlowNo
 PassThroughNormalizer (input that already arrives as NormalizedEvent JSONL — validate and
 envelope rather than parse, with the produced lane as a parameter — ADR-0025);
 MeterNormalizer (cumulative utility-counter exports -> hourly consumption events, one
-dialect per source: EOA water CSV and SensiPro hourly CSV — ADR-0028).
+dialect per source: EOA water CSV and SensiPro hourly CSV — ADR-0030).
 """
 
 from iotshield.normalize.flow import DIALECTS as FLOW_DIALECTS

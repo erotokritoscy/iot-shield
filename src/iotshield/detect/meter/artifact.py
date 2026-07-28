@@ -1,4 +1,4 @@
-"""The trained meter model: a cached fit, as pure versioned JSON (ADR-0028 D6).
+"""The trained meter model: a cached fit, as pure versioned JSON (ADR-0030 D6).
 
 Like team3's artifact (ADR-0012 D2) this is JSON, not a pickle — human-readable,
 git-diffable, and free of sklearn version fragility. Unlike team3's, what it stores is

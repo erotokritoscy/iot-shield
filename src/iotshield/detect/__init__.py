@@ -5,11 +5,11 @@ Team3ZScoreDetector (telemetry robust z-score, vendored from team3 — ADR-0012)
 LogBurstDetector (log-lane rate/burst rule, designed here — ADR-0020);
 FlowBurstDetector (flow-lane behavioural aggregation — fan-out, port scanning,
 exfiltration — designed here, ADR-0024); MeterIForestDetector (utility-meter Isolation
-Forest over hour-of-week features, vendored from Panayiotis's meterdetect — ADR-0028,
+Forest over hour-of-week features, vendored from Panayiotis's meterdetect — ADR-0030,
 and the first scikit-learn model in the runtime).
 
 Deferred: a supervised per-flow classifier in team5's shape, once there is a labelled
-flow corpus to prove it on (ADR-0024 D1; scikit-learn itself is now available — ADR-0028).
+flow corpus to prove it on (ADR-0024 D1; scikit-learn itself is now available — ADR-0030).
 """
 
 from iotshield.detect._runs import merge_runs

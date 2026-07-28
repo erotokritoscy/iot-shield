@@ -1,4 +1,4 @@
-"""Meter anomaly detector: Isolation Forest over hour-of-week features (ADR-0028).
+"""Meter anomaly detector: Isolation Forest over hour-of-week features (ADR-0030).
 
 Vendored from Panayiotis Cyprus's *ML-Based Anomaly and Attack Detection for Smart Meter
 Telemetry* (upstream commit ``d3c61a6``); see ``detector.py`` for the split between what is

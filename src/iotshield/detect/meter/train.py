@@ -1,4 +1,4 @@
-"""Offline fitting for the meter detector (ADR-0028 D6).
+"""Offline fitting for the meter detector (ADR-0030 D6).
 
 Produces the committed artifact by doing exactly what a deployment would do: read a
 meter's **known-clean history**, normalize it through the real ingest path, and fit. Going

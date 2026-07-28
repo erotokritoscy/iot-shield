@@ -14,7 +14,7 @@ Only the lean-four path is vendored. Upstream's calendar features (hour-of-day, 
 holidays) are **not** here, because the model does not use them — carrying them would mean
 maintaining a Cyprus holiday table for a feature that never reaches the forest. Upstream's
 table is also hardcoded for 2024-2026 and silently empties from 2027, which is reported to
-him rather than fixed in a copy we do not call (ADR-0028 D8.2).
+him rather than fixed in a copy we do not call (ADR-0030 D8.2).
 
 THE FEATURE SET, and why it is small
 ------------------------------------

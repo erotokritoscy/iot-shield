@@ -1,4 +1,4 @@
-# Utility-meter demo (ADR-0028) — the metering lane, and the first scikit-learn model.
+# Utility-meter demo (ADR-0030) — the metering lane, and the first scikit-learn model.
 #
 # ONE run ingests TWO different meter platforms and judges them with the SAME detector,
 # which is the claim the metering integration exists to make: adding a client is a
@@ -39,7 +39,7 @@
 # Provenance: both demo files are SYNTHETIC, generated in the real wire formats and
 # calibrated to the real per-meter statistics published in the upstream project's
 # committed data-quality report (consumption_mean ~0.008 m3/h, max ~0.135, ~50% idle
-# hours). The device ids are deliberately not real meters. See ADR-0028 D7.
+# hours). The device ids are deliberately not real meters. See ADR-0030 D7.
 
 database_url: "sqlite:///demo.db"
 

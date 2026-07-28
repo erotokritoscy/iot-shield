@@ -1,4 +1,4 @@
-"""Isolation Forest, split into fit and score — OURS, not vendored (ADR-0028 D5).
+"""Isolation Forest, split into fit and score — OURS, not vendored (ADR-0030 D5).
 
 Upstream ``meterdetect/models.py:run_isolation_forest`` is one function that fits **and**
 scores the same window, and reports a per-batch ``contamination`` quantile as its verdict.
@@ -23,7 +23,7 @@ state** the data computes.
 
 Measured on a synthetic year (fit on a clean 20% prefix, scored on the unseen remainder):
 4/5 injected events caught at 0.71 false alarms per meter-month, versus 2/5 for the
-per-batch path. Detail in ADR-0028.
+per-batch path. Detail in ADR-0030.
 
 Scores follow the upstream convention: ``score_samples`` is negated so **higher = more
 anomalous**, matching every other detector here.
