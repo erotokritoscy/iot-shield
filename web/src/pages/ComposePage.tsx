@@ -86,8 +86,20 @@ function preferred<T>(items: readonly T[], ...ranked: ((item: T) => boolean)[]):
   return items[0];
 }
 
+/**
+ * Whether the configured sources produce everything this detector needs.
+ *
+ * `every`, not `some`: `consumes` is a conjunction of requirements, so a detector is fed only
+ * when all of them are met. The distinction did not exist while a detector consumed exactly
+ * one token — its lane — and appeared the moment payload tokens joined them (ADR-0035 D2):
+ * `meter_iforest` consumes `lane:telemetry` AND `payload:meter`, and under `some` a plain
+ * telemetry source satisfied it on the lane alone.
+ *
+ * Compared as rendered token strings, which is why this needs no new field: both sides of the
+ * comparison already travel on `/modules`, and adding an axis to the vocabulary adds it here.
+ */
 const feeds = (detector: ModuleInfo, produced: ReadonlySet<string>): boolean =>
-  detector.consumes.some((token) => produced.has(token));
+  detector.consumes.every((token) => produced.has(token));
 
 /**
  * Whether this detector can judge without an artifact being named first.

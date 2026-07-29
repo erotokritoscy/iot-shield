@@ -39,6 +39,7 @@ from iotshield.detect.flow_burst import DEFAULT_PRESET as _DEFAULT_FLOW_PRESET
 from iotshield.detect.log_burst import CAPABILITY as _LOG_BURST_CAPABILITY
 from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
 from iotshield.detect.meter import MeterParams
+from iotshield.detect.meter.artifact import available_artifacts as _meter_artifacts
 from iotshield.detect.meter.artifact import load_artifact as _load_meter_artifact
 from iotshield.detect.meter.detector import CAPABILITY as _METER_CAPABILITY
 from iotshield.detect.rules.detector import DEFAULT_LANE as _DEFAULT_RULES_LANE
@@ -47,6 +48,7 @@ from iotshield.detect.rules.detector import (
 )
 from iotshield.detect.rules.detector import capability as _rules_capability
 from iotshield.detect.stub import capability as _stub_threshold_capability
+from iotshield.detect.team3.artifact import available_artifacts as _team3_artifacts
 from iotshield.detect.team3.artifact import load_artifact
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
 from iotshield.detect.team3.params import Team3Params
@@ -100,6 +102,20 @@ class AdapterSpec(Generic[T]):
     Declared rather than name-sniffed so a UI can offer the real choice — "load trained
     weights" or "fit from scratch with my own hyperparameters" — as two modes instead of
     letting someone combine them and hit the atomicity error (``_fitted.resolve_params``).
+    """
+
+    artifacts: tuple[str, ...] = ()
+    """Which cached fits this adapter ships (ADR-0035 D1).
+
+    ``artifact_param`` names the *field*; this names the **values**, and without it the two
+    shipped ids existed nowhere a client could read them — so the one page that needed them
+    carried a hardcoded table listing one of the two.
+
+    Resolved eagerly at import: listing both packages costs 3.5 ms against a 1.7 s
+    ``iotshield`` import, and this module already imports the packages that hold them. A
+    callable would buy 0.2% of an import that has already happened, at the price of a
+    None-vs-empty distinction and a method to reconcile it — "declares no provider" and
+    "ships nothing" mean the same thing to every reader, so they are the same value.
     """
 
 
@@ -192,12 +208,21 @@ def _flow_normalizer(home_networks: str | list[str] | None = None) -> FlowNormal
 
 def _passthrough_normalizer(
     lane: Literal["telemetry", "log", "flow"] = "telemetry",
+    payload: Literal["meter", "flow"] | None = None,
 ) -> PassThroughNormalizer:
     # The first param-driven NORMALIZER capability (ADR-0025): a pass-through record carries
     # its own lane in source_type, which the static guard cannot see, so the lane this source
     # carries is declared here and its capability follows it. The Literal is declaration, not
     # enforcement (params arrive untyped from YAML; Lane() is what rejects a bad value), so
     # /modules can offer the closed vocabulary as a choice instead of a free-text box.
+    #
+    # `payload` is the same declaration one axis over (ADR-0035 D2), and it changes nothing
+    # about parsing — the normalizer envelopes what the file already contains either way. It
+    # exists so an operator whose partner emits MeterReadings as JSONL can say so and reach
+    # `meter_iforest` without a standing warning. It is read by `passthrough.capability`, not
+    # here; `None` (not "") means "no typed vocabulary declared", so it uses the same
+    # not-given sentinel as every other optional param and `_literal_choices` sees through
+    # the union to offer the two members.
     return PassThroughNormalizer(lane=Lane(lane))
 
 
@@ -313,6 +338,7 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         static(_TEAM3_CAPABILITY),
         params_type=Team3Params,
         artifact_param="artifact",
+        artifacts=_team3_artifacts(),
     ),
     "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
     "flow_burst": AdapterSpec(_flow_burst, static(_FLOW_BURST_CAPABILITY)),
@@ -321,6 +347,7 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         static(_METER_CAPABILITY),
         params_type=MeterParams,
         artifact_param="artifact",
+        artifacts=_meter_artifacts(),
     ),
     "rules": AdapterSpec(_rules, _rules_capability),
 }

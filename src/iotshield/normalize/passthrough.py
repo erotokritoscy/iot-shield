@@ -39,7 +39,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from iotshield.capabilities import Capability, FormatToken, LaneToken
+from iotshield.capabilities import Capability, FormatToken, LaneToken, PayloadToken, Token
 from iotshield.contracts import Lane
 from iotshield.normalize._linewise import LineParseError, normalize_linewise
 from iotshield.normalize.port import NormalizeResult
@@ -48,16 +48,26 @@ SOURCE_FORMAT = "normalized-jsonl"
 
 
 def capability(params: Mapping[str, Any]) -> Capability:
-    """Consumes the JSONL format; produces exactly the one lane this source declares.
+    """Consumes the JSONL format; produces exactly the lane and payload this source declares.
 
-    Param-driven (not ``static``) because the produced lane is the ``lane`` parameter, not a
-    property of the parser — mirrors ``detect/stub.py``. The default matches the factory's
-    (``registry._passthrough_normalizer``); the meta-test in
-    tests/pipeline/test_capabilities.py pins the two together against a built instance. A bad
-    lane value raises ``ValueError``, which the guard reports as a structured issue.
+    Param-driven (not ``static``) because neither is a property of the parser — this adapter
+    envelopes whatever a partner system already emits, so its plug shape is a claim the
+    *operator* makes about their file. That was already true of ``lane`` (ADR-0025) and is
+    equally true of ``payload``: a partner emitting meter readings as normalized JSONL is a
+    legitimate source for ``meter_iforest``, and with no way to say so the pairing would
+    collect a permanent, wrong warning (ADR-0035 D2).
+
+    Declaring no payload is the honest default: the parser validates the envelope, not the
+    vocabulary inside ``metadata``, so it cannot discover one. The meta-test in
+    tests/pipeline/test_capabilities.py pins the defaults to the factory's. A bad lane value
+    raises ``ValueError``, which the guard reports as a structured issue.
     """
     lane = Lane(params.get("lane", Lane.TELEMETRY))
-    return Capability.of(consumes={FormatToken(SOURCE_FORMAT)}, produces={LaneToken(lane)})
+    payload = str(params.get("payload") or "").strip()
+    produces: set[Token] = {LaneToken(lane)}
+    if payload:
+        produces.add(PayloadToken(payload))
+    return Capability.of(consumes={FormatToken(SOURCE_FORMAT)}, produces=produces)
 
 
 class PassThroughNormalizer:

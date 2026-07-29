@@ -86,7 +86,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 
-from iotshield.capabilities import Capability, FormatToken, LaneToken
+from iotshield.capabilities import Capability, FormatToken, LaneToken, PayloadToken
 from iotshield.contracts import Lane, MalformedRecord, NormalizedEvent
 from iotshield.meter import (
     METADATA_KEY,
@@ -181,9 +181,13 @@ DIALECTS: dict[str, Dialect] = {
 MISSING = ("", "-", "nan", "none", "null")
 """Tokens an export uses for "no value". Compared case-insensitively."""
 
+# Telemetry, and specifically *metering*: every event carries a `MeterReading` (ADR-0030),
+# which is what `meter_iforest` needs and what a bare numeric telemetry source cannot supply.
+# Declaring only the lane made this normalizer indistinguishable from `stub` at every joint
+# that reasons about a config without running it (ADR-0035 D2).
 CAPABILITY = Capability.of(
     consumes={FormatToken(name) for name in DIALECTS},
-    produces={LaneToken(Lane.TELEMETRY)},
+    produces={LaneToken(Lane.TELEMETRY), PayloadToken(METADATA_KEY)},
 )
 
 

@@ -14,7 +14,11 @@ CYENS internship project, July 2026 (intern: Andreas Tziakouris).
    A new detector/normalizer/prioritizer = a new adapter that passes the *same* port contract
    test suite as every other adapter of that port, and declares a **capability** (what it
    consumes/produces, co-located with the adapter) so the compatibility guard and orchestration
-   UI can read its shape without constructing it (ADR-0014). Result **sinks** (`sink/`, ADR-0018)
+   UI can read its shape without constructing it (ADR-0014). A capability has four axes:
+   `format` at ingest, and `lane` + `payload` at the normalize->detect joint — the lane is
+   *which modality*, the payload is *which typed vocabulary rides in `metadata`* (ADR-0035).
+   `consumes` is a **conjunction**: a stage is fed only when every token it names is produced.
+   Result **sinks** (`sink/`, ADR-0018)
    are the fourth port — the pluggable output — but being *terminal* consumers of the whole run
    they declare no capability and sit outside the guard; they are still registered and swapped by
    name like the others. If an adapter needs a contract change, that's a design smell — stop and
@@ -268,9 +272,12 @@ A bench spec for a corpus must declare **one source per input position, in the c
 publishes each committed `config/bench/*.yaml` with the corpora it fits, so the Evaluate page
 can run the *committed file verbatim* rather than composing a lookalike that silently drops
 `assets:` and every source and engine param. `/eval/corpora` also
-publishes `lanes` (which detector lanes those formats feed, decoded server-side so no client
-parses a `lane:` prefix), which is how the Evaluate page offers only detectors the corpus can
-actually feed. Flow and trimodal bench specs deliberately register **no `assets:`**, because
+publishes `lanes` **and `payloads`** (what those formats feed, decoded server-side so no client
+parses a `lane:`/`payload:` prefix), which is how the Evaluate page offers only detectors the
+corpus can actually feed: **any** of the lanes, **all** of the payloads (ADR-0035). The lane
+alone offered `meter_iforest` on every `stub-csv` corpus — where it matches the modality and
+can read none of the events, since none carries a `MeterReading` — and, sorting first, made it
+the default entry. Flow and trimodal bench specs deliberately register **no `assets:`**, because
 `asset_weight` is something we type in and would be indistinguishable from a real ranking
 improvement (ADR-0021 D7).
 
@@ -424,6 +431,14 @@ done at deployment from each meter's own clean history.
 *ready to run* — without it the page opened on `meter_iforest` (it sorts first) and therefore
 on a chain `compute_run` refuses.
 
+**An adapter also publishes the artifact ids it ships** (`AdapterSpec.artifacts`, ADR-0035
+D1), carried as that param's `choices` rather than as a field of its own — the ids are a
+closed vocabulary the registry knows and a `str | None` annotation cannot express, so they go
+through the same door as presets and lanes and every form that renders one renders these.
+The product ships exactly two (`skab_zscore`, `demo_meter`); before this they existed nowhere
+a client could read, so the Evaluate page's artifact box was free text over a vocabulary
+nobody published, and it carried a hardcoded table naming one of the two.
+
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
 Its layout is schema **v3** — `{params, models}`, the ADR-0022 split made visible in the file:
@@ -440,7 +455,7 @@ guess makes the detector skip every real asset and report nothing (ADR-0034 D7).
 ```
 src/iotshield/
   contracts/       frozen data contracts (pydantic v2) — the product's core
-  capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
+  capabilities.py  adapter capability vocabulary (format / lane / payload / signal tokens)
   flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
   meter.py         METER vocabulary: the typed MeterReading (counter + interval + utility) (ADR-0030)
   enrichment.py    THREAT vocabulary: the typed Enrichment that crosses detect->alert (ADR-0032)

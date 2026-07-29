@@ -467,6 +467,11 @@ export interface components {
              */
             lanes?: string[];
             /**
+             * Payloads
+             * @description The typed lane vocabularies this corpus's events carry (ADR-0035). The lane is necessary and not sufficient: a stub-csv bundle feeds lane 'telemetry' and no payload, so meter_iforest matched on lane, was offered, and discarded every event. A UI must intersect BOTH axes.
+             */
+            payloads?: string[];
+            /**
              * Error
              * @description Why this bundle cannot be loaded, when it cannot; empty for a healthy corpus. Published rather than filtered out so a broken bundle is visibly broken instead of silently absent from the picker.
              * @default
@@ -510,6 +515,11 @@ export interface components {
             name: string;
             /** Lanes */
             lanes: string[];
+            /**
+             * Payloads
+             * @description The typed lane vocabularies this detector requires an event to carry (ADR-0035). Every one of them must be in the corpus's `payloads` for this detector to judge anything: meter_iforest consumes lane 'telemetry' AND payload 'meter', and a corpus satisfying only the lane hands it events it discards one by one. REQUIRED, unlike CorpusSummary.payloads: an absent field here fails OPEN (every detector passes the filter), which is the permissive silence ADR-0035 removes. Absent on the corpus side fails closed, so that one may default.
+             */
+            payloads: string[];
             /** Fittable */
             fittable: boolean;
             /** Params */
@@ -606,7 +616,8 @@ export interface components {
          *     Per lane because a lane's instants are its own (``truth.AssetTruth``) and, since ADR-0028
          *     D2, so are its incidents. Pooling these into one set of point counts weights each modality
          *     by **how fast it samples**, which is a corpus-authoring decision masquerading as a
-         *     measurement: on ``device_trimodal`` telemetry carries 2,700 of 3,597 clock entries, so a
+         *     measurement: on ``device_trimodal`` FLOW carries 1,321 of 2,918 clock entries and telemetry
+         *     1,440 (the split moves whenever a device profile does — ADR-0028 D5/D7), so a
          *     pooled point precision is a telemetry number wearing a corpus-wide name.
          *
          *     Kept as counts rather than rates so pooling stays addition, the same reason ``Counts``

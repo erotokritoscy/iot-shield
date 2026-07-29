@@ -27,7 +27,6 @@ import { initialValues, submittedParams, sweepable, type ParamValue, type ParamV
 
 import {
   composedSpec,
-  DEFAULT_ARTIFACT,
   labelled,
   NO_SWEEP,
   normalizerFor,
@@ -57,17 +56,81 @@ interface EntryState {
 const tunablesOf = (summary: DetectorSummary): ParamInfo[] =>
   (summary.params ?? []).filter((param) => param.name !== summary.artifact_param);
 
-function defaultPlan(summary: DetectorSummary): PlanState {
-  const artifactParam = (summary.params ?? []).find(
-    (param) => param.name === summary.artifact_param,
+/** The param that names a cached fit, when this detector has one (ADR-0022). */
+const artifactParamOf = (summary: DetectorSummary): ParamInfo | undefined =>
+  (summary.params ?? []).find((param) => param.name === summary.artifact_param);
+
+/** The artifact ids the adapter ships, published as that param's closed vocabulary. */
+const artifactIdsOf = (summary: DetectorSummary): string[] =>
+  artifactParamOf(summary)?.choices ?? [];
+
+/**
+ * Which cached fit to judge with: the ids the adapter ships, offered rather than recalled.
+ *
+ * The same rule every other closed vocabulary on this page already follows (ADR-0023 D9).
+ * This was the one free-text box left, and the most expensive one to get wrong — an
+ * unrecognised id decides whether the detector can judge at all (ADR-0035 D1).
+ *
+ * Falls back to free text only when an adapter declares an artifact param and enumerates
+ * nothing, where a dropdown would offer no way forward. Both arms take identical props, so
+ * they are written once and spread; the handler is typed structurally because a `<select>`
+ * and an `<input>` disagree about their event's element type and agree about `target.value`.
+ */
+function ArtifactField({
+  summary,
+  label,
+  id,
+  value,
+  onChange,
+}: {
+  readonly summary: DetectorSummary;
+  /** The artifact param's name, passed narrowed — only a detector that has one gets here. */
+  readonly label: string;
+  readonly id: string;
+  readonly value: string;
+  readonly onChange: (artifact: string) => void;
+}) {
+  const ids = artifactIdsOf(summary);
+  const shared = {
+    id,
+    "data-testid": id,
+    value,
+    onChange: (event: { target: { value: string } }) => onChange(event.target.value),
+  };
+  return (
+    <Field
+      label={label}
+      htmlFor={id}
+      hint="A committed artifact id. It supplies both the weights and the hyperparameters they were fitted with — the two travel together."
+      className="max-w-sm"
+    >
+      {ids.length > 0 ? (
+        <Select {...shared} options={ids} />
+      ) : (
+        <TextInput {...shared} placeholder="artifact id" />
+      )}
+    </Field>
   );
+}
+
+function defaultPlan(summary: DetectorSummary): PlanState {
+  const artifactParam = artifactParamOf(summary);
   const shipped =
     artifactParam?.default === null || artifactParam?.default === undefined
       ? ""
       : String(artifactParam.default);
   return {
     mode: TRAINED,
-    artifact: shipped || (DEFAULT_ARTIFACT[summary.name] ?? ""),
+    // The factory default if it has one, else the first id the adapter actually ships —
+    // read from the catalogue, where a hardcoded table used to name one of the two shipped
+    // artifacts from memory (ADR-0035 D1).
+    //
+    // Preselecting here is right where `params.initialValue` deliberately refuses to: an
+    // optional param must be able to say "not given", but in TRAINED mode an artifact is
+    // *mandatory* — a blank is a reported blocker, not an absent value — and it is always
+    // submitted explicitly rather than being omitted as untouched. So the only thing a blank
+    // default buys is a page that opens broken.
+    artifact: shipped || (artifactIdsOf(summary)[0] ?? ""),
     params: initialValues(tunablesOf(summary)),
   };
 }
@@ -166,13 +229,31 @@ export function useComposeEntries({
   readonly detectors: readonly DetectorSummary[];
   readonly normalizers: readonly ModuleInfo[];
 }): ComposeResult {
-  // Which detectors this corpus can actually feed, from the lanes the API says it yields.
+  // Which detectors this corpus can actually feed, from the shape the API says it yields.
   // Both sides of this intersection arrive decoded from /eval, so the page never parses a
-  // `lane:` prefix (H6).
+  // `lane:`/`payload:` prefix (H6).
+  //
+  // TWO axes, and the second is why this list used to lie (ADR-0035 D2). A lane is satisfied
+  // by any source of that modality; a payload is satisfied only by a source that carries the
+  // typed vocabulary. `meter_iforest` needs both, so on every `stub-csv` corpus it matched on
+  // lane, sorted alphabetically first, and became entry 1's default — a detector that could
+  // not read a single event of the corpus it was offered for.
+  //
+  // The lane test is `some` and the payload test is `every`, which is not an inconsistency:
+  // a detector fires if ANY of its lanes is present, but it needs ALL of the vocabularies it
+  // reads through.
   const corpusLanes = React.useMemo(() => new Set(corpus?.lanes ?? []), [corpus]);
+  const corpusPayloads = React.useMemo(() => new Set(corpus?.payloads ?? []), [corpus]);
   const eligible = React.useMemo(
-    () => detectors.filter((item) => item.lanes.some((lane) => corpusLanes.has(lane))).map((item) => item.name),
-    [detectors, corpusLanes],
+    () =>
+      detectors
+        .filter(
+          (item) =>
+            item.lanes.some((lane) => corpusLanes.has(lane)) &&
+            item.payloads.every((payload) => corpusPayloads.has(payload)),
+        )
+        .map((item) => item.name),
+    [detectors, corpusLanes, corpusPayloads],
   );
   const eligibleKey = eligible.join(" ");
 
@@ -310,8 +391,10 @@ export function useComposeEntries({
   const element =
     eligible.length === 0 ? (
       <Notice tone="info">
-        No registered detector consumes this corpus&apos;s lane(s):{" "}
-        {(corpus?.lanes ?? []).join(", ") || "none"}.
+        No registered detector can read this corpus. It feeds lane(s){" "}
+        <b>{(corpus?.lanes ?? []).join(", ") || "none"}</b> carrying payload(s){" "}
+        <b>{(corpus?.payloads ?? []).join(", ") || "none"}</b>, and a detector needs one of
+        those lanes and all of the payloads it reads through.
       </Notice>
     ) : (
       <div className="space-y-6">
@@ -371,22 +454,13 @@ export function useComposeEntries({
                         />
                         {state.mode === TRAINED ? (
                           <>
-                            <Field
+                            <ArtifactField
+                              summary={summary}
                               label={summary.artifact_param}
-                              htmlFor={`eval_e${index}_${name}_art`}
-                              hint="A committed artifact id. It supplies both the weights and the hyperparameters they were fitted with — the two travel together."
-                              className="max-w-sm"
-                            >
-                              <TextInput
-                                id={`eval_e${index}_${name}_art`}
-                                data-testid={`eval_e${index}_${name}_art`}
-                                placeholder="artifact id"
-                                value={state.artifact}
-                                onChange={(event) =>
-                                  updatePlan(index, name, { artifact: event.target.value })
-                                }
-                              />
-                            </Field>
+                              id={`eval_e${index}_${name}_art`}
+                              value={state.artifact}
+                              onChange={(artifact) => updatePlan(index, name, { artifact })}
+                            />
                             {/* Why this detector contributes nothing to the entry's sweep
                                 menu. Without it the menu silently gains options when this
                                 radio moves, and the radio lives inside a collapsed panel. */}

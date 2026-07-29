@@ -6,7 +6,16 @@ class per connector axis:
 
 - ``FormatToken`` at the ingest joint (which raw format a normalizer accepts),
 - ``LaneToken`` at the normalize->detect joint (which modality flows between them),
+- ``PayloadToken`` at that same joint (which typed lane vocabulary rides in ``metadata``),
 - the pass-through signals ``DETECTIONS`` / ``ALERTS`` (``SignalToken``) at the later joints.
+
+The lane and the payload are two axes of one joint because they answer different questions.
+A **lane** is the correlation axis: which events are pooled together, handed to which
+detector, and counted as independent agreement about one device. A **payload** is a format
+axis *within* a lane: which typed record (``flow.FlowRecord``, ``meter.MeterReading``) an
+event carries behind ``metadata``. Collapsing them — giving meters their own ``Lane`` — would
+have made a meter anomaly and a temperature spike on the same device stop corroborating each
+other, which is a real regression to fix a declaration problem (ADR-0035 D2).
 
 The compatibility guard (``pipeline/compat.py``) validates a config by comparing
 adjacent stages' ``produces``/``consumes`` as sets. Capabilities are declared
@@ -31,6 +40,7 @@ from iotshield.contracts import Lane
 
 _FORMAT_PREFIX = "format:"
 _LANE_PREFIX = "lane:"
+_PAYLOAD_PREFIX = "payload:"
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,29 @@ class LaneToken:
 
 
 @dataclass(frozen=True)
+class PayloadToken:
+    """A typed lane vocabulary an event carries in ``metadata`` (ADR-0035 D2).
+
+    The lane says a stream is telemetry; this says the readings are *meter* readings, which
+    is a different fact and was previously unsayable. ``meter_iforest`` needs consumption on
+    a known regular grid and filters out every event without a ``MeterReading`` — a check it
+    performed at runtime, per event, because no declaration could carry it. So a SKAB
+    telemetry corpus satisfied ``lane:telemetry``, was offered to the detector by every
+    surface that asks "can these connect?", and was discarded whole with the run reporting a
+    confident row of zeros.
+
+    The value is the metadata key the vocabulary module owns (``meter.METADATA_KEY``,
+    ``flow.METADATA_KEY``), so the token and the thing it describes cannot drift: a payload
+    nothing writes under that key is a payload no event carries.
+    """
+
+    payload: str
+
+    def render(self) -> str:
+        return f"{_PAYLOAD_PREFIX}{self.payload}"
+
+
+@dataclass(frozen=True)
 class SignalToken:
     """A pass-through stage signal at the later joints (detections, alerts)."""
 
@@ -63,7 +96,7 @@ class SignalToken:
         return self.name
 
 
-Token = FormatToken | LaneToken | SignalToken
+Token = FormatToken | LaneToken | PayloadToken | SignalToken
 
 # The pass-through signals: every detector produces DETECTIONS, every alert engine
 # consumes them and produces ALERTS. Singletons, so a joint is checked by value
@@ -98,6 +131,11 @@ def formats_in(tokens: Iterable[Token]) -> set[str]:
 def lanes_in(tokens: Iterable[Token]) -> set[Lane]:
     """The lanes among a token set (typed: only ``LaneToken``s contribute)."""
     return {token.lane for token in tokens if isinstance(token, LaneToken)}
+
+
+def payloads_in(tokens: Iterable[Token]) -> set[str]:
+    """The lane vocabularies among a token set (only ``PayloadToken``s contribute)."""
+    return {token.payload for token in tokens if isinstance(token, PayloadToken)}
 
 
 def static(capability: Capability) -> CapabilityProvider:

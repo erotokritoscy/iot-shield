@@ -93,6 +93,56 @@ def test_lane_mismatch_warns_about_both_idle_detector_and_uncovered_lane() -> No
     assert "no detector that consumes it" in messages  # the uncovered log lane
 
 
+class TestPayloadJoint:
+    """The lane can be satisfied while the vocabulary inside it is not (ADR-0035 D2)."""
+
+    def _with(self, normalizer: str, source_format: str, **params: Any) -> PipelineConfig:
+        # Built without cfg()'s top-level source_format/normalizer: those desugar INTO a
+        # one-element `sources` list (ADR-0019), so a config carrying both is refused.
+        return PipelineConfig.model_validate(
+            {
+                "database_url": "sqlite:///x.db",
+                "sources": [
+                    {"normalizer": normalizer, "source_format": source_format, "params": params}
+                ],
+                "detectors": [{"name": "meter_iforest", "params": {"artifact": "demo_meter"}}],
+                "alert_engine": {"name": "stub"},
+            }
+        )
+
+    def test_a_bare_telemetry_source_warns_that_the_meter_detector_reads_nothing(self) -> None:
+        """The defect this axis exists for. `stub-csv` feeds lane telemetry, `meter_iforest`
+        consumes lane telemetry, every joint agreed — and the detector then discarded all
+        1,148 events of a SKAB recording and the harness published a row of zeros."""
+        issues = check_compatibility(self._with("stub", "stub-csv"))
+        assert [i.level for i in issues] == [CompatLevel.WARNING]
+        assert "meter payload(s)" in issues[0].message
+        assert "discard all of them" in issues[0].message
+        # NOT the idle-lane wording: the lane genuinely matches, and saying "will not fire"
+        # would send a reader looking for a lane problem that does not exist.
+        assert "will not fire" not in issues[0].message
+
+    def test_a_meter_source_satisfies_it(self) -> None:
+        assert check_compatibility(self._with("meter", "eoa-meter-csv")) == []
+
+    def test_a_foreign_lane_reports_only_the_lane_problem(self) -> None:
+        """One cause, one message. The payload is also unmet when the lane is, and reporting
+        both would make the operator fix two things to satisfy one joint."""
+        issues = check_compatibility(self._with("syslog", "syslog"))
+        messages = [i.message for i in issues]
+        assert any("will not fire" in message for message in messages)
+        assert not any("discard all of them" in message for message in messages)
+
+    def test_a_passthrough_source_may_declare_the_payload_it_carries(self) -> None:
+        """The escape hatch that keeps this a WARNING rather than a refusal: a partner system
+        emitting MeterReadings as normalized JSONL is a legitimate source, and only the
+        operator can know it (ADR-0025's reasoning, one axis over)."""
+        undeclared = self._with("passthrough", "normalized-jsonl", lane="telemetry")
+        assert [i.level for i in check_compatibility(undeclared)] == [CompatLevel.WARNING]
+        declared = self._with("passthrough", "normalized-jsonl", lane="telemetry", payload="meter")
+        assert check_compatibility(declared) == []
+
+
 def test_unknown_normalizer_is_an_error() -> None:
     issues = check_compatibility(cfg(normalizer="nope"))
     assert [i.level for i in issues] == [CompatLevel.ERROR]

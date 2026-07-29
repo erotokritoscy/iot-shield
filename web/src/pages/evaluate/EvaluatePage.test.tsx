@@ -249,12 +249,16 @@ describe("composing entries (E5, E6, E7)", () => {
     captured.evalBody = null;
   });
 
-  it("offers only detectors the corpus's lanes can feed, and prunes on a corpus switch", async () => {
+  it("offers only detectors the corpus's lane AND payload can feed, and prunes on a switch", async () => {
     await openCompose();
     // synthetic is telemetry-only. Scoped to entry 0, since every entry offers the same list.
     const entry = () => within(screen.getByTestId("eval_entry_0"));
     expect(entry().getByRole("checkbox", { name: "stub_threshold" })).toBeChecked();
     expect(entry().queryByRole("checkbox", { name: "flow_burst" })).not.toBeInTheDocument();
+    // The second axis (ADR-0035 D2). `meter_iforest` matches this corpus's lane, sorts first
+    // in the catalogue, and was therefore entry 0's *default* — a detector that cannot read a
+    // single event of a `stub-csv` bundle, because none carries a `MeterReading`.
+    expect(entry().queryByRole("checkbox", { name: "meter_iforest" })).not.toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByTestId("eval_corpus"), "fleet_scan");
     await waitFor(() =>
@@ -269,16 +273,23 @@ describe("composing entries (E5, E6, E7)", () => {
     );
   });
 
-  it("blocks the run when a trained detector names no artifact", async () => {
-    // An empty artifact box reaches the factory as "no artifact", which ADR-0022 means as
-    // *untrained* — so clearing it must be refused, not quietly reinterpreted.
+  it("offers the artifact ids the adapter ships, so 'untrained' is unreachable", async () => {
+    // A blank artifact reaches the factory as "no artifact", which ADR-0022 means as
+    // *untrained* — and a run refuses an untrained detector outright. This used to be caught
+    // after the fact: the box was free text, emptying it produced a blocker, and the way out
+    // was to type an id nothing had published. Offering the shipped ids removes the state
+    // rather than catching it — every value the control can hold is one that will load
+    // (ADR-0035 D1).
     await openCompose();
     await userEvent.click(await screen.findByRole("button", { name: /team3_zscore — hyperparameters/ }));
     const artifact = await screen.findByTestId("eval_e1_team3_zscore_art");
+    expect(artifact.tagName).toBe("SELECT");
+    expect([...(artifact as HTMLSelectElement).options].map((option) => option.value)).toEqual([
+      "skab_zscore",
+    ]);
     expect(artifact).toHaveValue("skab_zscore");
-    await userEvent.clear(artifact);
-    expect(await screen.findByText(/no artifact is named/)).toBeInTheDocument();
-    expect(screen.getByTestId("eval_run")).toBeDisabled();
+    expect(screen.queryByText(/no artifact is named/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("eval_run")).not.toBeDisabled();
   });
 
   it("blocks fitting from scratch under protocol `none`, and says why", async () => {

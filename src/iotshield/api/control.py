@@ -18,6 +18,7 @@ or crashing run (ADR-0015). Serve: python -m iotshield.api.control
 import inspect
 import os
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 
@@ -66,12 +67,18 @@ class ParamInfo(BaseModel):
     default: Any = None
     required: bool
     choices: list[str] | None = None
-    """The allowed values, when the factory annotates the param ``Literal[...]``.
+    """The allowed values, when this param has a closed vocabulary.
 
-    A closed vocabulary is a fact the factory already knows (a detector preset, a lane), so
-    the catalogue reports it rather than making the operator recall it. Without this the UI
-    renders any non-numeric param as free text — which is how a mistyped preset became a
-    guard error instead of an impossible input (ADR-0023 D9).
+    A closed vocabulary is a fact the adapter already knows (a detector preset, a lane, a
+    shipped artifact id), so the catalogue reports it rather than making the operator recall
+    it. Without this the UI renders any non-numeric param as free text — which is how a
+    mistyped preset became a guard error instead of an impossible input (ADR-0023 D9), and
+    how the artifact that decides whether a detector can judge at all was a box with nothing
+    to type into it (ADR-0035 D1).
+
+    Two sources, one field: a ``Literal[...]`` annotation, or ids the registry discovered
+    (``describe_params``'s ``discovered_choices``). A client renders both the same way, which
+    is the point — the *shape* of the fact is identical and only its provenance differs.
     """
 
 
@@ -209,7 +216,11 @@ def _type_name(annotation: Any) -> str | None:
     return getattr(annotation, "__name__", None)
 
 
-def describe_params(factory: Any, params_type: type[BaseModel] | None = None) -> list[ParamInfo]:
+def describe_params(
+    factory: Any,
+    params_type: type[BaseModel] | None = None,
+    discovered_choices: Mapping[str, Sequence[str]] | None = None,
+) -> list[ParamInfo]:
     """Introspect a factory's configuration surface: the adapter's tunables.
 
     ``params_type`` supplies the *real* defaults when given. A learning adapter's factory
@@ -217,15 +228,24 @@ def describe_params(factory: Any, params_type: type[BaseModel] | None = None) ->
     a UI nothing to prefill; its hyperparameter model holds the true values (ADR-0022).
     Public because the evaluation API reports the same schema on ``/eval/detectors``, so
     the Evaluate page can build a hyperparameter form from one call.
+
+    ``discovered_choices`` carries a closed vocabulary the *signature cannot express*: the
+    artifact ids an adapter ships are files found at import time, so the only annotation
+    writable for them is ``str | None`` (ADR-0035 D1). Supplying them here rather than as a
+    field of their own means every form that already renders a closed vocabulary as a
+    ``<select>`` renders these too, and there is one representation of "allowed values" on
+    the wire instead of two that can disagree.
     """
     fields = params_type.model_fields if params_type is not None else {}
+    discovered = discovered_choices or {}
     params: list[ParamInfo] = []
     for parameter in config_parameters(factory):
         has_default = parameter.default is not inspect.Parameter.empty
         default = parameter.default if has_default else None
         if default is None and parameter.name in fields:
             default = fields[parameter.name].get_default(call_default_factory=True)
-        choices = _literal_choices(parameter.annotation)
+        found = discovered.get(parameter.name)
+        choices = list(found) if found is not None else _literal_choices(parameter.annotation)
         params.append(
             ParamInfo(
                 name=parameter.name,
@@ -236,6 +256,24 @@ def describe_params(factory: Any, params_type: type[BaseModel] | None = None) ->
             )
         )
     return params
+
+
+def params_of(spec: AdapterSpec[Any]) -> list[ParamInfo]:
+    """The configuration surface of a registered adapter, as both catalogues publish it.
+
+    Every argument ``describe_params`` needs comes from the one ``AdapterSpec``, so asking
+    for the spec is the honest signature and there is nothing for a caller to assemble.
+    That matters more than it looks: a caller who forgets the discovered choices silently
+    publishes a free-text box where a closed vocabulary exists, which is the defect ADR-0035
+    D1 fixes — and the test helper in ``tests/pipeline/test_capabilities.py`` was exactly
+    that mistake until this call became one thing to copy.
+
+    ``describe_params`` stays public underneath for ``_sink_info``, which has a factory and
+    no spec.
+    """
+    ids = spec.artifacts
+    discovered = {spec.artifact_param: ids} if spec.artifact_param and ids else {}
+    return describe_params(spec.factory, spec.params_type, discovered)
 
 
 def _literal_choices(annotation: Any) -> list[str] | None:
@@ -264,7 +302,7 @@ def _module_info(kind: str, name: str, spec: AdapterSpec[Any]) -> ModuleInfo:
         consumes=sorted(token.render() for token in capability.consumes),
         produces=sorted(token.render() for token in capability.produces),
         formats=sorted(formats_in(capability.consumes)),
-        params=describe_params(spec.factory, spec.params_type),
+        params=params_of(spec),
         artifact_param=spec.artifact_param,
     )
 

@@ -227,6 +227,9 @@ export const corpusSummarySchema = z.object({
   cases: z.number(),
   source_formats: z.array(z.string()).optional(),
   lanes: z.array(z.string()).optional(),
+  // The typed lane vocabularies this corpus's events carry (ADR-0035). Paired with `lanes`:
+  // a detector needs one of the lanes and ALL of the payloads it reads through.
+  payloads: z.array(z.string()).optional(),
   // Always present (empty for a healthy corpus): a broken bundle is published rather than
   // filtered out, so it is visibly broken instead of silently absent from the picker (E2).
   error: z.string(),
@@ -242,6 +245,10 @@ export type _CorporaOk = Assert<Satisfies<CorporaResponse, z.infer<typeof corpor
 export const detectorSummarySchema = z.object({
   name: z.string(),
   lanes: z.array(z.string()),
+  // Required, unlike the corpus side: absent here every detector passes the payload filter
+  // (fails OPEN), which is the permissive silence ADR-0035 exists to remove. Absent on the
+  // corpus side nothing passes, so that one may default.
+  payloads: z.array(z.string()),
   fittable: z.boolean(),
   params: z.array(paramInfoSchema).optional(),
   artifact_param: z.string().nullish(),

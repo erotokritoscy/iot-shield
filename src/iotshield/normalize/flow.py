@@ -56,7 +56,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from iotshield.capabilities import Capability, FormatToken, LaneToken
+from iotshield.capabilities import Capability, FormatToken, LaneToken, PayloadToken
 from iotshield.contracts import Lane, MalformedRecord, NormalizedEvent
 from iotshield.flow import (
     METADATA_KEY,
@@ -188,9 +188,15 @@ MISSING = ("", "-")
 
 # Consumes every dialect's format; every event it emits is flow-lane. The first normalizer
 # to declare more than one format token — the guard and the UI already supported it.
+#
+# The payload token is redundant *today* — every FLOW producer emits a `FlowRecord` and every
+# FLOW consumer needs one, so the check cannot fire here. It is declared anyway, because an
+# axis that only one adapter uses is a special case wearing a general name: a future NetFlow
+# adapter with counts but no tuple would be caught by the same rule that catches metering
+# (ADR-0035 D2).
 CAPABILITY = Capability.of(
     consumes={FormatToken(name) for name in DIALECTS},
-    produces={LaneToken(Lane.FLOW)},
+    produces={LaneToken(Lane.FLOW), PayloadToken(METADATA_KEY)},
 )
 
 

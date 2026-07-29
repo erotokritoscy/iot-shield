@@ -32,6 +32,7 @@ from typing import Self
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from iotshield.detect._artifacts import packaged_artifact_ids
 from iotshield.detect.team3.params import Team3Params
 
 _ARTIFACTS_PACKAGE = "iotshield.detect.team3.artifacts"
@@ -147,3 +148,12 @@ def load_artifact(artifact_id: str) -> Team3Artifact:
     if not resource.is_file():
         raise ValueError(f"unknown team3 artifact id: {artifact_id!r}")
     return parse_artifact(resource.read_text(encoding="utf-8"), artifact_id)
+
+
+def available_artifacts() -> tuple[str, ...]:
+    """Every id ``load_artifact`` will accept — the registry publishes these as choices.
+
+    The hardcoded ``DEFAULT_ARTIFACT`` table in the Evaluate page named ``skab_zscore`` from
+    memory; this is the same fact read from the package that actually holds it (ADR-0035 D1).
+    """
+    return packaged_artifact_ids(_ARTIFACTS_PACKAGE)

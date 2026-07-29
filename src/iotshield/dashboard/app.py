@@ -295,12 +295,21 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     for param in params:
         key = f"{prefix}_{param.name}"
         if param.choices:
-            # A closed vocabulary the factory declared (a preset, a lane): offer it rather
-            # than making the operator type it from memory into a free-text box, where a
-            # typo surfaces only as a guard error after the fact (ADR-0023 D9).
-            default = str(param.default) if param.default is not None else None
-            index = param.choices.index(default) if default in param.choices else 0
-            submit(param, st.selectbox(param.name, param.choices, index=index, key=key))
+            # A closed vocabulary the adapter declared (a preset, a lane, a shipped artifact
+            # id): offer it rather than making the operator type it from memory into a
+            # free-text box, where a typo surfaces only as a guard error after the fact
+            # (ADR-0023 D9, ADR-0035 D1).
+            #
+            # An OPTIONAL one opens on "not given", like every other optional param here.
+            # Preselecting choices[0] fabricates a value nobody chose and `_untouched` then
+            # submits it as though they had. The React page fixed this in ADR-0033; this page
+            # never had the rule applied, and it was already live for `meter.meter_type`
+            # (default null, choices water/electricity), where choosing a source dialect
+            # silently pinned the utility.
+            default = str(param.default) if param.default is not None else ""
+            options = [*param.choices] if default else ["", *param.choices]
+            index = options.index(default) if default in options else 0
+            submit(param, st.selectbox(param.name, options, index=index, key=key))
         elif param.type in ("float", "int"):
             # A numeric whose own default is None is *optional*: it must render empty and
             # be omitted when untouched, exactly as the free-text branch below does. Coercing
@@ -344,8 +353,15 @@ def _preferred_index(names: list[str], *ranked: Callable[[str], bool]) -> int:
 
 
 def _feeds(detector: ModuleInfo, produced: set[str]) -> bool:
-    """Whether this detector consumes a lane the page's sources actually produce."""
-    return bool(set(detector.consumes) & produced)
+    """Whether the page's sources produce everything this detector consumes.
+
+    A subset test, not an intersection: ``consumes`` is a conjunction of requirements. The
+    distinction did not exist while a detector consumed exactly one token — its lane — and
+    appeared the moment payload tokens joined them (ADR-0035 D2), since ``meter_iforest``
+    consumes ``lane:telemetry`` AND ``payload:meter`` and an intersection was satisfied by
+    the lane alone.
+    """
+    return set(detector.consumes) <= produced
 
 
 def _ready(detector: ModuleInfo) -> bool:
@@ -690,18 +706,6 @@ _EVAL_RUN_KEY = "eval_latched_run"
 _TRAINED = "Use trained weights"
 _SCRATCH = "Fit from scratch with my hyperparameters"
 
-_DEFAULT_ARTIFACT = {"team3_zscore": "skab_zscore"}
-"""Which artifact to prefill per detector, so the page is runnable on arrival.
-
-A UI convenience, not a contract: the *factory* default is deliberately ``None`` (no
-artifact means untrained, ADR-0022), so there is nothing on the wire to prefill from. A
-blank box is still a legal state — it is reported as a blocker rather than silently
-building an untrained detector. This table disappears the day ``/eval/detectors``
-enumerates each adapter's shipped artifacts, which is the real fix and is why it is
-listed beside ``_composed_spec``'s hardcoded normalizer as a known deferral.
-"""
-
-
 _NO_SWEEP = "(no sweep)"
 
 
@@ -819,16 +823,34 @@ def _detector_plan(
         if mode == _TRAINED:
             artifact = next((p for p in summary.params if p.name == summary.artifact_param), None)
             shipped = "" if artifact is None or artifact.default is None else str(artifact.default)
-            chosen = st.text_input(
-                summary.artifact_param,
-                value=shipped or _DEFAULT_ARTIFACT.get(summary.name, ""),
-                key=f"{prefix}_art",
-                placeholder="artifact id",
-                help=(
-                    "A committed artifact id. It supplies both the weights and the "
-                    "hyperparameters they were fitted with — the two travel together."
-                ),
+            offered = list(artifact.choices or ()) if artifact is not None else []
+            help_text = (
+                "A committed artifact id. It supplies both the weights and the "
+                "hyperparameters they were fitted with — the two travel together."
             )
+            if offered:
+                # The ids are a closed vocabulary the adapter publishes (ADR-0035 D1), so they
+                # are offered like every other one on this page. Trained mode makes the choice
+                # mandatory — a blank is the blocker below, not an absent value — so unlike an
+                # optional param this preselects rather than opening on "not given".
+                default = shipped if shipped in offered else offered[0]
+                chosen = st.selectbox(
+                    summary.artifact_param,
+                    offered,
+                    index=offered.index(default),
+                    key=f"{prefix}_art",
+                    help=help_text,
+                )
+            else:
+                # An adapter that names an artifact param but enumerates nothing: a dropdown
+                # would offer no way forward, so free text stays as the escape hatch.
+                chosen = st.text_input(
+                    summary.artifact_param,
+                    value=shipped,
+                    key=f"{prefix}_art",
+                    placeholder="artifact id",
+                    help=help_text,
+                )
             params = {summary.artifact_param: chosen}
             # Why this detector contributes nothing to the entry's sweep menu. Without it the
             # menu silently gains three options when this radio moves, and the radio lives
@@ -1013,16 +1035,28 @@ def _compose_widgets(
     meaningful here: a committed bench spec brings its own, so a picker outside this branch is
     a control the user can change while nothing happens.
     """
-    # Which detectors this corpus can actually feed, from the lanes the API says it yields.
+    # Which detectors this corpus can actually feed, from the shape the API says it yields.
     # Hardcoding the telemetry lane here was correct only while every corpus was telemetry:
     # once ADR-0026 shipped a flow corpus and a trimodal one, it hid the only detectors that
     # could judge them and offered ones guaranteed to score zero. Both sides of this
-    # intersection arrive decoded from /eval, so the page never parses a `lane:` prefix.
-    eligible = [item.name for item in detectors if set(item.lanes) & set(corpus.lanes)]
+    # intersection arrive decoded from /eval, so the page never parses a prefix.
+    #
+    # Two axes (ADR-0035 D2): ANY of the lanes, but ALL of the payloads. The lane alone let
+    # `meter_iforest` be offered for every `stub-csv` corpus, where it is handed telemetry
+    # carrying no `MeterReading` and discards every event of it. The predicate is the API's,
+    # not this page's — it was written three times when it was lane-only, and all three
+    # copies agreed with the defect.
+    #
+    # Deferred like every other eval import here, so the eval package stays deletable.
+    from iotshield.api.evaluation import can_judge
+
+    eligible = [item.name for item in detectors if can_judge(item, corpus)]
     if not eligible:
         return [], [
-            f"No registered detector consumes this corpus's lane(s): "
-            f"{', '.join(corpus.lanes) or 'none'}."
+            f"No registered detector can read this corpus. It feeds lane(s) "
+            f"{', '.join(corpus.lanes) or 'none'} carrying payload(s) "
+            f"{', '.join(corpus.payloads) or 'none'}, and a detector needs one of those "
+            f"lanes and all of the payloads it reads through."
         ]
 
     engine = st.selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")

@@ -49,7 +49,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from iotshield.capabilities import DETECTIONS, Capability, LaneToken
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken, PayloadToken
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect._fitted import NotFitted
 from iotshield.detect._group import group_by_asset
@@ -62,7 +62,14 @@ from iotshield.detect.meter.artifact import FittedMeter, MeterState
 from iotshield.detect.meter.params import METHOD, MeterParams
 from iotshield.meter import METADATA_KEY, reading_of
 
-CAPABILITY = Capability.of(consumes={LaneToken(Lane.TELEMETRY)}, produces={DETECTIONS})
+# Telemetry is necessary and not sufficient: `_is_meter_reading` below rejects any reading
+# without a `MeterReading`, so a bare numeric telemetry source reaches this detector and is
+# discarded whole. Declaring the payload is what lets every surface that asks "can these
+# connect?" — the guard, the Evaluate picker, /modules — see that in advance instead of
+# publishing a row of zeros after the fact (ADR-0035 D2).
+CAPABILITY = Capability.of(
+    consumes={LaneToken(Lane.TELEMETRY), PayloadToken(METADATA_KEY)}, produces={DETECTIONS}
+)
 
 _TOP_FEATURES = 2
 
@@ -154,25 +161,50 @@ class MeterIForestDetector:
         return detections
 
     def why_silent(self, events: Sequence[NormalizedEvent]) -> str | None:
-        """The optional ``Diagnosable`` capability: which meters have no model to judge them.
+        """The optional ``Diagnosable`` capability: why this detector judged nothing.
 
-        One model per meter is the design (ADR-0030 D7), so a meter absent from the artifact
-        is skipped — correctly, since scoring it against another meter's normal would measure
-        the difference between two households. But the run reports only "no detections",
-        which reads as "these meters are fine" (ADR-0033).
+        Two different silences, and they say opposite things about whose problem it is.
+
+        **The input is not metering at all.** This detector consumes ``lane:telemetry`` and
+        ``payload:meter`` (ADR-0035); the lane alone is satisfied by any numeric reading, so
+        a telemetry corpus of bare sensor values reaches it and every event is filtered out
+        by ``_is_meter_reading``. Benchmarked on ``skab_valve1`` that produced sixteen rows
+        of zeros with no note at all, which reads as "this detector is bad" when the truth is
+        that it was never handed anything it could judge (ADR-0035). The capability guard now
+        refuses that pairing up front, so reaching this branch means a spec bypassed the
+        guard — a bundle, a hand-written YAML — and it must still explain itself.
+
+        **The meter has no model.** One model per meter is the design (ADR-0030 D7), so a
+        meter absent from the artifact is skipped — correctly, since scoring it against
+        another meter's normal would measure the difference between two households. But the
+        run reports only "no detections", which reads as "these meters are fine" (ADR-0033).
         """
         fitted = self._fitted
         if fitted is None:
             # Untrained entirely: detect() raises NotFitted and compute_run refuses the run
             # before this is ever asked, so there is no silence to explain here.
             return None
-        unmodelled = sorted(
-            {
-                asset_id
-                for asset_id, _ in group_by_asset(events, lane=self.lane, keep=_is_meter_reading)
-                if asset_id not in fitted
-            }
-        )
+
+        # Only the ids are needed, so only the ids are kept: materializing each asset's event
+        # list would hold a second reference to every event for the length of the call.
+        metered = [
+            asset_id
+            for asset_id, _ in group_by_asset(events, lane=self.lane, keep=_is_meter_reading)
+        ]
+        if not metered:
+            lane_assets = {event.asset_id for event in events if event.source_type is self.lane}
+            if not lane_assets:
+                # No telemetry reached this detector at all. The compatibility guard already
+                # reports an idle lane, and saying it a second time here would put one fact
+                # in two places in one report.
+                return None
+            return (
+                f"{METHOD} judges consumption readings carrying a {METADATA_KEY!r} payload; "
+                f"none of the {len(lane_assets)} telemetry asset(s) here carry one, so "
+                f"nothing was scored - this input is telemetry but not metering"
+            )
+
+        unmodelled = sorted(asset_id for asset_id in metered if asset_id not in fitted)
         if not unmodelled:
             return None
         return (

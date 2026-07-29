@@ -7,13 +7,11 @@ defects found in the vendored upstream code so a re-sync cannot quietly reintrod
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from iotshield.contracts import EventKind
+from iotshield.contracts import EventKind, Lane, NormalizedEvent
 from iotshield.detect._fitted import NotFitted, is_fitted
 from iotshield.detect.meter import MeterIForestDetector, MeterParams
 from iotshield.detect.meter._attribution import MAX_ABS_Z, attribute_row, robust_stats, summarise
@@ -25,11 +23,11 @@ from iotshield.detect.meter.artifact import (
     load_artifact,
     parse_artifact,
 )
+from iotshield.detect.port import Diagnosable
+from iotshield.meter import METADATA_KEY
 from iotshield.normalize import MeterNormalizer
 from iotshield.pipeline.registry import build_detector
-from tests import meter_fixtures
-
-_DEMO_DIR = Path(__file__).resolve().parents[2] / "data" / "demo"
+from tests import DEMO_DIR, meter_fixtures
 
 # ---------------------------------------------------------------- the detector
 
@@ -58,7 +56,7 @@ def test_the_demo_meter_leak_is_led_by_the_hour_of_week_residual() -> None:
     leak's volume is ordinary for an evening and extraordinary for 3am, which is the case a
     magnitude threshold cannot express."""
     detector = build_detector("meter_iforest", {"artifact": "demo_meter"})
-    text = (_DEMO_DIR / "demo_meter.csv").read_text(encoding="utf-8")
+    text = (DEMO_DIR / "demo_meter.csv").read_text(encoding="utf-8")
     result = MeterNormalizer().normalize(text, source_format="eoa-meter-csv", origin="test://demo")
     detections = detector.detect(result.events)
     assert len(detections) == 1, "the demo is tuned to surface exactly the leak"
@@ -77,6 +75,80 @@ def test_an_asset_with_no_fitted_model_is_skipped_not_scored() -> None:
         for event in meter_fixtures.leaking_events()
     ]
     assert detector.detect(foreign) == []
+
+
+# ------------------------------------------------- why_silent (the Diagnosable capability)
+
+
+def _bare_telemetry(asset_id: str = "skab-testbed") -> list[NormalizedEvent]:
+    """Telemetry that is not metering: a numeric reading with no meter payload.
+
+    The shape a `stub-csv` corpus produces, which satisfies `lane:telemetry` and nothing
+    else — the input that used to reach this detector and be silently discarded whole.
+    """
+    return [
+        NormalizedEvent(
+            timestamp=meter_fixtures.T0,
+            asset_id=asset_id,
+            source_type=Lane.TELEMETRY,
+            source_format="stub-csv",
+            metric="Pressure",
+            value=1.5,
+            raw="2026-04-01T00:00:00Z,Pressure,1.5",
+        )
+    ]
+
+
+def test_the_detector_offers_the_diagnosable_capability() -> None:
+    assert isinstance(meter_fixtures.make_detector(), Diagnosable)
+
+
+def test_why_silent_names_the_meters_it_has_no_model_for() -> None:
+    """The ADR-0033 D3 case: a skipped meter must not read like a clean one."""
+    detector = meter_fixtures.make_detector()
+    foreign = [
+        event.model_copy(update={"asset_id": "some-other-meter"})
+        for event in meter_fixtures.leaking_events()
+    ]
+    reason = detector.why_silent(foreign)
+    assert reason is not None
+    assert "some-other-meter" in reason
+    assert "one model per meter" in reason
+
+
+def test_why_silent_says_when_the_input_is_telemetry_but_not_metering() -> None:
+    """Benchmarked on `skab_valve1` this produced sixteen rows of zeros and NO note at all:
+    every event was filtered out by the meter-payload gate, so the `unmodelled` set was
+    empty and the detector reported no reservation (ADR-0035)."""
+    reason = meter_fixtures.make_detector().why_silent(_bare_telemetry())
+    assert reason is not None
+    assert "not metering" in reason
+    # The reason must name the gate, not just the outcome — an operator reading it should
+    # learn what this detector wanted, not only that it got nothing.
+    assert METADATA_KEY in reason
+
+
+def test_why_silent_is_quiet_when_no_telemetry_reached_it_at_all() -> None:
+    """The compatibility guard already reports an idle lane; saying it again here would put
+    one fact in two places in a single report."""
+    log_event = _bare_telemetry()[0].model_copy(
+        update={"source_type": Lane.LOG, "source_format": "syslog", "value": None}
+    )
+    assert meter_fixtures.make_detector().why_silent([log_event]) is None
+
+
+def test_why_silent_is_quiet_when_every_meter_present_has_a_model() -> None:
+    """A detector with nothing to disclose must say nothing, or the note becomes noise that
+    a reader learns to skip."""
+    detector = meter_fixtures.make_detector()
+    assert detector.why_silent(meter_fixtures.leaking_events()) is None
+
+
+def test_why_silent_is_quiet_while_untrained() -> None:
+    """`compute_run` refuses an untrained detector before this is ever asked, so there is no
+    silence to explain — and a note here would duplicate that refusal."""
+    detector = MeterIForestDetector(meter_fixtures.make_params())
+    assert detector.why_silent(meter_fixtures.leaking_events()) is None
 
 
 def test_fit_produces_one_model_per_meter() -> None:

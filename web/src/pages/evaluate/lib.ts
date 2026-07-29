@@ -19,17 +19,6 @@ export const TRAINED = "Use trained weights";
 export const SCRATCH = "Fit from scratch with my hyperparameters";
 
 /**
- * Which artifact to prefill per detector, so the page is runnable on arrival.
- *
- * A UI convenience, not a contract: the *factory* default is deliberately `null` (no
- * artifact means untrained), so there is nothing on the wire to prefill from. A blank box is
- * still a legal state — it is reported as a blocker rather than silently building an
- * untrained detector. This table disappears the day `/eval/detectors` enumerates each
- * adapter's shipped artifacts, which is the real fix.
- */
-export const DEFAULT_ARTIFACT: Record<string, string> = { team3_zscore: "skab_zscore" };
-
-/**
  * The fit protocols, in the order the radio shows them, with their help text verbatim.
  *
  * There is deliberately no `holdout`: no bundle format can carry a holdout recording, so the

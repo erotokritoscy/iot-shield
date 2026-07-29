@@ -10,9 +10,12 @@ import sys
 
 import pytest
 
-from iotshield.api.control import describe_params
-from iotshield.capabilities import Capability, formats_in, lanes_in
+from iotshield.api.control import params_of
+from iotshield.capabilities import Capability, formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
+from iotshield.detect._artifacts import packaged_artifact_ids
+from iotshield.flow import METADATA_KEY as FLOW_METADATA_KEY
+from iotshield.meter import METADATA_KEY as METER_METADATA_KEY
 from iotshield.normalize import (
     FLOW_DIALECTS,
     PASSTHROUGH_SOURCE_FORMAT,
@@ -27,6 +30,7 @@ from iotshield.pipeline.registry import (
     build_detector,
     build_normalizer,
 )
+from tests import DEMO_DIR
 
 _ALL_SPECS = [
     *((f"normalizer:{name}", spec) for name, spec in NORMALIZERS.items()),
@@ -131,7 +135,13 @@ def test_team3_detector_declared_lane_matches_built_instance() -> None:
 
 
 def _choices_of(spec: AdapterSpec, param: str) -> list[str] | None:
-    return next(p.choices for p in describe_params(spec.factory) if p.name == param)
+    """The choices `/modules` publishes for one param — built exactly as the API builds them,
+    so a test cannot pass against a vocabulary the catalogue never sends."""
+    return next(p.choices for p in params_of(spec) if p.name == param)
+
+
+def _default_of(spec: AdapterSpec, param: str) -> object:
+    return next(p.default for p in params_of(spec) if p.name == param)
 
 
 def test_declared_lane_choices_are_the_value_carrying_lanes() -> None:
@@ -193,9 +203,145 @@ def test_a_param_with_no_closed_vocabulary_reports_no_choices() -> None:
     assert _choices_of(DETECTORS["stub_threshold"], "threshold") is None
 
 
+# --- shipped artifact ids as a closed vocabulary (ADR-0035 D1) ----------------
+
+
+@pytest.mark.parametrize("name", sorted(n for n, s in DETECTORS.items() if s.artifact_param))
+def test_a_learning_adapter_publishes_the_artifact_ids_it_ships(name: str) -> None:
+    """Every id the catalogue offers must be one ``load_artifact`` resolves.
+
+    The whole value of a dropdown over a text box is that its members are guaranteed good; an
+    id published but unloadable would be worse than free text, because it looks authoritative.
+    Building each one is the only way to check that, and it is affordable for two artifacts.
+    """
+    spec = DETECTORS[name]
+    param = spec.artifact_param
+    assert param is not None  # the parametrization selected on it
+    ids = spec.artifacts
+    assert ids, f"{name} declares an artifact_param but enumerates nothing"
+    assert _choices_of(spec, param) == list(ids)
+    for artifact_id in ids:
+        assert build_detector(name, {param: artifact_id}) is not None
+
+
+def test_an_adapter_that_does_not_learn_enumerates_no_artifacts() -> None:
+    """`artifact_ids` is total, so the API catalogues need no None-handling of their own."""
+    assert DETECTORS["stub_threshold"].artifacts == ()
+    assert DETECTORS["log_burst"].artifacts == ()
+
+
+def test_an_unknown_artifact_package_lists_nothing_rather_than_raising() -> None:
+    """`/modules` answers for every adapter, so one packaged without its artifacts must not
+    take the whole catalogue down."""
+    assert packaged_artifact_ids("iotshield.detect.nonexistent_artifacts") == ()
+
+
 def test_log_burst_detector_declared_lane_matches_built_instance() -> None:
     # Fixed-lane detector: the declaration must hold for every preset, not just the
     # default, since the preset changes *what* it counts but never *which* lane it reads.
     assert lanes_in(DETECTORS["log_burst"].capability({}).consumes) == {Lane.LOG}
     for preset in ("severity_spike", "auth_failure"):
         assert build_detector("log_burst", {"preset": preset}).lane == Lane.LOG
+
+
+# --- payload tokens: the lane vocabulary axis (ADR-0035 D2) --------------------
+
+
+def test_a_payload_token_names_the_metadata_key_its_vocabulary_module_owns() -> None:
+    """The token IS the key, so a payload nothing writes is a payload no event carries.
+
+    A ``PayloadToken`` carries a bare string, which is the one thing typed tokens cannot
+    check for us. Pinning it to the vocabulary module's own constant is what keeps a
+    declaration from drifting into a value no writer ever produces — the failure mode that
+    would make this axis quietly permissive instead of quietly restrictive.
+    """
+    assert payloads_in(NORMALIZERS["meter"].capability({}).produces) == {METER_METADATA_KEY}
+    assert payloads_in(NORMALIZERS["flow"].capability({}).produces) == {FLOW_METADATA_KEY}
+    assert payloads_in(DETECTORS["meter_iforest"].capability({}).consumes) == {METER_METADATA_KEY}
+    assert payloads_in(DETECTORS["flow_burst"].capability({}).consumes) == {FLOW_METADATA_KEY}
+
+
+def test_every_payload_a_detector_needs_is_produced_by_some_normalizer() -> None:
+    """Closes the loop: a detector demanding a payload nothing emits is unreachable.
+
+    The guard would report it forever and no configuration could satisfy it — a typo in a
+    payload string is indistinguishable from a detector nobody can use. Discovered over the
+    registries rather than listed, so a new adapter is covered on arrival.
+    """
+    available: set[str] = set()
+    for spec in NORMALIZERS.values():
+        available |= payloads_in(spec.capability({}).produces)
+    for name, spec in DETECTORS.items():
+        needed = payloads_in(spec.capability({}).consumes)
+        assert needed <= available, (
+            f"{name} needs payload(s) {needed - available}, which nothing emits"
+        )
+
+
+@pytest.mark.parametrize(
+    "normalizer,source_format,path",
+    [("meter", "eoa-meter-csv", "demo_meter.csv"), ("flow", "zeek-conn", "demo_flow.log")],
+)
+def test_a_normalizer_actually_emits_the_payload_it_declares(
+    normalizer: str, source_format: str, path: str
+) -> None:
+    """The behavioural half, matching the declared-lane checks above.
+
+    A declaration the adapter does not honour is worse than none: the guard would pass a
+    chain whose detector then discards every event, which is precisely the silence ADR-0035
+    exists to make visible.
+    """
+    declared = payloads_in(NORMALIZERS[normalizer].capability({}).produces)
+    text = (DEMO_DIR / path).read_text(encoding="utf-8")
+    result = build_normalizer(normalizer).normalize(
+        text, source_format=source_format, origin="test"
+    )
+    assert result.events, "the sample parsed"
+    for key in declared:
+        assert all(key in event.metadata for event in result.events)
+
+
+def test_the_rules_detector_needs_a_payload_only_on_the_lane_that_reads_one() -> None:
+    """One adapter, two plug shapes — the clearest case that this axis is per-configuration.
+
+    ``rules(lane: flow)`` reads every flow field through ``FlowRecord``; ``rules(lane: log)``
+    reads the contract's own fields. Declaring the payload per *adapter* would have made the
+    log configuration permanently unsatisfiable.
+    """
+    assert payloads_in(DETECTORS["rules"].capability({"lane": "flow"}).consumes) == {
+        FLOW_METADATA_KEY
+    }
+    assert payloads_in(DETECTORS["rules"].capability({"lane": "log"}).consumes) == set()
+    assert payloads_in(DETECTORS["rules"].capability({"lane": "telemetry"}).consumes) == set()
+
+
+def test_the_passthrough_payload_vocabulary_is_the_one_normalizers_actually_produce() -> None:
+    """The registry's ``payload`` Literal must offer exactly the payloads that exist.
+
+    A payload name is a bare string — the one thing typed tokens cannot check — so it is
+    pinned the same way the ``lane`` Literal is pinned to ``Lane`` and the preset Literals to
+    ``PRESETS``. Offering a member nothing produces gives an operator a dropdown entry that
+    silently satisfies no detector; omitting one hides a legitimate declaration.
+    """
+    produced: set[str] = set()
+    for name, spec in NORMALIZERS.items():
+        if name == "passthrough":
+            continue  # its own vocabulary is what we are checking
+        produced |= payloads_in(spec.capability({}).produces)
+    offered = _choices_of(NORMALIZERS["passthrough"], "payload")
+    assert offered is not None, "the payload param must publish a closed vocabulary"
+    assert set(offered) == produced
+    # Optional, so it renders as "not given" rather than preselecting a claim nobody made.
+    assert _default_of(NORMALIZERS["passthrough"], "payload") is None
+
+
+def test_passthrough_declares_the_payload_its_operator_claims() -> None:
+    """It envelopes what a partner already emits, so its shape is the operator's claim.
+
+    Same reasoning ADR-0025 applied to ``lane``: the parser validates the envelope, not the
+    vocabulary inside ``metadata``, so it cannot discover a payload and must be told. Without
+    this a partner emitting MeterReadings as JSONL could never satisfy ``meter_iforest``.
+    """
+    assert payloads_in(NORMALIZERS["passthrough"].capability({}).produces) == set()
+    declared = NORMALIZERS["passthrough"].capability({"payload": "meter"})
+    assert payloads_in(declared.produces) == {METER_METADATA_KEY}

@@ -12,9 +12,11 @@ Two failure modes, two severities (ADR-0014):
   ``source_format`` is not one the chosen normalizer accepts (the normalizer raises
   ``ValueError`` at runtime), or an adapter name/param cannot even be resolved.
 - **WARNING** — a stage is *idle*: a detector whose lane no normalizer produces will
-  never fire. This is legitimate (the syslog demo showcases normalization with no
-  detections) and guaranteed-safe by the Detector port's foreign-lane law, so it is
-  surfaced, not blocked.
+  never fire, or whose lane matches but whose typed payload no source declares (ADR-0035
+  D2), so it is handed events and discards every one. Both are legitimate (the syslog demo
+  showcases normalization with no detections; a pass-through source may carry a vocabulary
+  it cannot declare) and guaranteed-safe by the Detector port's foreign-lane law, so they
+  are surfaced, not blocked.
 
 The single result feeds three consumers: the runner/CLI raise on any ERROR; the
 Pipeline API returns 422 on ERRORs and passes WARNINGs back; the UI shows both inline.
@@ -26,7 +28,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from iotshield.capabilities import Token, formats_in, lanes_in
+from iotshield.capabilities import Token, formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
 from iotshield.pipeline.config import PipelineSpec, config_fingerprint
 from iotshield.pipeline.registry import (
@@ -65,6 +67,7 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
     # broken, the downstream lane warnings would be noise, so they are suppressed below.
     ingest_ok = True
     produced_lanes: set[Lane] = set()
+    produced_payloads: set[str] = set()
     for index, source in enumerate(config.sources):
         stage = f"sources[{index}]"
         try:
@@ -86,6 +89,7 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
             ingest_ok = False
             continue
         produced_lanes |= lanes_in(normalizer_cap.produces)
+        produced_payloads |= payloads_in(normalizer_cap.produces)
 
     # Duplicate joint: the same adapter configured twice with the SAME params is always a
     # mistake, and an expensive one. Both instances judge the same events identically, so
@@ -109,16 +113,45 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
         detector_products |= detector_cap.produces
         wanted = lanes_in(detector_cap.consumes)
         consumed_lanes |= wanted
+        # The detector's joints, reported FIRST-UNMET-WINS. A detector on a foreign lane is
+        # also missing that lane's payload, and saying both would make the operator fix two
+        # things to satisfy one break — the same rule `ingest_ok` applies one joint up.
+        # An if/elif rather than a growing conjunction, so a fourth axis cannot silently
+        # forget to exclude the third.
+        #
+        # Both are WARNING, deliberately: nothing crashes, the detector simply judges
+        # nothing. The payload case also keeps `passthrough` usable without a declaration —
+        # the operator who knows their JSONL carries meter readings can still run, and the
+        # one who does not learns why it was quiet.
         idle_lanes = wanted - produced_lanes
-        if ingest_ok and idle_lanes:
+        # The lane can be satisfied while the vocabulary inside it is not. `meter_iforest`
+        # consumes lane:telemetry AND payload:meter, so a bare telemetry source (stub-csv, a
+        # SKAB bundle) aligns perfectly and is then discarded event by event — every surface
+        # that asks "can these connect?" said yes and the run published zeros (ADR-0035 D2).
+        missing_payloads = payloads_in(detector_cap.consumes) - produced_payloads
+        stage = f"detectors[{index}]"
+        if not ingest_ok:
+            pass
+        elif idle_lanes:
             issues.append(
                 CompatIssue(
                     CompatLevel.WARNING,
-                    f"detectors[{index}]",
+                    stage,
                     f"detector {detector.name!r} consumes lane(s) "
                     f"{_join(lane.value for lane in idle_lanes)} but no configured source "
                     f"produces them ({_join(lane.value for lane in produced_lanes)}); "
                     f"it will not fire",
+                )
+            )
+        elif missing_payloads:
+            issues.append(
+                CompatIssue(
+                    CompatLevel.WARNING,
+                    stage,
+                    f"detector {detector.name!r} judges only events carrying "
+                    f"{_join(missing_payloads)} payload(s), which no configured source "
+                    f"declares it produces ({_join(produced_payloads)}); its lane matches, so "
+                    f"it will be handed events and discard all of them",
                 )
             )
 

@@ -56,11 +56,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from iotshield.capabilities import DETECTIONS, Capability, LaneToken
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken, PayloadToken, Token
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect._group import group_by_asset
 from iotshield.detect._runs import classify_run, group_by_gap, sample_messages
-from iotshield.detect.rules.fields import EventView
+from iotshield.detect.rules.fields import PAYLOAD_BY_LANE, EventView
 from iotshield.detect.rules.loader import load_rules
 from iotshield.detect.rules.model import Rule
 from iotshield.enrichment import EVIDENCE_KEY
@@ -169,6 +169,13 @@ def capability(params: Mapping[str, Any]) -> Capability:
 
     Mirrors the factory's default (``registry._rules``); the meta-test in
     tests/pipeline/test_capabilities.py pins the two together against a built instance.
+
+    The payload follows the lane rather than the adapter, which is the clearest case that
+    ADR-0035 D2's axis is per-*configuration*: ``rules(lane: flow)`` reads every flow field
+    through ``FlowRecord`` and needs the payload, while ``rules(lane: log)`` reads the
+    contract's own fields and needs none. One adapter, two different plug shapes.
     """
     lane = Lane(params.get("lane", DEFAULT_LANE))
-    return Capability.of(consumes={LaneToken(lane)}, produces={DETECTIONS})
+    consumes: set[Token] = {LaneToken(lane)}
+    consumes |= {PayloadToken(payload) for payload in PAYLOAD_BY_LANE.get(lane, frozenset())}
+    return Capability.of(consumes=consumes, produces={DETECTIONS})

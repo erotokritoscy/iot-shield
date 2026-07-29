@@ -29,14 +29,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from iotshield.api._eval_gate import EVAL_API_ENV, eval_api_enabled
-from iotshield.api.control import ParamInfo, describe_params
-from iotshield.capabilities import formats_in, lanes_in
+from iotshield.api.control import ParamInfo, params_of
+from iotshield.capabilities import formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
 from iotshield.detect import Fittable
 from iotshield.eval import CorpusUnavailable, EvaluationReport, FitProtocol, evaluate, load_corpus
 from iotshield.eval.bench import benchmarkable, list_bench_specs
 from iotshield.eval.bundle import BundleError
-from iotshield.eval.corpus import corpus_root, fetchable, list_corpora
+from iotshield.eval.corpus import CorpusInfo, corpus_root, fetchable, list_corpora
 from iotshield.eval.sweep import expand
 from iotshield.pipeline import PipelineSpec
 from iotshield.pipeline.registry import DETECTORS, NORMALIZERS, build_detector
@@ -65,6 +65,15 @@ class CorpusSummary(BaseModel):
             "The detector lanes this corpus can actually feed. A UI picking detectors needs "
             "it: one that consumes none of these lanes is handed no events and scores a row "
             "of zeros it never had the chance to earn."
+        ),
+    )
+    payloads: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The typed lane vocabularies this corpus's events carry (ADR-0035). The lane is "
+            "necessary and not sufficient: a stub-csv bundle feeds lane 'telemetry' and no "
+            "payload, so meter_iforest matched on lane, was offered, and discarded every "
+            "event. A UI must intersect BOTH axes."
         ),
     )
     error: str = Field(
@@ -134,6 +143,17 @@ class DetectorSummary(BaseModel):
 
     name: str
     lanes: list[str]
+    payloads: list[str] = Field(
+        description=(
+            "The typed lane vocabularies this detector requires an event to carry (ADR-0035). "
+            "Every one of them must be in the corpus's `payloads` for this detector to judge "
+            "anything: meter_iforest consumes lane 'telemetry' AND payload 'meter', and a "
+            "corpus satisfying only the lane hands it events it discards one by one. "
+            "REQUIRED, unlike CorpusSummary.payloads: an absent field here fails OPEN (every "
+            "detector passes the filter), which is the permissive silence ADR-0035 removes. "
+            "Absent on the corpus side fails closed, so that one may default."
+        ),
+    )
     fittable: bool
     params: list[ParamInfo] = Field(default_factory=list)
     artifact_param: str | None = None
@@ -161,31 +181,37 @@ class LabelledSpec(BaseModel):
 
 
 @cache
-def _lanes_fed_by(source_formats: tuple[str, ...]) -> tuple[str, ...]:
-    """Which detector lanes a corpus of this shape can feed, given the normalizers registered.
+def _shape_fed_by(source_formats: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The (lanes, payloads) a corpus of this shape can feed, given the registered normalizers.
 
     A corpus's declared formats plus the registry determine it: each format is read by whichever
-    normalizer accepts it, and *that* normalizer's produced lane is what a detector must consume
-    to be handed anything at all. Union across positions, because a multi-lane corpus feeds
-    several and a spec may judge all of them in one run.
+    normalizer accepts it, and *that* normalizer's produced tokens are what a detector must
+    consume to be handed anything it can use. Union across positions, because a multi-lane
+    corpus feeds several and a spec may judge all of them in one run.
+
+    Both axes come out of one walk because they are one question asked of one capability, and
+    splitting them into two functions is how they would come to disagree about which normalizer
+    reads a format.
 
     This join belongs on the server for the same reason ``DetectorSummary.lanes`` is decoded
-    here: the ``lane:`` prefix is a private wire detail of ``capabilities.py``, rendered only at
-    this boundary. A UI deriving corpus lanes for itself would have to parse that prefix, which
-    is exactly the scheme-scattered-through-the-code that typed tokens exist to prevent — so the
-    two sides of the comparison are published in the same decoded vocabulary and a client merely
-    intersects them.
+    here: the ``lane:``/``payload:`` prefixes are a private wire detail of ``capabilities.py``,
+    rendered only at this boundary. A UI deriving corpus lanes for itself would have to parse
+    those prefixes, which is exactly the scheme-scattered-through-the-code that typed tokens
+    exist to prevent — so the two sides of the comparison are published in the same decoded
+    vocabulary and a client merely intersects them.
 
     Cached with ``DETECTORS``-style justification: ``NORMALIZERS`` is a module-level constant
     with static capabilities, so the answer cannot change within a process.
     """
     lanes: set[Lane] = set()
+    payloads: set[str] = set()
     for source_format in source_formats:
         for spec in NORMALIZERS.values():
             capability = spec.capability({})
             if source_format in formats_in(capability.consumes):
                 lanes |= lanes_in(capability.produces)
-    return tuple(sorted(lane.value for lane in lanes))
+                payloads |= payloads_in(capability.produces)
+    return tuple(sorted(lane.value for lane in lanes)), tuple(sorted(payloads))
 
 
 @cache
@@ -215,16 +241,55 @@ def _detector_summaries() -> list[DetectorSummary]:
     every Streamlit rerun (i.e. every widget click), and the answer costs a signature
     introspection per parameter per detector.
     """
-    return [
-        DetectorSummary(
-            name=name,
-            lanes=sorted(lane.value for lane in lanes_in(spec.capability({}).consumes)),
-            fittable=_is_fittable(name),
-            params=describe_params(spec.factory, spec.params_type),
-            artifact_param=spec.artifact_param,
+    summaries: list[DetectorSummary] = []
+    for name, spec in sorted(DETECTORS.items()):
+        # One capability read, both axes off it — the same reason `_shape_fed_by` takes one
+        # walk: two reads are how they come to disagree.
+        consumes = spec.capability({}).consumes
+        summaries.append(
+            DetectorSummary(
+                name=name,
+                lanes=sorted(lane.value for lane in lanes_in(consumes)),
+                payloads=sorted(payloads_in(consumes)),
+                fittable=_is_fittable(name),
+                params=params_of(spec),
+                artifact_param=spec.artifact_param,
+            )
         )
-        for name, spec in sorted(DETECTORS.items())
-    ]
+    return summaries
+
+
+def can_judge(detector: DetectorSummary, corpus: CorpusSummary) -> bool:
+    """Whether this corpus can feed this detector anything it is able to read (ADR-0035 D2).
+
+    **Any** of the lanes, **all** of the payloads, and the asymmetry is not an inconsistency:
+    a detector fires if any modality it consumes is present, but it needs every typed
+    vocabulary it reads through. Published as a function rather than left to each client
+    because a rule written twice is a rule that can differ twice — the lane-only version of
+    it lived in two dashboards and a test, and all three agreed with the defect.
+
+    The TypeScript page necessarily reimplements this; that copy is language-forced and says
+    so at its site. Everything on the Python side calls here.
+    """
+    return bool(set(detector.lanes) & set(corpus.lanes)) and set(detector.payloads) <= set(
+        corpus.payloads
+    )
+
+
+def _corpus_summary(info: CorpusInfo) -> CorpusSummary:
+    """One bundle as the picker sees it, with both axes of the shape it can feed."""
+    lanes, payloads = _shape_fed_by(tuple(info.source_formats))
+    return CorpusSummary(
+        name=info.name,
+        description=info.description,
+        provenance=info.provenance,
+        licence=info.licence,
+        cases=info.cases,
+        source_formats=list(info.source_formats),
+        lanes=list(lanes),
+        payloads=list(payloads),
+        error=info.error,
+    )
 
 
 def create_eval_router() -> APIRouter:
@@ -236,19 +301,7 @@ def create_eval_router() -> APIRouter:
         """What can be benchmarked here, and what could be with one more command."""
         return CorporaResponse(
             root=str(corpus_root()),
-            corpora=[
-                CorpusSummary(
-                    name=info.name,
-                    description=info.description,
-                    provenance=info.provenance,
-                    licence=info.licence,
-                    cases=info.cases,
-                    source_formats=list(info.source_formats),
-                    lanes=list(_lanes_fed_by(tuple(info.source_formats))),
-                    error=info.error,
-                )
-                for info in list_corpora()
-            ],
+            corpora=[_corpus_summary(info) for info in list_corpora()],
             fetchable=fetchable(),
         )
 

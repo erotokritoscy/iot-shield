@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from iotshield.capabilities import DETECTIONS, Capability, LaneToken
+from iotshield.capabilities import DETECTIONS, Capability, LaneToken, PayloadToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
 from iotshield.detect._group import group_by_asset
 from iotshield.detect._windows import (
@@ -59,8 +59,12 @@ from iotshield.detect._windows import (
 from iotshield.enrichment import EVIDENCE_KEY, Enrichment, EnrichmentSource, MitreTechnique
 from iotshield.flow import METADATA_KEY, Direction, FlowRecord
 
-# Fixed flow-lane detector; declared for the compatibility guard.
-CAPABILITY = Capability.of(consumes={LaneToken(Lane.FLOW)}, produces={DETECTIONS})
+# Fixed flow-lane detector; declared for the compatibility guard. Every aggregate below reads
+# through the typed `FlowRecord`, so the payload is a real requirement and not decoration —
+# it just cannot fail today, because every FLOW producer emits one (ADR-0035 D2).
+CAPABILITY = Capability.of(
+    consumes={LaneToken(Lane.FLOW), PayloadToken(METADATA_KEY)}, produces={DETECTIONS}
+)
 
 _TOP_PEERS = 5  # how many of the busiest peers ride along as evidence
 _SAMPLE_PORTS = 10

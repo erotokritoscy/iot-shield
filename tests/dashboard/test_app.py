@@ -466,13 +466,32 @@ class TestEvaluateRun:
         empty_client: ApiClient,
         eval_control_client: ControlClient,
     ) -> None:
-        """Eligibility is the corpus's lanes, not a hardcoded one.
+        """Eligibility is the corpus's declared shape — both axes of it — not a hardcoded lane.
 
         This filter was pinned to telemetry, which was right only until ADR-0026 shipped a
         flow corpus and a trimodal one. The cost was not a missing option: the page offered
         `stub_threshold` over `fleet_scan`, built a spec whose flow events it cannot consume,
         and reported a clean row of zeros that reads exactly like a bad detector. The old
         version of this test asserted that behaviour was correct.
+
+        So did the previous version of *this* test, one axis further in (ADR-0035 D2). It
+        expected `meter_iforest` on `synthetic` and called that the ADR-0026 amendment working
+        as intended — "a silent detector is a real measurement, not an option withheld". That
+        principle is right and this is not an instance of it. The line is whether the
+        detector's answer can vary with the data:
+
+        - `severity_spike` on a burst of INFO lines *evaluates* every event and correctly
+          finds nothing. Different logs, different answer. That is a measurement, and
+          withholding it would prevent making it.
+        - `meter_iforest` on `stub-csv` telemetry cannot read a single event, whatever they
+          say, because none carries a `MeterReading`. Its answer is forced by the shape of
+          the corpus rather than by its contents. That is not a measurement.
+
+        Which is the same rule the lane filter already applied, one level finer — nobody
+        called withholding `stub_threshold` from `fleet_scan` a suppressed measurement.
+        `team3_zscore` stays offered on `synthetic` precisely because it is the first kind:
+        right lane, no payload needed, and an artifact whose channels simply do not cover
+        this rig — a real finding about domain shift, reported by `why_silent`.
         """
         at = self._open(monkeypatch, empty_client, eval_control_client)
         at.selectbox(key="eval_corpus").set_value("fleet_scan").run()
@@ -485,16 +504,10 @@ class TestEvaluateRun:
         # widget's value across the change, and `flow_burst` is not an option here.
         at.selectbox(key="eval_corpus").set_value("synthetic").run()
         assert not at.exception
-        # Every TELEMETRY detector is eligible, including ones that will find nothing here:
-        # `meter_iforest` needs meter metadata on its events and `team3_zscore` needs SKAB's
-        # channels, so both report as silent on this corpus. That is the ADR-0026 amendment
-        # working as intended — a silent detector is a real measurement, reported with its
-        # reason, not an option withheld from the operator.
-        assert at.multiselect(key="eval_e0_dets").options == [
-            "meter_iforest",
-            "stub_threshold",
-            "team3_zscore",
-        ]
+        # Telemetry detectors that need no lane vocabulary. `meter_iforest` is absent because
+        # this corpus carries no meter payload; `team3_zscore` is present because nothing
+        # about the corpus stops it judging — see the docstring for why those are different.
+        assert at.multiselect(key="eval_e0_dets").options == ["stub_threshold", "team3_zscore"]
 
     def test_one_entry_can_hold_several_detectors_that_run_together(
         self,
@@ -558,8 +571,11 @@ class TestEvaluateRun:
             dashboard_app._TRAINED,
             dashboard_app._SCRATCH,
         }
-        # Trained mode shows the artifact id and NOT the hyperparameters.
-        assert at.text_input(key="eval_e0_team3_zscore_art").value
+        # Trained mode shows the artifact id and NOT the hyperparameters. The id is chosen
+        # from the ids the adapter actually ships (ADR-0035 D1), not typed from memory.
+        artifact = at.selectbox(key="eval_e0_team3_zscore_art")
+        assert artifact.options == ["skab_zscore"]
+        assert artifact.value == "skab_zscore"
         assert "eval_e0_team3_zscore_window_size" not in {w.key for w in at.number_input}
 
     def test_fit_from_scratch_exposes_hyperparameters_prefilled_with_real_defaults(
@@ -575,19 +591,28 @@ class TestEvaluateRun:
         # real default has to come from the adapter's hyperparameter model via /eval/detectors.
         assert at.number_input(key="eval_e0_team3_zscore_window_size").value == 60
 
-    def test_a_blank_artifact_blocks_the_run_rather_than_silently_running_untrained(
+    def test_the_artifact_control_cannot_express_an_untrained_detector(
         self,
         monkeypatch: pytest.MonkeyPatch,
         empty_client: ApiClient,
         eval_control_client: ControlClient,
     ) -> None:
-        # An empty artifact box reaches the factory as "no artifact", which ADR-0022 means
-        # as *untrained* — so clearing it must be refused, not quietly reinterpreted.
+        """A blank artifact reaches the factory as "no artifact", which ADR-0022 means as
+        *untrained* — and a run refuses an untrained detector outright.
+
+        This used to be enforced after the fact: the box was free text, clearing it produced a
+        blocker, and the operator's way out was to type an id nothing had told them. Offering
+        the shipped ids (ADR-0035 D1) removes the state instead of catching it — every value
+        the control can hold is one `load_artifact` will resolve. The blocker still exists for
+        an adapter that declares an artifact param and ships nothing, which is the only case
+        that can still reach the text fallback.
+        """
         at = self._open(monkeypatch, empty_client, eval_control_client)
         at.multiselect(key="eval_e0_dets").set_value(["team3_zscore"]).run()
-        at.text_input(key="eval_e0_team3_zscore_art").set_value("").run()
-        assert any("no artifact is named" in str(e.value) for e in at.error)
-        assert at.button[0].disabled
+        assert "eval_e0_team3_zscore_art" not in {w.key for w in at.text_input}
+        assert "" not in at.selectbox(key="eval_e0_team3_zscore_art").options
+        assert not any("no artifact is named" in str(e.value) for e in at.error)
+        assert not at.button[0].disabled
 
     def test_fitting_from_scratch_under_protocol_none_blocks_the_run_and_says_why(
         self,
@@ -835,9 +860,17 @@ class TestBenchSpecMatchesEveryCorpusShape:
         the page was composing a flow corpus into a telemetry detector, because the sources
         genuinely did align — so this asserts the deeper joint too, via the guard that
         `evaluate` now consults.
+
+        Two things here were still too narrow to catch `meter_iforest` on a `stub-csv` corpus
+        (ADR-0035 D2). Eligibility was computed on lanes alone, exactly as the page computed
+        it, so the test agreed with the bug instead of judging it; and the assertion matched
+        the literal words "will not fire", so a differently-worded warning about the same
+        defect would have passed. Eligibility now mirrors BOTH axes, and any warning naming a
+        detector fails the pair — the invariant is "an offered detector draws no complaint",
+        not "an offered detector draws no complaint phrased this way".
         """
-        from iotshield.api.evaluation import _lanes_fed_by
-        from iotshield.capabilities import lanes_in
+        from iotshield.api.evaluation import _shape_fed_by
+        from iotshield.capabilities import lanes_in, payloads_in
         from iotshield.eval import list_corpora, load_corpus
         from iotshield.eval.runner import _check_alignment, _compatibility_notes
         from iotshield.pipeline import PipelineSpec
@@ -848,11 +881,12 @@ class TestBenchSpecMatchesEveryCorpusShape:
         checked = 0
         for info in infos:
             formats = list(info.source_formats)
-            lanes = set(_lanes_fed_by(tuple(formats)))
+            lanes, payloads = _shape_fed_by(tuple(formats))
             eligible = [
                 name
                 for name, spec in DETECTORS.items()
-                if {lane.value for lane in lanes_in(spec.capability({}).consumes)} & lanes
+                if {lane.value for lane in lanes_in(spec.capability({}).consumes)} & set(lanes)
+                and payloads_in(spec.capability({}).consumes) <= set(payloads)
             ]
             assert eligible, f"no detector can judge {info.name!r}: the picker would be empty"
             for name in eligible:
@@ -862,10 +896,12 @@ class TestBenchSpecMatchesEveryCorpusShape:
                 spec = PipelineSpec.model_validate(payload)
                 for case in load_corpus(info.name).cases:
                     _check_alignment(spec, case)
-                # An eligible detector must be *coherent*, not merely aligned: no warning that
-                # it will never fire. This is what fails if the eligibility filter regresses.
+                # An eligible detector must be *coherent*, not merely aligned. Any warning
+                # about the detector stage means the picker offered something the guard
+                # objects to; warnings about `ingest` are excluded because composing ONE
+                # detector for a multi-lane corpus legitimately leaves lanes unjudged.
                 assert not [
-                    note for note in _compatibility_notes(spec) if "will not fire" in note
-                ], f"{name} would not fire on {info.name}"
+                    note for note in _compatibility_notes(spec) if note.startswith("detectors[")
+                ], f"{name} is offered for {info.name} but the guard objects to it"
                 checked += 1
         assert checked >= len(infos), "every corpus should contribute at least one pair"

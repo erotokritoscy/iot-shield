@@ -45,6 +45,7 @@ from typing import Self
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from iotshield.detect._artifacts import packaged_artifact_ids
 from iotshield.detect.meter._attribution import robust_stats
 from iotshield.detect.meter._iforest import fit_forest, score, threshold_at_budget
 from iotshield.detect.meter.params import MeterParams
@@ -236,3 +237,13 @@ def load_artifact(artifact_id: str) -> MeterArtifact:
     if not resource.is_file():
         raise ValueError(f"unknown meter artifact id: {artifact_id!r}")
     return parse_artifact(resource.read_text(encoding="utf-8"), artifact_id)
+
+
+def available_artifacts() -> tuple[str, ...]:
+    """Every id ``load_artifact`` will accept — the registry publishes these as choices.
+
+    One meter model is one *meter*, not one fleet (ADR-0030 D7), so this list is short by
+    design and says so: the shipped ``demo_meter`` covers a single synthetic meter, which a
+    one-item dropdown communicates and an empty text box does not.
+    """
+    return packaged_artifact_ids(_ARTIFACTS_PACKAGE)

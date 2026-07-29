@@ -13,6 +13,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from iotshield.capabilities import payloads_in
 from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect import (
     Detector,
@@ -249,6 +250,37 @@ def test_foreign_lane_events_are_ignored(case: DetectorCase) -> None:
     foreign = next(lane for lane in Lane if lane != detector.lane)
     foreign_only = [e.model_copy(update={"source_type": foreign}) for e in case.triggering_events]
     assert detector.detect(foreign_only) == []
+
+
+def test_a_declared_payload_is_actually_required(case: DetectorCase) -> None:
+    """The payload axis's port law, matching the foreign-lane law above (ADR-0035 D2).
+
+    A detector that declares ``payload:meter`` is promising the guard something: that an
+    event on its lane *without* that vocabulary is one it declines rather than crashes on.
+    The compatibility guard reports the mismatch as a WARNING on exactly that basis — nothing
+    breaks, the detector simply judges nothing — and until now no test required it. Every
+    adapter happened to defend itself (`_is_meter_reading`, `FlowRecord.from_event -> None`),
+    so the guarantee was true by habit; a future adapter indexing ``metadata["meter"]``
+    directly would crash on a config the guard deliberately allows, which would make the
+    severity choice retroactively wrong rather than the adapter wrong.
+
+    Derived from the registry like ``_learns``, so a new declaration is covered on arrival.
+    """
+    if not case.registry_name:
+        return
+    declared = payloads_in(DETECTORS[case.registry_name].capability({}).consumes)
+    if not declared:
+        return
+    stripped = [
+        item.model_copy(
+            update={"metadata": {k: v for k, v in item.metadata.items() if k not in declared}}
+        )
+        for item in case.triggering_events
+    ]
+    assert case.make().detect(stripped) == [], (
+        f"{case.registry_name} declares payload(s) {sorted(declared)} but still judged events "
+        f"that carry none — the guard's WARNING (rather than ERROR) assumes it will not"
+    )
 
 
 def test_empty_input_yields_nothing(case: DetectorCase) -> None:

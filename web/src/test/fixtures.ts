@@ -196,7 +196,7 @@ export const modules = {
       name: "flow",
       kind: "normalizer",
       consumes: ["format:flow-csv", "format:zeek-conn"],
-      produces: ["lane:flow"],
+      produces: ["lane:flow", "payload:flow"],
       formats: ["flow-csv", "zeek-conn"],
       params: [],
       artifact_param: null,
@@ -206,16 +206,19 @@ export const modules = {
     {
       name: "meter_iforest",
       kind: "detector",
-      consumes: ["lane:telemetry"],
+      // Two tokens, and no fixture normalizer produces `payload:meter` — so this detector is
+      // not feedable by any chain the compose page can build here, which is the shape that
+      // used to be indistinguishable from `stub_threshold` (ADR-0035 D2).
+      consumes: ["lane:telemetry", "payload:meter"],
       produces: ["detections"],
       formats: [],
-      params: [param("artifact", "str", null)],
+      params: [param("artifact", "str", null, ["demo_meter"])],
       artifact_param: "artifact",
     },
     {
       name: "flow_burst",
       kind: "detector",
-      consumes: ["lane:flow"],
+      consumes: ["lane:flow", "payload:flow"],
       produces: ["detections"],
       formats: [],
       params: [
@@ -254,7 +257,7 @@ export const modules = {
       produces: ["detections"],
       formats: [],
       params: [
-        param("artifact", "str", null),
+        param("artifact", "str", null, ["skab_zscore"]),
         param("window_size", "int", 60),
         param("percentile", "float", 99.0),
       ],
@@ -289,6 +292,9 @@ export const modules = {
 
 // --- Evaluation plane ---------------------------------------------------------
 
+// `payloads` mirrors what `_shape_fed_by` computes server-side: a `stub-csv` bundle carries
+// no typed lane vocabulary, which is what makes `meter_iforest` ineligible for every corpus
+// here despite matching on the telemetry lane (ADR-0035 D2).
 export const corpora = {
   root: "data/eval",
   corpora: [
@@ -300,6 +306,7 @@ export const corpora = {
       cases: 11,
       source_formats: ["stub-csv"],
       lanes: ["telemetry"],
+      payloads: [],
       error: "",
     },
     {
@@ -310,6 +317,7 @@ export const corpora = {
       cases: 4,
       source_formats: ["flow-csv"],
       lanes: ["flow"],
+      payloads: ["flow"],
       error: "",
     },
     {
@@ -320,6 +328,7 @@ export const corpora = {
       cases: 1,
       source_formats: ["stub-csv", "syslog", "flow-csv"],
       lanes: ["telemetry", "log", "flow"],
+      payloads: ["flow"],
       error: "",
     },
     {
@@ -330,6 +339,7 @@ export const corpora = {
       cases: 16,
       source_formats: ["stub-csv"],
       lanes: ["telemetry"],
+      payloads: [],
       error: "",
     },
     {
@@ -340,6 +350,7 @@ export const corpora = {
       cases: 0,
       source_formats: [],
       lanes: [],
+      payloads: [],
       error: "labels schema v4 is stale; regenerate with `iotshield.eval generate`",
     },
   ],
@@ -347,9 +358,21 @@ export const corpora = {
 };
 
 export const evalDetectors = [
+  // Sorted as `/eval/detectors` sorts, so `meter_iforest` is alphabetically first among the
+  // telemetry detectors — the position that made it the Evaluate page's default entry on
+  // every telemetry corpus, including the ones it cannot read (ADR-0035 D2).
+  {
+    name: "meter_iforest",
+    lanes: ["telemetry"],
+    payloads: ["meter"],
+    fittable: true,
+    params: [param("artifact", "str", null, ["demo_meter"])],
+    artifact_param: "artifact",
+  },
   {
     name: "flow_burst",
     lanes: ["flow"],
+    payloads: ["flow"],
     fittable: false,
     params: [
       param("preset", "str", "fan_out", ["fan_out", "exfiltration"]),
@@ -361,6 +384,7 @@ export const evalDetectors = [
   {
     name: "log_burst",
     lanes: ["log"],
+    payloads: [],
     fittable: false,
     params: [
       param("preset", "str", "severity_spike", ["severity_spike", "auth_failure"]),
@@ -372,6 +396,7 @@ export const evalDetectors = [
   {
     name: "stub_threshold",
     lanes: ["telemetry"],
+    payloads: [],
     fittable: false,
     params: [param("threshold", "float", 80.0)],
     artifact_param: null,
@@ -379,9 +404,10 @@ export const evalDetectors = [
   {
     name: "team3_zscore",
     lanes: ["telemetry"],
+    payloads: [],
     fittable: true,
     params: [
-      param("artifact", "str", null),
+      param("artifact", "str", null, ["skab_zscore"]),
       param("window_size", "int", 60),
       param("percentile", "float", 99.0),
     ],

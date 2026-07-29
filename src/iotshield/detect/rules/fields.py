@@ -55,6 +55,7 @@ from typing import Any
 
 from iotshield.contracts import Lane, NormalizedEvent, Severity
 from iotshield.detect._severity import SEVERITY_RANK
+from iotshield.flow import METADATA_KEY as FLOW_METADATA_KEY
 from iotshield.flow import FlowRecord
 
 
@@ -109,6 +110,12 @@ class FieldSpec:
     kind: FieldKind
     description: str
     read: Callable[[EventView], Any]
+    payload: str | None = None
+    """The typed lane vocabulary ``read`` goes through, when it goes through one.
+
+    Set by the ``_field`` helper that creates the dependency, never by hand, so
+    ``PAYLOAD_BY_LANE`` is *read off* this table rather than restated beside it (ADR-0035 D2).
+    """
 
 
 def _flow_field(
@@ -120,7 +127,9 @@ def _flow_field(
         record = view.flow
         return None if record is None else pick(record)
 
-    return FieldSpec(name=name, kind=kind, description=description, read=read)
+    return FieldSpec(
+        name=name, kind=kind, description=description, read=read, payload=FLOW_METADATA_KEY
+    )
 
 
 # --- The vocabulary itself, one table per lane. -------------------------------------
@@ -237,6 +246,24 @@ _BY_LANE: dict[Lane, tuple[FieldSpec, ...]] = {
     Lane.LOG: _COMMON_FIELDS + _LOG_FIELDS,
     Lane.FLOW: _COMMON_FIELDS + _FLOW_FIELDS,
 }
+
+PAYLOAD_BY_LANE: dict[Lane, frozenset[str]] = {
+    lane: frozenset(spec.payload for spec in specs if spec.payload is not None)
+    for lane, specs in _BY_LANE.items()
+}
+"""Which typed lane vocabularies a rule on this lane needs an event to carry (ADR-0035 D2).
+
+**Derived, not declared.** A field that reads through a typed record says so on itself, and
+this reads that off the table above — so adding a ``_meter_field`` to the telemetry lane
+declares the meter payload automatically. Written by hand it would be a restatement of
+``_flow_field``'s dependency one level up, and the first lane whose fields gained a
+vocabulary would keep declaring none: the guard would pass the chain and every such rule
+would evaluate to "missing" forever, which is a quiet night rather than an error. That is
+exactly the defect ADR-0035 exists to fix, reintroduced one lane over.
+
+A set rather than a single value, because nothing says one lane carries one vocabulary.
+Lanes whose fields read the contract's own columns map to an empty set.
+"""
 
 
 def fields_for(lane: Lane) -> Mapping[str, FieldSpec]:

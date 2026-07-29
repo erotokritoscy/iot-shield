@@ -881,6 +881,14 @@
             "title": "Lanes",
             "description": "The detector lanes this corpus can actually feed. A UI picking detectors needs it: one that consumes none of these lanes is handed no events and scores a row of zeros it never had the chance to earn."
           },
+          "payloads": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Payloads",
+            "description": "The typed lane vocabularies this corpus's events carry (ADR-0035). The lane is necessary and not sufficient: a stub-csv bundle feeds lane 'telemetry' and no payload, so meter_iforest matched on lane, was offered, and discarded every event. A UI must intersect BOTH axes."
+          },
           "error": {
             "type": "string",
             "title": "Error",
@@ -943,6 +951,14 @@
             "type": "array",
             "title": "Lanes"
           },
+          "payloads": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Payloads",
+            "description": "The typed lane vocabularies this detector requires an event to carry (ADR-0035). Every one of them must be in the corpus's `payloads` for this detector to judge anything: meter_iforest consumes lane 'telemetry' AND payload 'meter', and a corpus satisfying only the lane hands it events it discards one by one. REQUIRED, unlike CorpusSummary.payloads: an absent field here fails OPEN (every detector passes the filter), which is the permissive silence ADR-0035 removes. Absent on the corpus side fails closed, so that one may default."
+          },
           "fittable": {
             "type": "boolean",
             "title": "Fittable"
@@ -970,6 +986,7 @@
         "required": [
           "name",
           "lanes",
+          "payloads",
           "fittable"
         ],
         "title": "DetectorSummary",
@@ -1178,7 +1195,7 @@
         },
         "type": "object",
         "title": "LaneCounts",
-        "description": "One lane's tallies \u2014 the unit both the point and event levels are really counted in.\n\nPer lane because a lane's instants are its own (``truth.AssetTruth``) and, since ADR-0028\nD2, so are its incidents. Pooling these into one set of point counts weights each modality\nby **how fast it samples**, which is a corpus-authoring decision masquerading as a\nmeasurement: on ``device_trimodal`` telemetry carries 2,700 of 3,597 clock entries, so a\npooled point precision is a telemetry number wearing a corpus-wide name.\n\nKept as counts rather than rates so pooling stays addition, the same reason ``Counts``\ndoes \u2014 and so ``report._attribution`` can pool per-lane recall across cases instead of\naveraging rates, which is the one column ADR-0027 D4 could not reach."
+        "description": "One lane's tallies \u2014 the unit both the point and event levels are really counted in.\n\nPer lane because a lane's instants are its own (``truth.AssetTruth``) and, since ADR-0028\nD2, so are its incidents. Pooling these into one set of point counts weights each modality\nby **how fast it samples**, which is a corpus-authoring decision masquerading as a\nmeasurement: on ``device_trimodal`` FLOW carries 1,321 of 2,918 clock entries and telemetry\n1,440 (the split moves whenever a device profile does \u2014 ADR-0028 D5/D7), so a\npooled point precision is a telemetry number wearing a corpus-wide name.\n\nKept as counts rather than rates so pooling stays addition, the same reason ``Counts``\ndoes \u2014 and so ``report._attribution`` can pool per-lane recall across cases instead of\naveraging rates, which is the one column ADR-0027 D4 could not reach."
       },
       "ModuleInfo": {
         "properties": {
