@@ -1,0 +1,37 @@
+# Ported from AntoniaVoutouri/iot-ot-alert-correlation, rules/smb_service_rule.yml
+# (rule-004). Field address `observations.network.service` became `flow.service`.
+#
+# ENVIRONMENT-DEPENDENT BY DESIGN. This fires on every SMB conversation, so in an office
+# network it is pure noise and in an OT segment where Windows file sharing should never
+# appear it is a genuine finding. That is why it ships at `low` severity: the rule is
+# correct everywhere and *interesting* only where SMB is unexpected. `contains` is
+# case-insensitive, so an exporter writing "SMB" matches too.
+id: smb-service-activity
+title: SMB Service Activity
+lane: flow
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  A conversation whose observed application service is SMB. Windows file sharing is a
+  standard lateral-movement channel and is rarely expected on an OT segment.
+one_line: The flow's service name contains "smb".
+severity_hint: low
+confidence: medium
+
+detection:
+  selection:
+    flow.service:
+      operator: contains
+      value: smb
+  condition: selection
+
+mitre:
+  - tactic: Lateral Movement
+    technique: Remote Services
+    technique_id: T1021
+
+suggested_actions:
+  - Review the SMB connections on this device.
+  - Verify that file sharing activity is expected for this asset.
+  - Check for other lateral movement indicators around the same time.

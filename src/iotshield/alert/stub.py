@@ -12,7 +12,12 @@ scoring is stub-specific.
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
 
-from iotshield.alert._correlate import correlate_and_rank, detection_margin, severity_from_priority
+from iotshield.alert._correlate import (
+    correlate_and_rank,
+    detection_margin,
+    narrate,
+    severity_from_priority,
+)
 from iotshield.capabilities import ALERTS, DETECTIONS, Capability
 from iotshield.contracts import Asset, Criticality, DetectionResult, PrioritizedAlert
 
@@ -62,6 +67,16 @@ class StubAlertEngine:
         )
         window_start = min(detection.window_start for detection in group)
         window_end = max(detection.window_end for detection in group)
+        # Shared with the weighted engine (``_correlate``), for the same reason the severity
+        # mapping is: which threat class an alert carries is a product convention, not a
+        # property of whichever scoring formula produced the number (ADR-0032 D5).
+        explanation = narrate(
+            group,
+            rationale=rationale,
+            asset_id=asset_id,
+            window_start=window_start,
+            strongest=strongest,
+        )
 
         return PrioritizedAlert(
             asset_id=asset_id,
@@ -69,7 +84,8 @@ class StubAlertEngine:
             window_end=window_end,
             severity=severity_from_priority(priority),
             priority_score=priority,
-            rationale=rationale,
+            threat_class=explanation.threat_class,
+            rationale=explanation.rationale,
             score_components={
                 "base": base,
                 "corroboration": corroboration,
@@ -77,8 +93,5 @@ class StubAlertEngine:
                 "asset_criticality": criticality_bonus,
             },
             detection_ids=[detection.detection_id for detection in group],
-            recommended_action=(
-                f"Inspect {asset_id} around {window_start.isoformat()};"
-                f" review {strongest.method} evidence."
-            ),
+            recommended_action=explanation.recommended_action,
         )

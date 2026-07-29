@@ -1,0 +1,36 @@
+# Authored here (ADR-0032). Exercises the TIER field kind — `severity` is an ordered
+# category, so ">=" means what an operator means by it rather than comparing enum text
+# (where "critical" < "debug" alphabetically).
+#
+# It also exercises the NO-MITRE path deliberately. A kernel OOM kill is a real, actionable
+# single-event signal and it is not an attack technique; forcing a MITRE mapping onto it
+# would be inventing threat context that does not exist. With no mapping, the rule's own
+# title becomes the alert's threat class — still far more honest than "unknown".
+#
+# Complements log_burst:severity_spike rather than duplicating it: that one needs five
+# error-or-worse lines inside a window before it speaks, so a single isolated CRITICAL —
+# exactly the one you want to hear about — is invisible to it.
+id: critical-log-event
+title: Critical Log Event
+lane: log
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  A single log record at CRITICAL severity. One is enough to be worth an analyst's time;
+  rate-based log detection deliberately waits for several.
+one_line: A log record arrived at severity critical.
+severity_hint: medium
+confidence: medium
+
+detection:
+  selection:
+    severity:
+      operator: ">="
+      value: critical
+  condition: selection
+
+suggested_actions:
+  - Read the log line and identify the failing subsystem.
+  - Check whether the device recovered or is still degraded.
+  - Correlate with telemetry from the same device and window.

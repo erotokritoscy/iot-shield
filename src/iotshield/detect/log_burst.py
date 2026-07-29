@@ -35,22 +35,13 @@ from typing import Any
 from iotshield.capabilities import DETECTIONS, Capability, LaneToken
 from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent, Severity
 from iotshield.detect._group import group_by_asset
+from iotshield.detect._runs import sample_messages
+from iotshield.detect._severity import SEVERITY_RANK as _SEVERITY_RANK
 from iotshield.detect._windows import CountAggregate, Episode, find_episodes
+from iotshield.enrichment import EVIDENCE_KEY, Enrichment, EnrichmentSource, MitreTechnique
 
 # Fixed log-lane detector; declared for the compatibility guard.
 CAPABILITY = Capability.of(consumes={LaneToken(Lane.LOG)}, produces={DETECTIONS})
-
-_SAMPLE_MESSAGES = 3  # how many of the burst's messages ride along as evidence
-
-# Severity is a StrEnum, so a bare `>=` between members compares *text*
-# ("critical" < "debug"). Rank explicitly so a floor orders the way an operator means it.
-_SEVERITY_RANK = {
-    Severity.DEBUG: 0,
-    Severity.INFO: 1,
-    Severity.WARNING: 2,
-    Severity.ERROR: 3,
-    Severity.CRITICAL: 4,
-}
 
 # Authentication-failure phrasings across the dialects our normalizers emit (sshd, generic
 # PAM, Windows security log). Curated deliberately: an operator selects a preset by name and
@@ -75,7 +66,14 @@ class Preset:
     An event matches when it clears ``severity_floor`` (if set) AND matches any of
     ``patterns`` (if any). Leaving both unset would match every log line — no shipped
     preset does, but that composition is what lets a future category be one entry here.
+
+    Every preset also carries the threat claim that stops the alert queue splitting into
+    "rule alerts, which are explained" and "everything else, which says unknown".
     """
+
+    enrichment: Enrichment
+    """The preset's authored threat claim (ADR-0032 D5, tier 2) — required, not optional:
+    a preset is a phenomenon we chose deliberately, so it always knows what it detects."""
 
     severity_floor: Severity | None = None
     patterns: tuple[re.Pattern[str], ...] = ()
@@ -94,11 +92,42 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "severity_spike": Preset(severity_floor=Severity.ERROR),
+    "severity_spike": Preset(
+        severity_floor=Severity.ERROR,
+        # No MITRE mapping, on purpose: an error storm is a real operational phenomenon and
+        # not an attack technique, and inventing a technique id for it would be fabricating
+        # threat context. The threat class names what it is; that is honest and it is still
+        # incomparably more useful to an analyst than "unknown".
+        enrichment=Enrichment(
+            threat_class="Operational error storm",
+            source=EnrichmentSource.DETECTOR,
+            origin="log_burst:severity_spike",
+            suggested_actions=(
+                "Read the sampled messages to identify the failing subsystem.",
+                "Check whether the device recovered or is still degraded.",
+                "Correlate with telemetry from the same device and window.",
+            ),
+        ),
+    ),
     # Deliberately NO severity floor: sshd logs "Failed password" at INFO, so a
     # severity-based rule is blind to exactly the burst this preset exists to catch.
     "auth_failure": Preset(
-        patterns=tuple(re.compile(pattern, re.IGNORECASE) for pattern in _AUTH_FAILURE_PATTERNS)
+        patterns=tuple(re.compile(pattern, re.IGNORECASE) for pattern in _AUTH_FAILURE_PATTERNS),
+        enrichment=Enrichment(
+            threat_class="Brute Force (T1110)",
+            source=EnrichmentSource.DETECTOR,
+            origin="log_burst:auth_failure",
+            mitre=(
+                MitreTechnique(
+                    tactic="Credential Access", technique="Brute Force", technique_id="T1110"
+                ),
+            ),
+            suggested_actions=(
+                "Review the source addresses and usernames in the failed attempts.",
+                "Check for a successful login from the same source after the burst.",
+                "Consider rate-limiting or blocking the source address.",
+            ),
+        ),
     ),
 }
 
@@ -198,16 +227,22 @@ class LogBurstDetector:
         )
 
     def _evidence(self, span: Sequence[NormalizedEvent], peak: int) -> dict[str, Any]:
-        # `category` is the preset name — the semantic label of what was detected. It rides
-        # in evidence for now; promoting it to the alert's threat_class is a follow-on
-        # (ADR-0020 D6).
-        return {
+        # `category` is the preset name — the semantic label of what was detected. ADR-0020
+        # D6 deferred promoting it to the alert's `threat_class`; ADR-0032 D5 does that, via
+        # the preset's own typed enrichment rather than by the alert layer re-deriving a
+        # meaning from this string.
+        evidence: dict[str, Any] = {
+            "explanation": (
+                f"{peak} {self._preset_name.replace('_', ' ')} events in a "
+                f"{self._window.total_seconds() / 60:g}-minute window"
+            ),
             "category": self._preset_name,
             "matched_events": len(span),
             "peak_in_window": peak,
             "window_minutes": self._window.total_seconds() / 60,
             "severities": sorted({event.severity.value for event in span}),
-            "sample_messages": [
-                event.message for event in span[:_SAMPLE_MESSAGES] if event.message
-            ],
+            "sample_messages": sample_messages(span),
+            # Every preset carries a claim (the type says so), so this is unconditional.
+            EVIDENCE_KEY: self._preset.enrichment.to_evidence(),
         }
+        return evidence

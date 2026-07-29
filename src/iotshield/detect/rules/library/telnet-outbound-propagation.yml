@@ -1,0 +1,40 @@
+# Authored here (ADR-0032). Exercises a MULTI-FIELD selection: both comparisons must hold.
+#
+# Why it earns its place next to flow_burst:fan_out, which also catches sweeps: the burst
+# detector needs 20 distinct peers inside a minute before it says anything. This fires on
+# the FIRST outbound telnet connection. A camera dialling out to port 23 has no legitimate
+# reason to do so at all, so waiting for twenty of them is waiting for confirmation of
+# something already certain. Rate detection and signature detection genuinely differ here.
+id: telnet-outbound-propagation
+title: Outbound Telnet From a Monitored Device
+lane: flow
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  A monitored device originated a connection to TCP port 23. Telnet is unauthenticated and
+  effectively obsolete; outbound telnet from an IoT device is the Mirai-family propagation
+  signature, where a compromised device scans for its next victim.
+one_line: The device originated a connection to port 23 (telnet).
+severity_hint: high
+confidence: medium
+
+detection:
+  selection:
+    flow.peer_port:
+      operator: "=="
+      value: 23
+    flow.direction:
+      operator: "=="
+      value: outbound
+  condition: selection
+
+mitre:
+  - tactic: Lateral Movement
+    technique: Remote Services
+    technique_id: T1021
+
+suggested_actions:
+  - Isolate the device and inspect its firmware for compromise.
+  - Review which hosts it contacted on port 23 and whether any answered.
+  - Block outbound telnet at the segment boundary.

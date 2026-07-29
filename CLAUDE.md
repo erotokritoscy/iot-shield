@@ -63,6 +63,7 @@ green, exactly as `scripts/check.sh` gates the Python side.
 ```
 # Benchmark against labelled data (ADR-0021) — the other half of the port suite:
 # pytest says whether an adapter FITS, this says whether it is GOOD.
+uv run python -m iotshield.detect.rules              # the rule field vocabulary + shipped rules
 uv run python -m iotshield.eval list                 # what corpora exist here
 uv run python -m iotshield.eval generate             # (re)build every committed corpus
 uv run python -m iotshield.eval generate fleet_scan  # ...or just one
@@ -70,6 +71,9 @@ uv run python -m iotshield.eval fetch skab           # convert SKAB into local b
 # Is the flow detector's hand-chosen threshold defensible? (ADR-0026)
 uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
     --sweep threshold=8,15,20,27,35
+# Signatures vs statistics on one corpus: authored rules head-to-head with a burst preset
+uv run python -m iotshield.eval --corpus fleet_scan \
+    --spec config/bench/rules_flow.yaml --spec config/bench/flow.yaml
 # Does cross-lane corroboration improve the queue? Two specs, one bundle, same bytes.
 uv run python -m iotshield.eval --corpus device_trimodal \
     --spec config/bench/trimodal_telemetry.yaml --spec config/bench/trimodal_all.yaml
@@ -318,7 +322,7 @@ invent. Differencing lives in the normalizer; the commissioning/service-start tr
 usability verdict are modelling judgments and live in the detector, because a normalizer that
 silently dropped a meter's first months could not be inverted (ADR-0030 D3/D4).
 
-Eleven demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
+Twelve demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
 `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
@@ -357,6 +361,22 @@ envelopes** rather than parses → 7 events, 3 quarantined lines (naive timestam
 record, non-JSON line), the `stub_threshold` detector ranks the pump's two correlated spikes
 above the discovered sensor — the smallest adapter that honors every port law, and the first
 normalizer whose produced lane is a config **param** so the guard stays accurate — ADR-0025).
+
+`config/demo_rules.yaml` + `data/demo/demo_rules_flow.log` + `data/demo/demo_rules_syslog.log`
+(**the first alerts this product has produced that say WHAT they are** — ADR-0032. Two rule
+instances, one per lane, over the packaged library; `flow_burst:fan_out` is configured
+alongside them and finds **nothing**, deliberately: the camera probes SIX hosts on telnet
+(fan-out's boundary is 20) and uploads 4.2 MB (exfiltration's is 50 MB), so both are invisible
+to rate detection and obvious to a signature — a camera dialling port 23 has no legitimate
+reason to do so even once. 19 events → 7 detections from 6 rules across 2 lanes → 2 alerts:
+the camera raises FOUR detections across TWO lanes (telnet + a bulk upload on flow, the sshd
+break-in warning + a firmware-integrity CRITICAL on logs) → corroboration 1.50, volume 1.45 →
+**73.9/CRITICAL**, `threat_class: Remote Services (T1021)`, and a `recommended_action` unioned
+across the rules that fired. The gateway's inbound SSH from 203.0.113.9 → 50.0/HIGH,
+`External Remote Services (T1133)`. The demo also carries the trap the field list exists for:
+flow fields are asset-relative, so a service port is `flow.peer_port` on a connection the
+device MADE and `flow.asset_port` on one it RECEIVED — written the other way round a rule
+reads perfectly and can never fire.)
 
 `config/demo_meter.yaml` + `data/demo/demo_meter.csv` and `data/demo/demo_meter_sensipro.csv`
 (**two different meter platforms in ONE run, judged by the same detector** — ADR-0030: an EOA
@@ -402,8 +422,11 @@ src/iotshield/
   capabilities.py  adapter capability vocabulary (what each stage consumes/produces)
   flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
   meter.py         METER vocabulary: the typed MeterReading (counter + interval + utility) (ADR-0030)
+  enrichment.py    THREAT vocabulary: the typed Enrichment that crosses detect->alert (ADR-0032)
   normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, meter+dialects=EOA/SensiPro cumulative counters -> hourly consumption, passthrough=validate-and-envelope pre-normalized JSONL, ...); a run routes each of its sources here by format (ADR-0019)
-  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, meter iforest, ...)
+  detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, meter iforest, rules, ...)
+                rules/ = authored YAML signatures: fields.py (the checked field vocabulary),
+                model.py (the rule language), loader.py, library/ (the packaged rule set)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
@@ -450,12 +473,85 @@ implementing it is not a defect — the harness reports "not fittable" and evalu
 configured. A detector that scores rows should form judgments with `detect/_runs.py:
 merge_runs`; see the port docstring for why the alert engine's `volume` factor depends on it.
 
+**Every detector but one answers "is this unusual?"; `rules` answers "is this a known-bad
+thing?" (ADR-0032).** The threshold detector asks the first question of a number, team3's
+z-score and the meter forest of learned normal behaviour, the burst detectors of a rate. The
+two families fail in opposite directions — statistics catch what nobody anticipated but
+cannot say what it is; a signature says exactly what something is but only catches what
+somebody wrote down — so they are complements, and having only one half was a real gap. It is
+also the first detector **extensible without Python**: adding a detection is dropping a YAML
+file into `detect/rules/library/` or into a directory named by `ruleset:`.
+
+A rule addresses a **closed, checked field vocabulary** (`detect/rules/fields.py`), not
+free-form paths into `metadata`. This is `FlowRecord`'s problem one level up: a field name is
+text in a YAML file *at runtime*, so no type checker can see it, and a rule that loads clean
+and matches nothing is indistinguishable from a quiet night. So the untyped hop becomes one
+*table* wide instead of one function call wide — and each entry **reads through** the typed
+lane record, never around it, which is what makes the vocabulary unable to drift from the
+data (it stops type-checking), enumerable (`python -m iotshield.detect.rules` prints it, and
+a test pins `docs/integration/rule-authoring-guide.md` against it), and checkable at load (an
+unknown field is refused with a "did you mean"; an operator that does not suit a field's kind
+is refused too, where the upstream engine raises `TypeError` mid-run). The grammar is ported
+verbatim from Antonia's engine — selections, seven operators, a flat `condition` — because it
+is the interface a contributor learns; only the vocabulary moved. Four behaviours are
+stricter, each fixing an inherited failure: a **missing value never matches any operator**
+(upstream, `!= x` on an absent field is True, so an absence reads as a positive claim), type
+mismatches and unknown selection names are refused at load, and files load sorted.
+
+**One adapter, one instance per lane, many rules per instance (ADR-0032 D3).** The port gives
+a detector one lane, so a rule set spanning network and logs is two configured entries — not
+two adapters, and not one entry per rule, which would put every new rule into every
+deployment's config. A consequence: `method` belongs to the *detector* and the port suite
+requires every detection to carry it, so the firing rule cannot be named there; it rides in
+`Enrichment.origin` (`rule:high-upload-volume`), which is what reaches the alert rationale.
+A rule match is a boolean, so `score`/`threshold` are synthesised from the author's two
+judgments — severity sets the base (1.5/2.0/3.0/4.0), confidence scales it (0.7/0.85/1.0) —
+which makes the margin *be* the authored severity, spans the weighted engine's [1.0, 4.0]
+exactly, and means a single rule cannot reach the top of the queue (critical at high
+confidence is 63/100 alone). Matches of one rule on one asset within `merge_gap_minutes`
+merge into one detection: the alert engine counts detections as corroboration, and
+`fleet_scan`'s exfiltration recording alone holds ~400 matching flows.
+
+**`threat_class` and `recommended_action` are populated for the first time (ADR-0032 D4/D5).**
+They had been the literal default on every alert this system ever produced. Threat knowledge
+crosses detect->alert as a **typed record** (`enrichment.py`) with `to_evidence` /
+`from_evidence` — the third time this project has met "structured data crossing an untyped
+seam" (FLOW, METER, now this), which is enough repetition to call it the house solution.
+Three precedence tiers, and the middle one is the point: an authored **rule** beats a
+**detector preset** beats a shape **inference**. Without the middle tier the queue splits
+into "rule alerts, which are explained" and "everything else, which says unknown", and the
+split tracks *which detector fired* rather than how dangerous anything is — so the five
+shipped presets carry their own mappings (`auth_failure`→T1110, `exfiltration`→T1041,
+`port_scan`→T1046, `fan_out`→T1018, `severity_spike`→a threat class and deliberately no
+MITRE, because an error storm is not an attack technique). `threat_class` takes the highest
+tier then the strongest detection; **actions are unioned** across the bucket, because a device
+showing both failed logins and a bulk transfer needs both sets of next steps. Promotion lives
+in `alert/_correlate.py` so both engines share it, and enrichment **never moves the
+priority** — explanation is not evidence. The **inference tier is deferred** (ADR-0032 D6):
+"sustained collective span — possible degradation" restates a shape rather than classifying a
+threat, and a guess costs real trust when wrong, so unclassified now means the honest
+*nothing here claims to know what this is*. `evidence["explanation"]` — one analyst-readable
+sentence — is the one key every detector agrees on; the rest of evidence stays per-detector,
+because flattening z-scores, feature attributions and top peers into one schema serves the
+dashboard and nobody else (D7).
+
 `detect/` has three shared skeletons a new adapter inherits rather than re-derives:
 `_group.py` (the port's routing laws — foreign-lane isolation, deterministic per-asset
-order), `_runs.py` (a per-row verdict mask → spans), and `_windows.py` (a sliding time
-window + incremental `Aggregate` → merged episodes, ADR-0024 D4). A volumetric detector
-("too much of something, too fast") supplies an aggregate and gets the rest for free;
-`log_burst` counts events, `flow_burst` counts distinct peers/ports or sums bytes.
+order), `_runs.py` (**three ways to form a judgment from a sequence**: `merge_runs`, a
+per-row verdict mask → spans; `group_by_gap`, already-interesting items → time-separated
+episodes, which is what a signature detector needs since matches interleave and are almost
+never index-adjacent; and `classify_run`/`sample_messages`, the shared shape and evidence
+conventions), and `_windows.py` (a sliding time window + incremental `Aggregate` → merged
+episodes, ADR-0024 D4). A volumetric detector ("too much of something, too fast") supplies
+an aggregate and gets the rest for free; `log_burst` counts events, `flow_burst` counts
+distinct peers/ports or sums bytes.
+
+**Every detection carries `evidence["explanation"]`** — one analyst-readable sentence — and
+the *port suite* enforces it (ADR-0032 D7). It is a law rather than a convention because
+four of six adapters honoured it while both docs claimed all of them did; a claim nothing
+checks is prose. The supporting detail stays per-detector, because a z-score, a feature
+attribution and a peer count are genuinely different things and flattening them into one
+schema would serve the dashboard and nobody else.
 
 **Hyperparameters vs fitted state (ADR-0022, a LAW for any adapter that learns).**
 A detector's hyperparameters are *exactly* its registry factory's parameters — declared as

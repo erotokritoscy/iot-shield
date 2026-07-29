@@ -56,6 +56,7 @@ from iotshield.detect._windows import (
     SumAggregate,
     find_episodes,
 )
+from iotshield.enrichment import EVIDENCE_KEY, Enrichment, EnrichmentSource, MitreTechnique
 from iotshield.flow import METADATA_KEY, Direction, FlowRecord
 
 # Fixed flow-lane detector; declared for the compatibility guard.
@@ -92,6 +93,17 @@ class Preset:
     aggregate: Callable[[], Aggregate[_Flow]]
     window_minutes: float
     threshold: float
+    enrichment: Enrichment
+    """The preset's authored threat claim (ADR-0032 D5, tier 2).
+
+    Required, not optional: a preset names a *phenomenon* chosen deliberately, not a
+    statistical excursion, so what it detects is known in advance and can always be stated.
+    Making it required puts that invariant in the type and forces the next preset's author
+    to answer the question rather than silently reopening the "some alerts are explained,
+    some say unknown" split the tier exists to close. Co-located with the preset for the
+    same reason a capability is co-located with its adapter.
+    """
+
     keep: Callable[[FlowRecord], bool] = lambda record: True
 
 
@@ -105,6 +117,26 @@ PRESETS: dict[str, Preset] = {
         window_minutes=1.0,
         threshold=20.0,
         keep=lambda record: record.direction in _ASSET_INITIATED,
+        # Many hosts, one service -> enumerating which machines exist. Distinct from the
+        # port scan below, which is many services on one host; the two presets map to the
+        # two techniques ATT&CK actually separates, rather than sharing one label.
+        enrichment=Enrichment(
+            threat_class="Remote System Discovery (T1018)",
+            source=EnrichmentSource.DETECTOR,
+            origin="flow_burst:fan_out",
+            mitre=(
+                MitreTechnique(
+                    tactic="Discovery",
+                    technique="Remote System Discovery",
+                    technique_id="T1018",
+                ),
+            ),
+            suggested_actions=(
+                "Identify what the device was looking for across the contacted hosts.",
+                "Check whether any contacted host answered.",
+                "Isolate the device and inspect its firmware for compromise.",
+            ),
+        ),
     ),
     # Reconnaissance against a single host or a small set: many ports, few peers — the
     # pattern fan-out misses because the destination count stays low.
@@ -115,6 +147,23 @@ PRESETS: dict[str, Preset] = {
         window_minutes=1.0,
         threshold=15.0,
         keep=lambda record: record.direction in _ASSET_INITIATED,
+        enrichment=Enrichment(
+            threat_class="Network Service Discovery (T1046)",
+            source=EnrichmentSource.DETECTOR,
+            origin="flow_burst:port_scan",
+            mitre=(
+                MitreTechnique(
+                    tactic="Discovery",
+                    technique="Network Service Discovery",
+                    technique_id="T1046",
+                ),
+            ),
+            suggested_actions=(
+                "Review which ports were probed and whether any accepted a connection.",
+                "Check the scanned host for services that should not be exposed.",
+                "Investigate the scanning device for compromise.",
+            ),
+        ),
     ),
     # Bulk egress. Direction-agnostic on purpose: data leaving the asset is the concern
     # whether the asset dialled out or an attacker dialled in and pulled it.
@@ -124,6 +173,23 @@ PRESETS: dict[str, Preset] = {
         aggregate=lambda: SumAggregate(lambda flow: flow.record.bytes_out),
         window_minutes=30.0,
         threshold=50_000_000.0,
+        enrichment=Enrichment(
+            threat_class="Exfiltration Over C2 Channel (T1041)",
+            source=EnrichmentSource.DETECTOR,
+            origin="flow_burst:exfiltration",
+            mitre=(
+                MitreTechnique(
+                    tactic="Exfiltration",
+                    technique="Exfiltration Over C2 Channel",
+                    technique_id="T1041",
+                ),
+            ),
+            suggested_actions=(
+                "Identify the destination and whether the transfer was authorized.",
+                "Determine what data the device holds that could have been sent.",
+                "Review the device for unusual outbound traffic before this window.",
+            ),
+        ),
     ),
 }
 
@@ -237,7 +303,13 @@ class FlowBurstDetector:
         # and taking 5 of 50k costs O(n log 5) instead of O(n log n). The explicit key keeps
         # ties broken by peer name, which Counter.most_common does not promise.
         top = heapq.nsmallest(_TOP_PEERS, peers.items(), key=lambda item: (-item[1], item[0]))
-        return {
+        evidence: dict[str, Any] = {
+            # The analyst-readable headline every detector emits (ADR-0032 D7); the fields
+            # below are its supporting detail.
+            "explanation": (
+                f"{episode.peak:g} {self._preset.unit} ({self._preset.describe}) in a "
+                f"{self._window.total_seconds() / 60:g}-minute window"
+            ),
             # `category` is the preset name — the semantic label of what was detected, the
             # same convention log_burst uses (ADR-0020 D6).
             "category": self._preset_name,
@@ -252,7 +324,10 @@ class FlowBurstDetector:
             "bytes_out": bytes_out,
             "protocols": sorted(protocols),
             "directions": sorted(directions),
+            # Every preset carries a claim (the type says so), so this is unconditional.
+            EVIDENCE_KEY: self._preset.enrichment.to_evidence(),
         }
+        return evidence
 
 
 def _has_flow(event: NormalizedEvent) -> bool:

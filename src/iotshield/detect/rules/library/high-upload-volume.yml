@@ -1,0 +1,39 @@
+# Ported from AntoniaVoutouri/iot-ot-alert-correlation, rules/high_upload_volume_rule.yml
+# (rule-003). Unchanged except for the field address: `observations.network.bytes_out`
+# became `flow.bytes_out`, which reads the same number off our oriented FlowRecord.
+#
+# NOTE ON THE THRESHOLD: 10000 comes from the TON_IoT capture this rule was developed
+# against. It is an example of the mechanism, not a calibrated production value — on a
+# real network 10 KB is an ordinary web response. What makes it defensible here is that it
+# is *measurable*: on the `fleet_scan` corpus the exfiltration chunks are 1.2 MB while the
+# busiest innocent device sends 2.2 KB, so the rule separates them cleanly and the
+# benchmark says by how much (config/bench/rules_flow.yaml).
+id: high-upload-volume
+title: High Outbound Upload Volume
+lane: flow
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  A single network conversation in which the device sent more than 10 KB outbound. Bulk
+  egress from a device that normally only reports telemetry is the exfiltration signal.
+one_line: Outbound bytes on one flow exceed 10000.
+severity_hint: medium
+confidence: medium
+
+detection:
+  selection:
+    flow.bytes_out:
+      operator: ">"
+      value: 10000
+  condition: selection
+
+mitre:
+  - tactic: Exfiltration
+    technique: Exfiltration Over C2 Channel
+    technique_id: T1041
+
+suggested_actions:
+  - Review the source device for unusual outbound traffic.
+  - Check whether the destination is expected.
+  - Investigate possible data exfiltration behavior.

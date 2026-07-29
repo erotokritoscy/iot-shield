@@ -390,9 +390,11 @@ class TestEvaluateRun:
         # guaranteed alignment failure in a dropdown.
         assert "stub" in offered and "flow" not in offered
 
-        # ... and the pairing follows the corpus rather than being a fixed list.
+        # ... and the pairing follows the corpus rather than being a fixed list. `fleet_scan`
+        # now fits two committed specs, which is what makes it a head-to-head (ADR-0032 D8):
+        # authored signatures against a statistical burst preset, same corpus, same bytes.
         at.selectbox(key="eval_corpus").set_value("fleet_scan").run()
-        assert at.multiselect(key="eval_bench_specs").options == ["flow"]
+        assert at.multiselect(key="eval_bench_specs").options == ["flow", "rules_flow"]
 
     def test_a_shipped_spec_runs_verbatim_and_the_page_shows_what_it_sent(
         self,
@@ -438,7 +440,10 @@ class TestEvaluateRun:
         """
         at = self._open(monkeypatch, empty_client, eval_control_client)
         at.selectbox(key="eval_corpus").set_value("fleet_scan").run()
-        assert at.multiselect(key="eval_e0_dets").options == ["flow_burst"]
+        # `rules` defaults to the FLOW lane (ADR-0032 D3), so it is eligible here and absent
+        # from the telemetry roster below — the roster follows each adapter's declared
+        # capability under its default params, which is exactly the point of the filter.
+        assert at.multiselect(key="eval_e0_dets").options == ["flow_burst", "rules"]
 
         # Switching back must prune the stale flow pick rather than raising: Streamlit keeps a
         # widget's value across the change, and `flow_burst` is not an option here.

@@ -16,10 +16,13 @@ this same function, so ground truth and detections are formed by an identical ru
 is what makes the event-level comparison apples-to-apples (ADR-0021).
 """
 
-from collections.abc import Iterable, Iterator
-from typing import Any
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from datetime import datetime, timedelta
+from typing import Any, TypeVar
 
 from iotshield.contracts import EventKind
+
+T = TypeVar("T")
 
 MIN_COLLECTIVE = 3
 """Run length at/above which an episode is collective rather than contextual.
@@ -42,6 +45,50 @@ def classify_run(run_length: int) -> EventKind:
     if run_length >= MIN_COLLECTIVE:
         return EventKind.COLLECTIVE
     return EventKind.CONTEXTUAL
+
+
+SAMPLE_MESSAGES = 3
+"""How many of an episode's own log lines ride along as evidence.
+
+A cap rather than the whole span: the point is to let an analyst recognise *what kind* of
+thing this was without carrying an unbounded slice of the input into the database. Shared
+because "how many samples" is a presentation convention across detectors, not a property of
+any one of them — the same argument that moved ``MIN_COLLECTIVE`` here."""
+
+
+def sample_messages(events: Sequence[Any]) -> list[str]:
+    """The first few non-empty messages of an episode, for ``evidence``."""
+    return [event.message for event in events[:SAMPLE_MESSAGES] if event.message]
+
+
+def group_by_gap(
+    items: Sequence[T], *, gap: timedelta, timestamp: Callable[[T], datetime]
+) -> list[Sequence[T]]:
+    """Split time-ordered ``items`` wherever more than ``gap`` separates two neighbours.
+
+    The third way this project forms episodes, and the one neither sibling covers.
+    ``merge_runs`` collapses an already-computed per-row verdict by *index* adjacency, and
+    ``_windows.find_episodes`` computes a verdict by thresholding an aggregate over a
+    sliding window. This one starts from items that are all already interesting and asks
+    only "did these happen at about the same time" — no mask, no threshold, no aggregate.
+
+    Index adjacency is the wrong unit for that and the difference is not academic: a
+    device's flows interleave (mqtt, smb, ssl, smb), so matches of one rule are almost never
+    neighbours in the sequence, and an adjacency merge would emit one episode per match —
+    the restatement that inflates an alert's ``volume`` factor (ADR-0020 D4).
+
+    Empty in, empty out; a single item is a one-item group.
+    """
+    if not items:
+        return []
+    groups: list[Sequence[T]] = []
+    start = 0
+    for index in range(1, len(items)):
+        if timestamp(items[index]) - timestamp(items[index - 1]) > gap:
+            groups.append(items[start:index])
+            start = index
+    groups.append(items[start:])
+    return groups
 
 
 def merge_runs(mask: Iterable[Any]) -> Iterator[tuple[int, int]]:
