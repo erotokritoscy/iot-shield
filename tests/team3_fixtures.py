@@ -27,11 +27,22 @@ def normal_frame(channels: Sequence[str], rows: int = 300, seed: int = 0) -> pd.
     return pd.DataFrame({channel: rng.normal(10.0, 0.5, rows) for channel in channels})
 
 
-def make_state(params: Team3Params, *, rows: int = 300, seed: int = 0) -> Team3State:
+FIXTURE_ASSETS = ("pump-02", "skab-testbed")
+"""The asset ids the suites build events for.
+
+A model judges only the asset it was fitted for (ADR-0034), so a fixture detector has to
+name its assets or every suite's events would be skipped. Two rather than one because the
+port suite's generic ``event()`` says ``pump-02`` while the adapter tests' ``events_from``
+says ``skab-testbed``, and unifying them would churn both suites to no benefit.
+"""
+
+
+def make_state(params: Team3Params, *, asset_id: str, rows: int = 300, seed: int = 0) -> Team3State:
     channels = params.channels or ("Pressure",)
     return train_state(
         normal_frame(channels, rows, seed),
         params,
+        asset_id=asset_id,
         channels=channels,
         provenance="hermetic test fixture",
     )
@@ -40,13 +51,24 @@ def make_state(params: Team3Params, *, rows: int = 300, seed: int = 0) -> Team3S
 def make_detector(
     channels: Sequence[str] = ("Pressure",),
     *,
+    assets: Sequence[str] = FIXTURE_ASSETS,
     window: int = 5,
     lags: tuple[int, ...] = (1,),
     percentile: float = 99.0,
     min_segment_length: int = 1,
     seed: int = 0,
 ) -> Team3ZScoreDetector:
-    """A fitted team3 detector over ``channels``, with a tiny window so cases stay small."""
+    """A fitted team3 detector over ``channels``, with a tiny window so cases stay small.
+
+    The same baseline is filed under each of ``assets``. That is a fixture convenience, not
+    a claim that one baseline suits several devices — real fits learn each asset separately
+    (``Team3ZScoreDetector.fit``); here the point is only that the named assets are
+    judgeable.
+
+    Fitted once and re-filed rather than refitted per asset: the inputs are identical, so
+    every extra ``train_state`` produced a byte-identical state under a different id (28
+    duplicate fits, ~39 ms across the suite).
+    """
     params = Team3Params(
         window_size=window,
         lag_steps=lags,
@@ -54,4 +76,8 @@ def make_detector(
         channels=tuple(channels),
         min_segment_length=min_segment_length,
     )
-    return Team3ZScoreDetector(params, make_state(params, seed=seed))
+    state = make_state(params, asset_id=assets[0], seed=seed)
+    return Team3ZScoreDetector(
+        params,
+        {asset: state.model_copy(update={"asset_id": asset}) for asset in assets},
+    )

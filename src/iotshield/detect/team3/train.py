@@ -67,21 +67,36 @@ _DEFAULT_SOURCE = (
 )
 _DEFAULT_OUT = Path(__file__).resolve().parent / "artifacts" / "skab_zscore.json"
 
+DEFAULT_ASSET_ID = "skab-testbed"
+"""Which device the committed artifact's one model describes.
+
+A model is filed under an asset id and only judges that asset (ADR-0034), so this value is
+load-bearing rather than cosmetic: it is the id carried by ``data/demo/demo_team3.csv`` and
+by every ``skab_*`` evaluation bundle, which is what keeps ``config/demo_team3.yaml`` and
+the committed SKAB benchmarks running against the shipped artifact unchanged.
+"""
+
 
 def train_state(
     frame: pd.DataFrame,
     params: Team3Params,
     *,
+    asset_id: str,
     channels: Sequence[str],
     provenance: str,
     min_mad: float = _DEFAULT_MIN_MAD,
 ) -> Team3State:
-    """Fit the robust baseline + threshold on ``frame`` (assumed all-normal).
+    """Fit one asset's robust baseline + threshold on ``frame`` (assumed all-normal).
 
     ``channels`` is passed separately rather than read from ``params.channels`` because it
     may have been *learned* from the training data when the caller left it unpinned — the
     resolution of "pinned or learned" belongs to the caller, and the answer lands in the
     returned state as this fit's schema (ADR-0022).
+
+    ``asset_id`` names the device this baseline describes. It is an argument rather than
+    something inferred from ``frame`` because by this point the frame is a plain matrix
+    with no asset column — the caller (``detector.fit`` or ``main``) is the layer that
+    still knows which device's rows these are.
     """
     channels = list(channels)
     matrix = frame.reindex(columns=channels)
@@ -110,6 +125,7 @@ def train_state(
     threshold = float(np.percentile(scores, params.percentile))
 
     return Team3State(
+        asset_id=asset_id,
         provenance=provenance,
         channels=channels,
         feature_columns=feature_columns,
@@ -144,6 +160,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT, help="artifact JSON output path")
     parser.add_argument("--window", type=int, default=Team3Params().window_size)
     parser.add_argument("--percentile", type=float, default=Team3Params().percentile)
+    parser.add_argument(
+        "--asset",
+        default=DEFAULT_ASSET_ID,
+        help="which device this model describes; it judges only that asset (ADR-0034)",
+    )
     args = parser.parse_args(argv)
 
     # The committed artifact pins SKAB's channel order explicitly: it ships as a
@@ -156,18 +177,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     state = train_state(
         frame,
         params,
+        asset_id=args.asset,
         channels=SKAB_CHANNELS,
         provenance=(
             f"team3-telemetry-ad robust z-score; trained on the normal prefix "
             f"({prefix_rows}/{total_rows} rows) of SKAB {source_label} (ADR-0012)"
         ),
     )
-    artifact = Team3Artifact(params=params, state=state)
+    artifact = Team3Artifact(params=params, models=[state])
     # newline="\n": see the note in detect/meter/train.py — write_text translates to
     # os.linesep, so a Windows regeneration rewrites every line of a committed artifact.
     args.out.write_text(artifact.model_dump_json(indent=2), encoding="utf-8", newline="\n")
     print(
-        f"wrote {args.out} — {len(state.feature_columns)} features "
+        f"wrote {args.out} — {len(state.feature_columns)} features for {state.asset_id} "
         f"(from {prefix_rows} normal rows), threshold={state.threshold:.4f}"
         f" (p{params.percentile:g})"
     )

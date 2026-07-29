@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from iotshield.detect.team3.train import DEFAULT_ASSET_ID
 from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, write_bundle
 from iotshield.eval.generate.telemetry import to_stub_csv
 from iotshield.eval.truth import GroundTruth
@@ -38,8 +39,15 @@ SKAB_LICENCE = f"GPL-3.0 — (c) Skoltech (waico/SKAB). Not redistributed; see {
 _SEPARATOR = ";"
 _LABEL = "anomaly"
 _TIME = "datetime"
-_ASSET = "skab-testbed"
 _DROP = (_LABEL, "changepoint")
+
+# Imported rather than retyped, because since ADR-0034 the two must agree or the shipped
+# artifact silently judges nothing: a model is filed under an asset id, and an id these
+# bundles do not use makes `team3_zscore` skip every recording and report zeros. Nothing
+# else would catch the drift — SKAB bundles are gitignored (GPLv3), so an absent corpus is
+# a CI *skip*, and the mismatch would surface only as an unexplained empty benchmark.
+# eval -> detect is the legal direction of the dependency arrow (ADR-0021).
+_ASSET = DEFAULT_ASSET_ID
 
 _SKAB_SUBSETS = {
     "skab_valve1": ("valve1", "SKAB valve1 closure faults (one fault per recording)"),

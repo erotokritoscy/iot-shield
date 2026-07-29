@@ -209,13 +209,20 @@ def _unfitted(detector: Detector, why: str, *, attempted: bool = False) -> FitOu
     nothing to judge with, and its row of zeros would otherwise read as "this detector is
     bad" when the truth is that it never ran. So the note says which, and the caller reads
     ``is_fitted`` to drop it rather than let ``detect()`` raise mid-benchmark.
+
+    The note leads with ``method`` because a spec holds several detectors and
+    ``CaseReport.notes`` is a *set*: unnamed, three unfittable detectors deduplicated into
+    one line reading "not fittable", from which a reader cannot tell whether one control
+    opted out or the whole spec did — and those say opposite things about whether the fit
+    protocol did anything. ``method`` rather than the registry name because it distinguishes
+    two presets of one adapter, which is exactly when the collapse was most confusing.
     """
     tail = (
         "; evaluated as configured"
         if is_fitted(detector)
         else ", and it has no trained state to fall back on; it judged nothing"
     )
-    return FitOutcome(detector, attempted=attempted, note=f"{why}{tail}")
+    return FitOutcome(detector, attempted=attempted, note=f"{detector.method}: {why}{tail}")
 
 
 def prepare_detector(
@@ -233,8 +240,8 @@ def prepare_detector(
 
     Every fallback path is reported rather than raised: an unfittable detector, a case with no
     reserved history, or a detector that refuses the data it was given (team3 rejects
-    multi-asset or channel-incomplete input). A benchmark that died because one of several
-    detectors could not be fitted would be far less useful than one that says which ones were.
+    channel-incomplete input). A benchmark that died because one of several detectors could
+    not be fitted would be far less useful than one that says which ones were.
     """
     if protocol is FitProtocol.NONE:
         if is_fitted(detector):
@@ -249,7 +256,8 @@ def prepare_detector(
         return FitOutcome(detector.fit(training), fitted=True, attempted=True)
     except (ValueError, TypeError) as exc:
         # ValueError: a detector refusing its training data is a statement about the data,
-        # not a bug (team3 rejects several assets at once, or a missing trained channel).
+        # not a bug (team3 rejects a missing pinned channel, or a fleet where no asset had
+        # enough history to fit).
         # TypeError: ``runtime_checkable`` matches on method *name* only, so an adapter with
         # a sklearn-shaped ``fit(self, X, y)`` satisfies the isinstance check above and then
         # fails on call. Neither may kill a benchmark twelve cases in — degrade and report.

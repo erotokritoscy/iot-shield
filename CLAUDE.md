@@ -245,9 +245,23 @@ fault) for training and **does not score it**. Rates are defined once, on `score
 per-case column and the headline cannot disagree about a denominator. There is no `holdout`: no bundle format can
 carry a holdout recording, so the option was removed rather than left as a table of zeros.
 
-Note `team3_zscore`'s committed artifact is trained on SKAB's channels, so it cannot judge
-the synthetic corpus (the channel-coverage guard skips it; `--fit-protocol prefix` reports
-why). Compare detectors on `synthetic` with `stub_threshold`, on SKAB with `team3_zscore`.
+Note `team3_zscore`'s committed artifact is fitted **for `skab-testbed`, on SKAB's channels**,
+so it cannot judge the synthetic corpus — and an artifact judges only the asset it was fitted
+for (ADR-0034), so pointing it at any other device is a skip, not a judgment. Both skips are
+*reported* rather than silent: `why_silent` (ADR-0033 D3) distinguishes "no model for this
+asset" from "model present, channels not covered". Compare detectors on `synthetic` with
+`stub_threshold`, on SKAB with `team3_zscore`.
+
+**A baseline describes one device (ADR-0034).** team3's rolling/lag/FFT features read the
+previous row, so they only mean anything inside one asset's contiguous history — `fit`
+therefore learns one model **per asset** and `detect` judges each asset against its own,
+the shape `meter_iforest` already had (ADR-0030 D7). Previously `fit` refused a fleet outright
+while `detect` silently applied one device's median/MAD to every other, and the pooled pivot
+(keyed on `(timestamp, metric)`, no asset) *averaged* three devices' shared channels into one
+that does not exist. Learning `channels` per asset is what lets one artifact cover a
+heterogeneous fleet: a union schema would leave every device missing a channel it never had.
+A fleet fit is not all-or-nothing — an asset with too short a history is skipped and named,
+and only a fleet where nothing fitted raises.
 
 A bench spec for a corpus must declare **one source per input position, in the corpus's order**
 — `CorpusInfo.source_formats` (and `/eval/corpora`) publish that shape, and `/eval/specs`
@@ -412,9 +426,14 @@ on a chain `compute_run` refuses.
 
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
-Its layout is schema v2 — `{params, state}`, the ADR-0022 split made visible in the file:
-`params` is what a human chose, `state` is what fitting computed (baseline, threshold, and
-the channel/feature schema it learned). A v1 file is rejected with instructions to regenerate.
+Its layout is schema **v3** — `{params, models}`, the ADR-0022 split made visible in the file:
+`params` is what a human chose, each entry of `models` is what fitting computed for **one
+asset** (its `asset_id`, baseline, threshold, and the channel/feature schema it learned), the
+same shape the meter artifact carries. `--asset` names the device a fit is filed under and
+defaults to `skab-testbed`, the id the demo CSV and every `skab_*` bundle use. A v1 or v2 file
+is rejected with instructions to regenerate — v2 is refused rather than mechanically upgraded
+because the upgrade would have to *invent* the asset its one `state` belongs to, and a wrong
+guess makes the detector skip every real asset and report nothing (ADR-0034 D7).
 
 ## Layout
 
@@ -584,7 +603,15 @@ printed as copy-pasteable YAML. Naming no artifact yields an *untrained* detecto
 before judging and before any sink) and a **benchmark reports** it. The port suite enforces
 the law behaviourally — build twice differing in one hyperparameter, fit both on the same
 data, the results must differ. Adapters that learn nothing (`stub_threshold`, `log_burst`)
-declare neither field and are unaffected.
+declare neither field and are unaffected. Both adapters that *do* learn key their fitted state
+**by asset** (`meter_iforest` ADR-0030 D7, `team3_zscore` ADR-0034), expose `fitted_assets` /
+`model_for`, and skip an asset they have no model for rather than judging it against another
+device's normal. That is a **convention followed by two adapters, not a declared capability**:
+nothing type-checks the pair and no port law exercises "fit two assets, judge a third", so a
+third learning adapter could silently judge one device against another's baseline — the very
+bug ADR-0034 was written about, which was found by clicking rather than by a test. Making it a
+one-member protocol beside `Stateful` plus a capability-gated port law is the open item
+(ADR-0034 D6 note); until then, copy the two existing adapters deliberately.
 
 `config/bench/team3.yaml` names an artifact (fixed hyperparameters, sweepable only across
 *detectors*); `config/bench/team3_scratch.yaml` names hyperparameters and no artifact, so it

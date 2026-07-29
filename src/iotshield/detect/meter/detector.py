@@ -27,10 +27,11 @@ needs 1,656 fits, produced by fitting on each meter's own clean history at deplo
 periodically after). The committed artifact exists so the demo and the tests have a fitted
 model to run; it is not a product-wide default and does not pretend to be.
 
-Contrast with ``fit`` elsewhere: team3's ``fit`` **refuses** more than one asset, because
-its rolling features assume one contiguous history. Ours accepts a fleet and fits each
-meter separately — the same underlying rule (never interleave two assets), reached from
-the other side.
+``team3_zscore`` now does the same (ADR-0034): fitted state keyed by asset, an asset with
+no model skipped rather than judged against another device's normal. One model per asset is
+the house shape for a learning adapter, not this adapter's quirk. (It reached that shape
+from the other side — its ``fit`` used to *refuse* a fleet outright while its ``detect``
+silently applied one baseline to all of them.)
 
 Provenance: the features, profile and attribution are vendored from Panayiotis Cyprus's
 *ML-Based Anomaly and Attack Detection for Smart Meter Telemetry* (commit ``d3c61a6``) —

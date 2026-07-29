@@ -168,7 +168,7 @@ def _team3_zscore(
         },
         loaded.params if loaded else None,
     )
-    return Team3ZScoreDetector(params, loaded.state if loaded else None)
+    return Team3ZScoreDetector(params, loaded.fitted if loaded else None)
 
 
 def _log_burst(

@@ -148,11 +148,12 @@ class TestOptionality:
         assert outcome.note is not None and "no clean prefix" in outcome.note
 
     def test_a_refused_fit_degrades_with_the_reason(self) -> None:
-        # team3 refuses several assets at once: rolling/lag features assume one asset's
-        # contiguous history. That is a statement about the data, not a crash.
-        training = [event(i, asset="a") for i in range(30)] + [
-            event(i, asset="b") for i in range(30)
-        ]
+        # A detector refusing its training data is a statement about the data, not a crash.
+        # Here every reading is the constant `event()` default, so the baseline is degenerate
+        # (MAD at the floor) and team3 declines to fit it. This used to be spelled with two
+        # assets, back when team3 refused a fleet outright; since ADR-0034 it fits per asset,
+        # so a fleet is no longer a refusal and the degenerate data is what does the work.
+        training = [event(i) for i in range(30)]
         outcome = prepare_detector(
             fittable_detector(), protocol=FitProtocol.PREFIX, training=training
         )
@@ -198,11 +199,10 @@ class TestFitting:
 
     def test_fitting_leaves_the_original_untouched(self) -> None:
         original = fittable_detector()
-        assert original._state is not None
-        before = original._state.threshold
+        before = original.model_for("pump-02").threshold
         training = [event(i, value=10.0 + (i % 5) * 2.0) for i in range(80)]
         prepare_detector(original, protocol=FitProtocol.PREFIX, training=training)
-        assert original._state.threshold == before
+        assert original.model_for("pump-02").threshold == before
 
 
 def test_holdout_is_not_offered_at_all() -> None:
