@@ -19,6 +19,7 @@ from iotshield.detect import (
     Fittable,
     FlowBurstDetector,
     LogBurstDetector,
+    RuleDetector,
     StubThresholdDetector,
 )
 from iotshield.detect._fitted import NotFitted, is_fitted
@@ -117,6 +118,14 @@ def flow_event(offset_s: int, peer: str, port: int = 23, bytes_out: int = 44) ->
 # 25 distinct destinations in 25s: one fan-out episode, well past the boundary of 20.
 _FLOW_FANOUT_EVENTS = [flow_event(index, f"203.0.113.{index}") for index in range(25)]
 
+# The same sweep, which the packaged `telnet-outbound-propagation` rule matches on every
+# flow (port 23, outbound), plus one bulk transfer that trips `high-upload-volume`. Two
+# rules firing means the case exercises the per-rule loop, not just a single predicate.
+_RULE_FLOW_EVENTS = [
+    *_FLOW_FANOUT_EVENTS,
+    flow_event(60, "203.0.113.200", port=443, bytes_out=250_000),
+]
+
 CASES = [
     pytest.param(
         DetectorCase(
@@ -184,6 +193,17 @@ CASES = [
         ),
         id="meter-iforest",
     ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: RuleDetector(lane=Lane.FLOW),
+            triggering_events=_RULE_FLOW_EVENTS,
+            # No distinguishing_params: a rule learns nothing from data — its thresholds are
+            # written down by a human — so it declares neither Fittable nor hyperparameters
+            # and skips the ADR-0022 law tests, the same position log_burst is in.
+            registry_name="rules",
+        ),
+        id="rules",
+    ),
 ]
 
 
@@ -233,6 +253,22 @@ def test_foreign_lane_events_are_ignored(case: DetectorCase) -> None:
 
 def test_empty_input_yields_nothing(case: DetectorCase) -> None:
     assert case.make().detect([]) == []
+
+
+def test_every_detection_explains_itself(case: DetectorCase) -> None:
+    """ADR-0032 D7: one analyst-readable sentence per detection, from every adapter.
+
+    Enforced here rather than asserted in prose because that is the difference between a
+    convention and a law — CLAUDE.md and the ADR both say "every detector", and four of six
+    did until this test existed. The supporting detail stays per-detector (a z-score, a
+    feature attribution and a peer count are genuinely different things); only the headline
+    is universal, because it is the one thing every consumer can render.
+    """
+    for detection in case.make().detect(case.triggering_events):
+        explanation = detection.evidence.get("explanation")
+        assert isinstance(explanation, str) and explanation.strip(), (
+            f"{detection.method} emitted a detection with no 'explanation' in evidence"
+        )
 
 
 def test_fitting_yields_a_detector_that_still_obeys_every_law(case: DetectorCase) -> None:

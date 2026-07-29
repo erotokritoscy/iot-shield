@@ -1,0 +1,43 @@
+# Benchmark spec: the rule detector on the FLOW lane (ADR-0032 D8).
+#
+# The integration's answer to "does it work?" being a screenshot. `fleet_scan` is a labelled
+# corpus that already exists, most of it innocent devices, and it contains an exfiltration
+# recording whose chunks are 1.2 MB against a busiest-innocent-device baseline of 2.2 kB. So
+# the ported `high-upload-volume` rule can be *measured* rather than demonstrated — and
+# measured against `config/bench/flow.yaml`, which asks the same corpus the same question
+# statistically:
+#
+#   uv run python -m iotshield.eval --corpus fleet_scan \
+#       --spec config/bench/rules_flow.yaml --spec config/bench/flow.yaml
+#
+# Read the two rows as a comparison of FAMILIES, not of implementations. The rule fires on
+# any single conversation above a fixed size; `flow_burst:exfiltration` fires on sustained
+# aggregate volume. They disagree about the scanning recordings, where a signature written for
+# one phenomenon says nothing about another — which is the honest shape of the trade-off, and
+# the reason both ship.
+#
+# A LIMITATION THIS SPEC MAKES VISIBLE: the sweep machinery tunes a *detector's* registry
+# params, and a rule's threshold lives inside a YAML file, so `--sweep` cannot reach it. The
+# 10000 in `high-upload-volume` is therefore a fixed input to this measurement, not something
+# the harness optimizes. Tuning it means editing the rule and re-running (ADR-0032 D9).
+#
+# NOTE THE MISSING `assets:` BLOCK, absent on purpose for the same reason as every other flow
+# spec: ADR-0021 D7 records that `asset_weight` is circular, since criticality is something we
+# type into a config. With nothing registered, every device auto-discovers at the same weight
+# and any movement in the ranking metrics cannot be our own thumb on the scale. A test asserts
+# this block stays absent.
+
+source_format: flow-csv
+normalizer: flow
+
+detectors:
+  - name: rules
+    params:
+      lane: flow
+      # `ruleset` unset: the library packaged with the product, which is what we ship and
+      # therefore what is worth measuring.
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5

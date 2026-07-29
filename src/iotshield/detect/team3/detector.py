@@ -240,7 +240,13 @@ class Team3ZScoreDetector:
             channel = self._channel_by_feature[name]
             per_channel[channel] = max(per_channel.get(channel, 0.0), float(z))
         top = sorted(per_channel.items(), key=lambda kv: kv[1], reverse=True)[:_TOP_CHANNELS]
+        leader = f"{top[0][0]} (z={top[0][1]:.1f})" if top else "no dominant channel"
         return {
+            # The analyst-readable headline every detector emits (ADR-0032 D7); the fields
+            # below are its supporting detail.
+            "explanation": (
+                f"{length} consecutive reading(s) far from this asset's baseline, led by {leader}"
+            ),
             "peak_timestamp": peak_ts.isoformat(),
             "peak_score": float(peak_score),
             "num_anomalous_points": length,

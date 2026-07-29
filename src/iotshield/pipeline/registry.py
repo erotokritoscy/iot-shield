@@ -29,6 +29,7 @@ from iotshield.detect import (
     FlowBurstDetector,
     LogBurstDetector,
     MeterIForestDetector,
+    RuleDetector,
     StubThresholdDetector,
     Team3ZScoreDetector,
 )
@@ -40,6 +41,11 @@ from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
 from iotshield.detect.meter import MeterParams
 from iotshield.detect.meter.artifact import load_artifact as _load_meter_artifact
 from iotshield.detect.meter.detector import CAPABILITY as _METER_CAPABILITY
+from iotshield.detect.rules.detector import DEFAULT_LANE as _DEFAULT_RULES_LANE
+from iotshield.detect.rules.detector import (
+    DEFAULT_MERGE_GAP_MINUTES as _DEFAULT_RULES_MERGE_GAP,
+)
+from iotshield.detect.rules.detector import capability as _rules_capability
 from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.artifact import load_artifact
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
@@ -221,6 +227,31 @@ def _flow_burst(
     )
 
 
+def _rules(
+    lane: Literal["telemetry", "log", "flow"] = _DEFAULT_RULES_LANE.value,
+    ruleset: str | None = None,
+    merge_gap_minutes: float = _DEFAULT_RULES_MERGE_GAP,
+) -> RuleDetector:
+    """Build a rule detector for one lane over one rule set (ADR-0032 D3).
+
+    ``lane`` selects which of the rule set's rules this instance evaluates — the Detector
+    port gives a detector one lane, so a rule set spanning network and logs is two
+    configured entries, not two adapters. The Literal is declaration rather than enforcement
+    (params arrive untyped from YAML; ``Lane()`` is what rejects a bad value), so ``/modules``
+    can offer the closed vocabulary as a choice instead of a free-text box.
+
+    ``ruleset`` names a directory; left unset, the packaged library ships with the product.
+    A malformed rule, an unknown field, or a lane the rule set cannot feed raises here at
+    construction — caught and attributed by ``_construct`` — so a bad rule fails named,
+    before the run, rather than as a detector that quietly finds nothing.
+    """
+    return RuleDetector(
+        lane=Lane(lane),
+        ruleset=str(ruleset) if ruleset else None,
+        merge_gap_minutes=float(merge_gap_minutes),
+    )
+
+
 def _meter_normalizer(
     meter_type: Literal["water", "electricity"] | None = None,
     source_timezone: str | None = None,
@@ -291,6 +322,7 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         params_type=MeterParams,
         artifact_param="artifact",
     ),
+    "rules": AdapterSpec(_rules, _rules_capability),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {

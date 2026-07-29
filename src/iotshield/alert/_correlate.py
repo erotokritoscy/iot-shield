@@ -10,9 +10,19 @@ and single-asset.
 """
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from iotshield.contracts import AlertSeverity, DetectionResult, PrioritizedAlert
+from iotshield.enrichment import Enrichment
+
+UNCLASSIFIED = "unknown"
+"""What an alert's threat class says when nothing in its bucket claims to know.
+
+Named here rather than typed as a literal in each engine, and deliberately equal to
+``PrioritizedAlert.threat_class``'s own default (``contracts/models.py``) — the contract
+owns the value, this owns the fact that both engines use it.
+"""
 
 _SEVERITY_FLOOR = [
     (90.0, AlertSeverity.EMERGENCY),
@@ -37,6 +47,89 @@ def severity_from_priority(priority: float) -> AlertSeverity:
         if priority >= floor:
             return severity
     return AlertSeverity.LOW
+
+
+def promote_enrichment(group: Sequence[DetectionResult]) -> Enrichment | None:
+    """The alert's threat classification, chosen from the detections that carry one.
+
+    Why the alert layer reads inside ``evidence`` at all (ADR-0032 D4). Until now an engine
+    read only universal fields — score, threshold, lane, method — and knew nothing about any
+    particular detector. ``threat_class`` and ``recommended_action`` cannot be filled that
+    way: they are content, and only the detector that made the judgment knows it. So the
+    knowledge rides across the seam as a *typed* record with its own read path, which is why
+    this function names no evidence keys.
+
+    Two rules, both product decisions rather than mechanics:
+
+    - **``threat_class`` is single, so one claim must win**: the highest precedence tier
+      (an authored rule beats a detector preset beats an inference), then the strongest
+      detection within that tier. Ties break on position in the group, which is insertion
+      order from bucketing, so the choice is deterministic.
+    - **``suggested_actions`` are unioned** across every contributing detection. An analyst
+      looking at a device showing both failed logins *and* a bulk outbound transfer wants
+      both sets of next steps; the combination is more informative than either alone.
+
+    Returns ``None`` when nothing in the bucket carries enrichment — the normal case for
+    the unsupervised detectors — so the caller keeps its existing fallback text.
+    """
+    carried = [
+        (enrichment, detection)
+        for detection in group
+        if (enrichment := Enrichment.from_detection(detection)) is not None
+    ]
+    if not carried:
+        return None
+    # Sorted rather than `min`-ed because the ORDER is load-bearing twice over: the winner is
+    # first, and the action union is capped, so precedence also decides whose next steps
+    # survive the cap. Python's sort is stable, so equal keys keep their order within the
+    # group (insertion order from bucketing) and the result stays deterministic.
+    carried.sort(key=lambda pair: (pair[0].precedence, -detection_margin(pair[1])))
+    winner = carried[0][0]
+    return winner.with_union_of(enrichment for enrichment, _ in carried)
+
+
+@dataclass(frozen=True)
+class Explanation:
+    """The three analyst-facing fields an alert carries beyond its score.
+
+    Bundled because they are decided together and by the same rule: either an enrichment
+    won the bucket and supplies all three, or none did and all three fall back.
+    """
+
+    threat_class: str
+    rationale: str
+    recommended_action: str
+
+
+def narrate(
+    group: Sequence[DetectionResult],
+    *,
+    rationale: str,
+    asset_id: str,
+    window_start: datetime,
+    strongest: DetectionResult,
+) -> Explanation:
+    """Turn a bucket's promoted enrichment into what the analyst reads.
+
+    Shared with ``severity_from_priority`` and ``promote_enrichment`` for the same reason:
+    what an alert *says* is a product convention, not a property of whichever scoring
+    formula produced its number (ADR-0032 D5). Leaving it in each engine had already let
+    the two copies drift apart stylistically while saying the same thing, and it re-typed
+    ``PrioritizedAlert``'s own ``threat_class`` default as a literal in two adapters.
+    """
+    fallback_action = (
+        f"Inspect {asset_id} around {window_start.isoformat()}; review {strongest.method} evidence."
+    )
+    enrichment = promote_enrichment(group)
+    if enrichment is None:
+        return Explanation(UNCLASSIFIED, rationale, fallback_action)
+    return Explanation(
+        threat_class=enrichment.threat_class,
+        rationale=f"{rationale} {enrichment.rationale_clause()}",
+        # A rule may name a threat without suggesting a next step; the generated line is
+        # still better than an empty field.
+        recommended_action=enrichment.action_text() or fallback_action,
+    )
 
 
 def _floor_to_bucket(moment: datetime, bucket: timedelta) -> datetime:

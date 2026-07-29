@@ -1,0 +1,40 @@
+# Ported from AntoniaVoutouri/iot-ot-alert-correlation,
+# rules/openssh_possible_breakin_rule.yml (rule-ssh-002), and RE-EXPRESSED rather than
+# re-addressed. Hers matches `event.activity == possible_break_in_attempt`, a semantic
+# classification produced by her OpenSSH normalizer from a template table. Our syslog
+# normalizer keeps `(timestamp, asset, severity, message)` and classifies nothing, so the
+# same signal is expressed as the message text sshd actually writes. The MITRE mapping is
+# hers, unchanged.
+#
+# This is the rule that best justifies the whole adapter. The line is severity INFO and
+# there is exactly one of it, so "unusual severity" and "unusual rate" are both blind to
+# it; only a signature written by someone who knew it mattered will ever catch it.
+id: ssh-possible-break-in
+title: OpenSSH Possible Break-In Attempt
+lane: log
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  sshd reports that a client's reverse DNS does not map back to its address and flags it as
+  a possible break-in attempt. Common in front of scanning and credential attacks.
+one_line: An sshd log line contains "POSSIBLE BREAK-IN ATTEMPT".
+severity_hint: medium
+confidence: high
+
+detection:
+  selection:
+    log.message:
+      operator: contains
+      value: POSSIBLE BREAK-IN ATTEMPT
+  condition: selection
+
+mitre:
+  - tactic: Discovery
+    technique: Network Service Discovery
+    technique_id: T1046
+
+suggested_actions:
+  - Review the source IP for other SSH activity against this host.
+  - Check whether the same source later attempts authentication.
+  - Investigate the reverse DNS mismatch for the source address.

@@ -1,0 +1,55 @@
+# Authored here (ADR-0032). Exercises an OR CONDITION over two named selections, and is the
+# worked example of why `confidence` exists as a separate knob from `severity_hint`.
+#
+# A remote administration session reaching a device from OUTSIDE the monitored network is
+# worth surfacing — and is also, quite often, an administrator doing their job. So it ships
+# high-ish in severity and LOW in confidence, which places it in the queue without letting
+# it dominate. Note that `inbound` means the peer is outside `home_networks`: an admin
+# connecting from inside the fleet orients as `internal` and does not match.
+#
+# IT ADDRESSES `asset_port`, NOT `peer_port`, and the difference is the whole reason the
+# field list spells this out. Every flow field is asset-RELATIVE (ADR-0023 D2): on a
+# connection the device RECEIVED, the service port is the port the device EXPOSED, so 22
+# lands on `asset_port`. Written the other way round the rule reads perfectly and can never
+# fire — which is exactly the silent failure the vocabulary exists to prevent, met here by
+# its own author.
+id: inbound-remote-admin
+title: Inbound Remote Administration From Outside the Network
+lane: flow
+signal_basis: observable
+rule_type: single_event
+integration_status: production
+description: >-
+  A host outside the monitored network opened an SSH or telnet session to a monitored
+  device. Externally reachable remote administration is a standard initial-access path onto
+  an OT segment.
+one_line: An external host connected inbound to the device's port 22 or port 23.
+severity_hint: high
+confidence: low
+
+detection:
+  selection_ssh:
+    flow.asset_port:
+      operator: "=="
+      value: 22
+    flow.direction:
+      operator: "=="
+      value: inbound
+  selection_telnet:
+    flow.asset_port:
+      operator: "=="
+      value: 23
+    flow.direction:
+      operator: "=="
+      value: inbound
+  condition: selection_ssh OR selection_telnet
+
+mitre:
+  - tactic: Initial Access
+    technique: External Remote Services
+    technique_id: T1133
+
+suggested_actions:
+  - Confirm the session was authorized and originated from an expected address.
+  - Check whether the device should be reachable from outside the network at all.
+  - Review authentication logs on the device for the same window.

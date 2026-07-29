@@ -47,6 +47,13 @@ class StubThresholdDetector:
                             threshold=self._threshold,
                             event_kind=EventKind.POINT,
                             evidence={
+                                # The headline every detector emits (ADR-0032 D7). Even the
+                                # reference adapter owes it: it is a port-suite law, and a
+                                # law the simplest implementation may skip is not a law.
+                                "explanation": (
+                                    f"{event.metric or 'value'} {event.value:g} is above the"
+                                    f" configured threshold of {self._threshold:g}"
+                                ),
                                 "metric": event.metric,
                                 "value": event.value,
                                 "event_id": str(event.event_id),

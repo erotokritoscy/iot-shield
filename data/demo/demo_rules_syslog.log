@@ -1,0 +1,4 @@
+<38>1 2026-07-07T12:01:12Z 10.0.0.24 sshd 4402 - - reverse mapping checking getaddrinfo for scan-node-7.example.net [198.51.100.10] failed - POSSIBLE BREAK-IN ATTEMPT!
+<38>1 2026-07-07T12:01:40Z 10.0.0.24 sshd 4405 - - Connection closed by 198.51.100.10 port 51110 [preauth]
+<34>1 2026-07-07T12:02:20Z 10.0.0.24 watchdog 900 - - firmware integrity check failed for partition rootfs
+<85>1 2026-07-07T12:03:05Z 10.0.0.11 systemd - - - Started Session 41 of user admin.
