@@ -9,6 +9,7 @@ its per-line ``parse_line``; adapters that fan one line into many events, or tha
 parse a whole-file format, don't use this.
 """
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -16,6 +17,25 @@ from pydantic import ValidationError
 
 from iotshield.contracts import MalformedRecord, NormalizedEvent
 from iotshield.normalize.port import NormalizeResult
+
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+
+def split_lines(text: str) -> list[str]:
+    """Split input into lines on REAL newlines only — the record boundary, nothing else.
+
+    ``str.splitlines`` also breaks on ``\\x0b \\x0c \\x1c \\x1d \\x1e \\x85 \\u2028 \\u2029``,
+    every one of which can occur legally *inside* a record: U+2028 is an unescaped-legal
+    character in a JSON string (the well-known "JSON is not a JavaScript subset" hazard) and
+    form feed / NEL turn up in real syslog payloads. Splitting there breaks two of the port's
+    laws at once — the record becomes neither one event nor *one* MalformedRecord, and ``raw``
+    stops being the verbatim input — and the reject reason ("not valid JSON: Unterminated
+    string") blames the operator's data for our parsing (ADR-0033).
+
+    Shared by every whole-file reader, not just this loop, so the three normalizers that
+    scan text cannot disagree about where a record ends.
+    """
+    return _LINE_BREAK.split(text)
 
 
 class LineParseError(Exception):
@@ -48,7 +68,7 @@ def normalize_linewise(
             MalformedRecord(raw=line, error=error, source_format=source_format, origin=origin)
         )
 
-    for line in text.splitlines():
+    for line in split_lines(text):
         if not line.strip():
             continue
         try:

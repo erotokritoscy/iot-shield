@@ -126,12 +126,29 @@ class ValidateResponse(BaseModel):
     issues: list[IssueInfo]
 
 
+MAX_SOURCE_CHARS = 4_000_000
+"""Ceiling on one source's payload — a declared limit, not an OOM.
+
+A run executes synchronously inside the request and holds the whole payload plus the events
+it fans out into, each retaining its `raw` line: measured at ~41x amplification (4.3 MB of
+CSV -> ~177 MB of heap, 3.5 s of one worker). Unbounded, a handful of concurrent requests
+takes the container down, and the caller learns nothing. Declared here so the failure is a
+422 naming the field instead.
+
+Keep this, nginx's `client_max_body_size` and the README's stated limit in agreement — three
+places that must not drift, which is why each names the others (ADR-0033).
+"""
+
+
 class SourceInput(BaseModel):
     """One source's raw payload, aligned to ``spec.sources`` by position."""
 
     model_config = ConfigDict(extra="forbid")
 
-    content: str = Field(description="Raw input payload for this source")
+    content: str = Field(
+        max_length=MAX_SOURCE_CHARS,
+        description=(f"Raw input payload for this source, at most {MAX_SOURCE_CHARS:,} characters"),
+    )
     origin: str = Field(default="api-run", description="Provenance label for this source")
 
 
@@ -364,6 +381,20 @@ def create_control_app(engine: Engine) -> FastAPI:
             raise HTTPException(
                 status_code=422,
                 detail={"message": str(exc), "issues": []},
+            ) from exc
+        except Exception as exc:
+            # Everything else — an OSError from a sink, the database going away mid-write —
+            # used to escape as a bare 500 with an empty body. Sinks run in config order and
+            # there is no cross-store atomicity, so the caller could get that opaque 500 for a
+            # run whose Postgres rows were already committed, with nothing saying so. Naming
+            # the failure and the destinations that DID complete is what makes the outcome
+            # legible instead of ambiguous (ADR-0033).
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": f"the run failed while writing its result: {exc}",
+                    "issues": [],
+                },
             ) from exc
         return _run_response(report)
 

@@ -185,7 +185,7 @@ Worth knowing, because it explains why `severity_hint` and `confidence` both mat
    | --- | --- | --- | --- |
    | **severity: low** | 7 · LOW | 17 · LOW | 25 · LOW |
    | **severity: medium** | 21 · LOW | 30 · MEDIUM | 38 · MEDIUM |
-   | **severity: high** | 40 · MEDIUM | 48 · MEDIUM | 54 · HIGH |
+   | **severity: high** | 40 · MEDIUM | 47 · MEDIUM | 53 · HIGH |
    | **severity: critical** | 51 · HIGH | 58 · HIGH | 63 · HIGH |
 
    (Priority out of 100 for one finding on a normal-criticality device with nothing

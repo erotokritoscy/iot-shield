@@ -22,6 +22,7 @@ from iotshield.contracts import Asset, DetectionResult, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import (
     case_timeline,
     case_variance,
+    finding_of,
     severity_bar,
     spec_scores,
     sweep_curve,
@@ -89,25 +90,6 @@ def _alert_label(alert: PrioritizedAlert) -> str:
         f"{alert.severity.value.upper()} {alert.priority_score:.1f} — {alert.asset_id}"
         f" @ {alert.window_start:%Y-%m-%d %H:%M}"
     )
-
-
-def _finding(detection: DetectionResult) -> str:
-    """What one detection is *called* — the sentence it carries, not the detector's name.
-
-    ``method`` used to be a good name by accident: one detector meant one kind of finding.
-    ADR-0032 D3 ends that deliberately (the port pins ``method`` to the adapter's lane, so
-    six rules on the flow lane all report ``rules:flow`` and the firing rule rides in
-    ``Enrichment.origin``), which left several rows on one alert differing only in score.
-    Labelling by the sentence every detection is required to carry (D7) fixes it for every
-    detector at once rather than special-casing ``rules:*``.
-
-    Falls back to the method: the law binds what we *produce*, and a store populated before
-    ADR-0032 holds detections that predate it.
-    """
-    explanation = detection.evidence.get("explanation")
-    if isinstance(explanation, str) and explanation.strip():
-        return explanation.strip()
-    return detection.method
 
 
 def _techniques(detections: Sequence[DetectionResult]) -> list[MitreTechnique]:
@@ -189,7 +171,7 @@ def triage_page(client: ApiClient) -> None:
                 "threshold": [d.threshold for d in evidence],
                 "window start": [d.window_start for d in evidence],
                 "window end": [d.window_end for d in evidence],
-                "finding": [_finding(d) for d in evidence],
+                "finding": [finding_of(d) for d in evidence],
             }
         ),
         hide_index=True,
@@ -199,7 +181,7 @@ def triage_page(client: ApiClient) -> None:
     # score. It reached the API but nothing rendered it, so the analyst never saw it.
     for detection in evidence:
         if detection.evidence:
-            with st.expander(f"{_finding(detection)} — {detection.method}"):
+            with st.expander(f"{finding_of(detection)} — {detection.method}"):
                 st.json(detection.evidence)
 
 
@@ -247,7 +229,7 @@ def assets_page(client: ApiClient) -> None:
                     # Last, so the numeric block stays adjacent, but present: `method` no
                     # longer identifies a finding, so without this the table lists several
                     # rows that differ only in score.
-                    "finding": [_finding(d) for d in detections],
+                    "finding": [finding_of(d) for d in detections],
                 }
             ),
             hide_index=True,
@@ -986,11 +968,22 @@ def _shipped_widgets(corpus_name: str) -> tuple[list[dict[str, Any]], list[str]]
     server derives (``eval.bench``). Offering the rest would put a guaranteed alignment failure
     in a dropdown.
     """
-    fitting = [item for item in get_control_client().eval_specs() if corpus_name in item.corpora]
+    published = get_control_client().eval_specs()
+    # A spec the server could not load is published with its reason rather than omitted, so
+    # say so here. Dropping it silently is what let a typo an operator introduced while the
+    # server was running read as "this corpus has no matching spec" — blaming the corpus for
+    # a broken file (ADR-0033).
+    broken = [
+        f"Bench spec `{item.name}` could not be loaded: {item.error}"
+        for item in published
+        if item.error
+    ]
+    fitting = [item for item in published if item.spec is not None and corpus_name in item.corpora]
     if not fitting:
         return [], [
+            *broken,
             f"No committed bench spec matches `{corpus_name}`'s input shape. Compose one "
-            "instead, or add a spec whose `sources` match."
+            "instead, or add a spec whose `sources` match.",
         ]
     chosen = st.multiselect(
         "Bench specs",
@@ -1007,7 +1000,8 @@ def _shipped_widgets(corpus_name: str) -> tuple[list[dict[str, Any]], list[str]]
         # one belongs in the compose mode, where the hyperparameters are on screen (ADR-0022).
         {"label": item.name, "spec": item.spec.model_dump(mode="json"), "sweep": {}}
         for item in picked
-    ], []
+        if item.spec is not None
+    ], broken
 
 
 def _compose_widgets(
@@ -1194,8 +1188,8 @@ def _render_report(report: "EvaluationReport") -> None:
     st.dataframe(summary, width="stretch", hide_index=True)
     st.caption(
         "`event_f1` is what an analyst experiences (one finding per fault); `point_f1` is "
-        "what papers report (per-row coverage). `compression_ratio` is detections-per-incident "
-        "over alerts-per-incident — what the correlation stage absorbed. An empty cell means "
+        "what papers report (per-row coverage). `compression_ratio` is scoreable detections "
+        "over scoreable alerts — what the correlation stage absorbed. An empty cell means "
         "*undefined*, not zero — a clean recording has no faults to recall."
     )
 
@@ -1387,7 +1381,18 @@ def main() -> None:
         compose_page(get_control_client())
         return
     if mode == "Evaluate":
-        evaluate_page(Path(os.environ.get(EVAL_REPORT_ENV, DEFAULT_EVAL_REPORT)))
+        report_path = Path(os.environ.get(EVAL_REPORT_ENV, DEFAULT_EVAL_REPORT))
+        # Boundary around the WHOLE page, not around its first call. evaluate_page guards
+        # `_eval_catalogue` and `_run_benchmark` individually, but the two spec-composition
+        # calls between them were unguarded — and one of those is the DEFAULT mode, so a
+        # restart of pipeline-api mid-session raised a raw traceback where ADR-0008 requires
+        # a friendly error, and the saved-report fallback that exists for exactly this never
+        # ran. Guarding here rather than adding a third inner try keeps one boundary for the
+        # page, which is what stops the next call being forgotten again (ADR-0033).
+        try:
+            evaluate_page(report_path)
+        except _API_ERRORS:
+            _saved_report_fallback(report_path)
         return
 
     page = st.sidebar.radio("View", ["Triage", "Assets & telemetry", "Data health"])

@@ -111,7 +111,8 @@ class LaneCounts:
     Per lane because a lane's instants are its own (``truth.AssetTruth``) and, since ADR-0028
     D2, so are its incidents. Pooling these into one set of point counts weights each modality
     by **how fast it samples**, which is a corpus-authoring decision masquerading as a
-    measurement: on ``device_trimodal`` telemetry carries 2,700 of 3,597 clock entries, so a
+    measurement: on ``device_trimodal`` FLOW carries 1,321 of 2,918 clock entries and telemetry
+    1,440 (the split moves whenever a device profile does — ADR-0028 D5/D7), so a
     pooled point precision is a telemetry number wearing a corpus-wide name.
 
     Kept as counts rather than rates so pooling stays addition, the same reason ``Counts``

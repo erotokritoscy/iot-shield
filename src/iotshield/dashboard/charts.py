@@ -23,6 +23,30 @@ MUTED = "#898781"
 BASELINE = "#c3c2b7"
 
 
+def finding_of(detection: DetectionResult) -> str:
+    """What one detection is *called* — the sentence it carries, not the detector's name.
+
+    ``method`` used to be a good name by accident: one detector meant one kind of finding.
+    ADR-0032 D3 ends that deliberately (the port pins ``method`` to the adapter's lane, so
+    six rules on the flow lane all report ``rules:flow`` and the firing rule rides in
+    ``Enrichment.origin``), which left several rows on one alert differing only in score.
+    Labelling by the sentence every detection is required to carry (D7) fixes it for every
+    detector at once rather than special-casing ``rules:*``.
+
+    Falls back to the method: the law binds what we *produce*, and a store populated before
+    ADR-0032 holds detections that predate it.
+
+    Lives here rather than in ``app.py`` because the chart tooltips need it too — and being
+    private to the page module is exactly how the commit that added this label reached the
+    table and the disclosure and missed the chart, leaving one surface still naming a
+    detector where every other named the finding (ADR-0033).
+    """
+    explanation = detection.evidence.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        return explanation.strip()
+    return detection.method
+
+
 def _utc_wallclock(ts: datetime) -> datetime:
     # Vega-Lite renders a naive datetime as-is (no timezone conversion), while a
     # tz-aware one is shifted into the viewer's local time — which would disagree
@@ -77,25 +101,27 @@ def telemetry_timeline(
                 "start": [_utc_wallclock(d.window_start) for d in spans],
                 "end": [_utc_wallclock(d.window_end) for d in spans],
                 "method": [d.method for d in spans],
+                "finding": [finding_of(d) for d in spans],
             }
         )
         layers.append(
             alt.Chart(bands)
             .mark_rect(color=CRITICAL, opacity=0.15)
-            .encode(x="start:T", x2="end:T", tooltip=["start:T", "end:T", "method:N"])
+            .encode(x="start:T", x2="end:T", tooltip=["start:T", "end:T", "finding:N", "method:N"])
         )
     if points:
         rules = pd.DataFrame(
             {
                 "timestamp": [_utc_wallclock(d.window_start) for d in points],
                 "method": [d.method for d in points],
+                "finding": [finding_of(d) for d in points],
                 "score": [d.score for d in points],
             }
         )
         layers.append(
             alt.Chart(rules)
             .mark_rule(color=CRITICAL, strokeWidth=2, opacity=0.6)
-            .encode(x="timestamp:T", tooltip=["timestamp:T", "method:N", "score:Q"])
+            .encode(x="timestamp:T", tooltip=["timestamp:T", "finding:N", "method:N", "score:Q"])
         )
     combined = cast(alt.LayerChart, alt.layer(*layers)).properties(height=280)
     return _recessive(combined)

@@ -5,6 +5,7 @@ import { Button, Field, RadioGroup, Select } from "@/components/ui/controls";
 import {
   Collapsible,
   CommandBlock,
+  ErrorState,
   JsonBlock,
   Notice,
   PageHeader,
@@ -184,6 +185,21 @@ export function EvaluatePage() {
       <>
         {header}
         <SavedReportFallback />
+      </>
+    );
+  }
+  // The API answered and the answer was unusable — a 5xx, or a response the zod schemas
+  // rejected. Show what actually failed instead of the "unreachable, set the flag" banner,
+  // which named a remedy the operator had already applied and hid the one fact that
+  // identifies version drift: which URL, and which field (ADR-0031 D4, ADR-0033).
+  if (plane.broken) {
+    return (
+      <>
+        {header}
+        <ErrorState
+          title="The evaluation plane answered, but the response could not be used"
+          detail={describeError(plane.query.error)}
+        />
       </>
     );
   }

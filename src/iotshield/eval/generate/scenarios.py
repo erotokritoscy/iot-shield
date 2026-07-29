@@ -78,7 +78,8 @@ def _fleet(*extra: Device) -> tuple[Device, ...]:
     The four named devices are not scenery — each one is a *control* the flow detector's
     presets make a claim about, and none has ever been measured:
 
-    - ``GATEWAY`` sends thirty flows to ONE destination. Volume is not fan-out.
+    - ``GATEWAY`` sends twenty flows per minute to ONE destination (300 per recording).
+      Volume is not fan-out. The 'thirty' this once claimed belongs to data/demo/demo_flow.log.
     - ``SERVER`` is dialled *into* by many peers. Inbound is not fan-out.
     - ``RESOLVER`` is legitimately chatty, sitting just *under* the 20-peer boundary.
     - ``MIRROR`` is legitimately chatty *above* it, so the corpus measures what a fleet-wide

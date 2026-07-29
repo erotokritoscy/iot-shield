@@ -13,7 +13,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { pipelineApi, readApi } from "./api/client";
-import { isPlaneAbsent } from "./api/http";
+import { isPlaneAbsent, isUnreachable } from "./api/http";
 import type { Lane } from "./api/types";
 
 /**
@@ -101,6 +101,13 @@ export interface EvalPlane {
   readonly loading: boolean;
   /** The plane is enabled but the Pipeline API did not answer: the upload fallback (D6). */
   readonly unreachable: boolean;
+  /**
+   * The API answered, and the answer was unusable: a 5xx, an auth redirect, or a response
+   * the zod schemas rejected. Distinct from `unreachable` because the remedy is opposite —
+   * "wait and retry" versus "these two versions disagree" — and ADR-0031 D4 promises drift
+   * fails loudly rather than reading as an outage.
+   */
+  readonly broken: boolean;
   readonly query: UseQueryResult<Awaited<ReturnType<typeof pipelineApi.corpora>>, Error>;
 }
 
@@ -119,11 +126,24 @@ export interface EvalPlane {
  */
 export function useEvalPlane(): EvalPlane {
   const query = useCorpora();
-  const unreachable = query.isError && !isPlaneAbsent(query.error);
+  // Three states, not two. `http.ts` defines `isUnreachable` and `isPlaneAbsent` as
+  // deliberately disjoint, "kept beside its sibling so the two cannot drift into
+  // overlapping" — and this used NEITHER, taking everything-except-404 as unreachable. So a
+  // 500, an auth proxy's 401, and a **zod contract failure** all rendered "Pipeline API
+  // unreachable — start it with IOTSHIELD_EVAL_API=1": a fabricated remedy for a flag the
+  // operator already set, with the real error (which names the URL and the drifting field)
+  // shown nowhere. Contract drift failing loudly at this one boundary is the whole claim of
+  // ADR-0031 D4, so it must not be swallowed as a transport blip (ADR-0033).
+  const unreachable = query.isError && isUnreachable(query.error);
+  const broken = query.isError && !isPlaneAbsent(query.error) && !unreachable;
   return {
-    available: query.isSuccess || unreachable,
+    // `broken` keeps the mode VISIBLE so the page can render the real error, rather than
+    // hiding the plane (which would read as "this deployment has none") or claiming the API
+    // is down (which would read as "wait and retry").
+    available: query.isSuccess || unreachable || broken,
     loading: query.isPending,
     unreachable,
+    broken,
     query,
   };
 }

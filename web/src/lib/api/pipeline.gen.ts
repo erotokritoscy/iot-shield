@@ -244,13 +244,19 @@ export interface components {
         BenchSpecSummary: {
             /** Name */
             name: string;
-            spec: components["schemas"]["PipelineSpec"];
+            spec?: components["schemas"]["PipelineSpec"] | null;
             /** Source Formats */
             source_formats?: string[];
             /** Detectors */
             detectors?: string[];
             /** Corpora */
             corpora?: string[];
+            /**
+             * Error
+             * @description Why this spec could not be loaded; empty when it loaded. Published rather than filtered out so a spec an operator has broken is visibly broken instead of silently absent from the picker — the same rule CorpusSummary.error follows.
+             * @default
+             */
+            error: string;
         };
         /**
          * CaseReport
@@ -833,7 +839,7 @@ export interface components {
         SourceInput: {
             /**
              * Content
-             * @description Raw input payload for this source
+             * @description Raw input payload for this source, at most 4,000,000 characters
              */
             content: string;
             /**

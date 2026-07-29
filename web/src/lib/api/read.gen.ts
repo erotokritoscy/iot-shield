@@ -45,7 +45,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Events */
+        /**
+         * Events
+         * @description Events oldest-first. `end` is a CLOSED bound (see the note on TimeParam).
+         */
         get: operations["events_events_get"];
         put?: never;
         post?: never;
@@ -62,7 +65,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Detections */
+        /**
+         * Detections
+         * @description Detections oldest-first. `end` is HALF-OPEN, matched on `window_start`.
+         */
         get: operations["detections_detections_get"];
         put?: never;
         post?: never;
@@ -81,7 +87,7 @@ export interface paths {
         };
         /**
          * Alerts
-         * @description The ranked triage queue: priority descending.
+         * @description The ranked triage queue: priority descending. `end` is HALF-OPEN on window_start.
          */
         get: operations["alerts_alerts_get"];
         put?: never;
@@ -507,6 +513,8 @@ export interface operations {
                 start?: string | null;
                 end?: string | null;
                 limit?: number;
+                /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -542,6 +550,8 @@ export interface operations {
                 start?: string | null;
                 end?: string | null;
                 limit?: number;
+                /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -573,7 +583,12 @@ export interface operations {
         parameters: {
             query?: {
                 status?: components["schemas"]["AlertStatus"] | null;
+                asset_id?: string | null;
+                start?: string | null;
+                end?: string | null;
                 limit?: number;
+                /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -667,6 +682,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
+                offset?: number;
             };
             header?: never;
             path?: never;

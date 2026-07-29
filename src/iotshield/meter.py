@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from math import isfinite
 from typing import Any
 
 METADATA_KEY = "meter"
@@ -156,11 +157,24 @@ class MeterReading:
             meter_type = MeterType(raw_type)
         except ValueError as exc:
             raise MeterFieldError(f"unknown meter_type {raw_type!r}") from exc
+        interval_hours = number("interval_hours", 1.0)
+        if interval_hours <= 0 or not isfinite(interval_hours):
+            # A width is what consumption is divided by and what the detector's grid is
+            # built from, so a non-positive one is not a rounding concern: zero reached
+            # pandas' date_range as freq=Timedelta(0) and took the whole run down with a
+            # ZeroDivisionError — neither NotFitted nor ValueError, so nothing upstream
+            # read it as a data problem — while a negative one produced an empty grid and
+            # the meter silently yielded no detections. Refused here so `reading_of` filters
+            # the record out and it is quarantined at the boundary, not fatal (ADR-0033).
+            raise MeterFieldError(
+                f"meter payload field 'interval_hours' must be a positive, finite number of"
+                f" hours, got {interval_hours!r}"
+            )
         return cls(
             meter_type=meter_type,
             unit=unit,
             counter=number("counter"),
-            interval_hours=number("interval_hours", 1.0),
+            interval_hours=interval_hours,
         )
 
 

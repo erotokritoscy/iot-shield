@@ -12,6 +12,13 @@
 # and runner reach Postgres at host `postgres`, the dashboards reach the API at
 # host `api`. Credentials come from .env (see .env.example); the defaults below
 # make the stack run out of the box for local use.
+#
+# Every published port binds to 127.0.0.1, not 0.0.0.0. ADR-0007's Consequences say the read
+# API "must not be exposed beyond the compose network in this form", and :8100 is the WRITE
+# plane — it triggers pipeline runs with no authentication at all. Binding to loopback keeps
+# the stack reachable from the developer's own browser, which is its whole purpose, without
+# offering it to the network the laptop happens to be on. Publish wider only behind
+# something that authenticates.
 name: iotshield
 
 # The same image for every app service; each overrides `command`. The shared
@@ -59,7 +66,7 @@ services:
       IOTSHIELD_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
       IOTSHIELD_API_PORT: "8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       init:
         condition: service_completed_successfully
@@ -94,7 +101,7 @@ services:
       # baking it into a shippable artifact.
       IOTSHIELD_CORPUS_PATH: "/app/data/eval"
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
     volumes:
       - ./results:/app/results
       - ./data/eval:/app/data/eval:ro
@@ -124,7 +131,7 @@ services:
       # when the router is absent, so one flag decides the plane end to end (ADR-0031 D5).
       IOTSHIELD_EVAL_UI: "1"
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     depends_on:
       api:
         condition: service_healthy
@@ -145,7 +152,7 @@ services:
       IOTSHIELD_API_URL: http://api:8000
       IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       api:
         condition: service_healthy

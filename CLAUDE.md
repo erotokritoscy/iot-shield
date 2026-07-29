@@ -54,6 +54,7 @@ Run all four before considering any task done.
 cd web && npm install   # the React dashboard's toolchain (node >= 20)
 npm run dev             # :5173, proxying /api and /pipeline to the two APIs
 npm run check           # typecheck + lint + vitest + build — the web gate, CI runs it too
+                        # (.github/workflows/ci.yml has a `web` job beside the Python one)
 npm run gen:types       # regenerate the TS view of both APIs after changing either one
 ```
 
@@ -322,7 +323,8 @@ invent. Differencing lives in the normalizer; the commissioning/service-start tr
 usability verdict are modelling judgments and live in the detector, because a normalizer that
 silently dropped a meter's first months could not be inverted (ADR-0030 D3/D4).
 
-Twelve demo configs (`config/demo*.yaml`) exercise the adapters; the main ones:
+Thirteen demo configs (`config/demo*.yaml`) exercise the adapters. `config/demo_weighted.yaml`
+is the same chain as `demo.yaml` through the `weighted` engine; the rest:
 `config/demo.yaml` + `data/demo/demo.csv`
 (telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
 `config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
@@ -372,7 +374,7 @@ reason to do so even once. 19 events → 7 detections from 6 rules across 2 lane
 the camera raises FOUR detections across TWO lanes (telnet + a bulk upload on flow, the sshd
 break-in warning + a firmware-integrity CRITICAL on logs) → corroboration 1.50, volume 1.45 →
 **73.9/CRITICAL**, `threat_class: Remote Services (T1021)`, and a `recommended_action` unioned
-across the rules that fired. The gateway's inbound SSH from 203.0.113.9 → 50.0/HIGH,
+across the rules that fired. The gateway's inbound SSH from 203.0.113.9 → 45.3/MEDIUM,
 `External Remote Services (T1133)`. The demo also carries the trap the field list exists for:
 flow fields are asset-relative, so a service port is `flow.peer_port` on a connection the
 device MADE and `flow.asset_port` on one it RECEIVED — written the other way round a rule
@@ -382,10 +384,10 @@ reads perfectly and can never fire.)
 (**two different meter platforms in ONE run, judged by the same detector** — ADR-0030: an EOA
 water CSV written newest-first in naive Cyprus local time, plus a SensiPro hourly export
 carrying water *and* electricity → the `meter` normalizer's two dialects difference both
-counters gap-safely → 332 + 1006 consumption events, 3 quarantined rows, a 2-hour gap that
+counters gap-safely → 332 + 670 consumption events, 3 quarantined rows, a 2-hour gap that
 correctly yields nothing → the `meter_iforest` detector flags ONE thing: a continuous
-overnight draw at ~2x the evening peak held for three hours, score 0.7994 vs a threshold
-0.7513 *learned* on ten weeks of that meter's own clean history at ~1 false alarm per
+overnight draw at ~2x the evening peak held for three hours, score 0.7939 vs a threshold
+0.7436 *learned* on ten weeks of that meter's own clean history at ~1 false alarm per
 meter-month. The evidence names `deviation` at z=25.4 — "consumption far above the usual level
 for this hour of the week" — which is the case a magnitude threshold cannot express, since the
 volume is ordinary for an evening and extraordinary for 3am. The SensiPro meters have no
@@ -507,7 +509,7 @@ requires every detection to carry it, so the firing rule cannot be named there; 
 A rule match is a boolean, so `score`/`threshold` are synthesised from the author's two
 judgments — severity sets the base (1.5/2.0/3.0/4.0), confidence scales it (0.7/0.85/1.0) —
 which makes the margin *be* the authored severity, spans the weighted engine's [1.0, 4.0]
-exactly, and means a single rule cannot reach the top of the queue (critical at high
+(the weakest combination lands at 1.05, just above the floor rather than on it), and means a single rule cannot reach the top of the queue (critical at high
 confidence is 63/100 alone). Matches of one rule on one asset within `merge_gap_minutes`
 merge into one detection: the alert engine counts detections as corroboration, and
 `fleet_scan`'s exfiltration recording alone holds ~400 matching flows.

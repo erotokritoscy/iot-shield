@@ -111,3 +111,26 @@ class Fittable(Protocol):
     """
 
     def fit(self, events: Sequence[NormalizedEvent]) -> Detector: ...
+
+
+@runtime_checkable
+class Diagnosable(Protocol):
+    """OPTIONAL capability: explain, in advance, why this detector will judge nothing.
+
+    Some detectors decline whole assets *by design*. ``team3_zscore`` skips an asset whose
+    channels its artifact never learned (ADR-0012 D4) and ``meter_iforest`` skips a meter it
+    has no model for (ADR-0030 D7) — both correct, and both invisible: the run reports zero
+    detections, which reads exactly like "nothing was wrong". An operator cannot tell "these
+    assets are fine" from "these assets were never looked at", and a benchmark prints a row
+    of zeros with no reason, which CLAUDE.md promises never happens.
+
+    ``why_silent`` is a **pure predicate over the same events ``detect`` would receive** —
+    not state recorded during a run. That matters: a detector stays stateless per call, the
+    caller decides when to ask, and the answer cannot go stale. Returns ``None`` when the
+    detector has no such reservation.
+
+    Opt-in like ``Fittable``: not implementing it is not a defect, and callers must check
+    with ``isinstance(d, Diagnosable)`` (ADR-0033).
+    """
+
+    def why_silent(self, events: Sequence[NormalizedEvent]) -> str | None: ...

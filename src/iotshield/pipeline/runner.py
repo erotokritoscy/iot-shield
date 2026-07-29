@@ -31,6 +31,7 @@ from iotshield.contracts import (
 )
 from iotshield.detect import Detector
 from iotshield.detect._fitted import is_fitted
+from iotshield.detect.port import Diagnosable
 from iotshield.pipeline.compat import (
     CompatIssue,
     CompatLevel,
@@ -120,7 +121,11 @@ def resolve_assets(seeded: Sequence[Asset], events: Sequence[NormalizedEvent]) -
     deferred follow-on.
     """
     resolved: dict[str, Asset] = {asset.asset_id: asset for asset in seeded}
-    for asset_id in {event.asset_id for event in events}:
+    # sorted(): a set's iteration order follows string hashing, which Python randomizes per
+    # process, so identical runs over identical input emitted the discovered assets in
+    # different orders — reaching the JSONL the file sink writes, which ADR-0018 sells as a
+    # losslessly diffable artifact. Every other stage is explicit about order.
+    for asset_id in sorted({event.asset_id for event in events}):
         resolved.setdefault(asset_id, discovered_asset(asset_id))
     return list(resolved.values())
 
@@ -275,6 +280,18 @@ def compute_result(
     asset_map = {asset.asset_id: asset for asset in assets}
     alerts = alert_engine.build_alerts(detections, asset_map)
 
+    # "Skipped" must not look like "clean" (ADR-0033). A detector that declines an asset by
+    # design — team3 without its channels, meter without that meter's model — otherwise
+    # contributes nothing to the report but a zero, and an operator cannot tell which of the
+    # two happened. The optional `Diagnosable` capability is how a detector says so; an
+    # adapter that never declines anything implements nothing and is unaffected.
+    silences = [
+        note
+        for detector in detectors
+        if isinstance(detector, Diagnosable)
+        and (note := detector.why_silent(ingested.events)) is not None
+    ]
+
     return RunResult(
         run_at=datetime.now(UTC),
         sources=ingested.provenance,
@@ -283,7 +300,7 @@ def compute_result(
         malformed=ingested.malformed,
         detections=detections,
         alerts=alerts,
-        warnings=ingested.warnings,
+        warnings=[*ingested.warnings, *silences],
     )
 
 
@@ -366,9 +383,19 @@ def execute_run(
     swallow its own errors. Guard ERRORs raise inside ``compute_run``, before any sink runs.
     """
     result = compute_run(config, inputs, origins=origins)
+    # Build every sink BEFORE writing to any of them. Sink construction is a pure config
+    # concern with no dependency on the result, and `registry._construct` states the
+    # contract: "Both fail here at construction — before any run side effect — named, so the
+    # operator knows which entry is wrong." That was true of normalizers, detectors and
+    # alert engines and false of sinks, because construction was interleaved with writing:
+    # with the default [postgres, file] shape a typo in sinks[1].params committed the run to
+    # Postgres and *then* exited 2, so re-running after the fix duplicated the data.
+    sinks = [
+        (sink_config, build_sink(sink_config.name, sink_config.params, resources))
+        for sink_config in config.sinks
+    ]
     destinations: list[str] = []
-    for sink_config in config.sinks:
-        sink = build_sink(sink_config.name, sink_config.params, resources)
+    for sink_config, sink in sinks:
         sink.write(result)
         destinations.append(_destination_label(sink_config, config))
     return RunReport.from_result(result, destinations=destinations)

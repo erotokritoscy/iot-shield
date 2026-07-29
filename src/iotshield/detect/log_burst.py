@@ -47,15 +47,23 @@ CAPABILITY = Capability.of(consumes={LaneToken(Lane.LOG)}, produces={DETECTIONS}
 # PAM, Windows security log). Curated deliberately: an operator selects a preset by name and
 # never writes a regex in YAML, so a config typo cannot become a pathologically slow or
 # wildly over-matching pattern (ADR-0020 D3).
+# Anchored to authentication CONTEXT, not to bare tokens. Curation is only safer than
+# free-form regex if the curated set is itself narrow: `\b4625\b` matched any bare 4625 —
+# a duration, a byte count, a job id, a port — and `invalid user` matched ordinary phrasings
+# like "invalid user id". Five benign API lines produced a confident Brute Force (T1110)
+# alert, which ADR-0032 D5 promotes straight onto the alert's threat_class. The Windows
+# event id is dropped rather than tightened: "failed to log on" already covers that dialect,
+# so the number added reach without adding evidence (ADR-0033).
 _AUTH_FAILURE_PATTERNS = (
     r"failed password",
     r"authentication failure",
     r"auth(?:entication)? failed",
     r"failed login",
     r"login failed",
-    r"invalid user",
+    # sshd's real shape is "Invalid user <name> from <ip>"; requiring the origin keeps
+    # "invalid user id" and "invalid user name" out.
+    r"\binvalid user\b(?=.*\bfrom\b)",
     r"failed to log on",  # Windows security log, event 4625
-    r"\b4625\b",
 )
 
 

@@ -44,6 +44,16 @@ const evidenceColumns: Column<DetectionResult>[] = [
   { key: "threshold", header: "threshold", align: "right", render: (d) => formatNumber(d.threshold, 4) },
   { key: "window_start", header: "window start", render: (d) => formatUtc(d.window_start) },
   { key: "window_end", header: "window end", render: (d) => formatUtc(d.window_end) },
+  // The same column AssetsPage carries, and for the same reason: `method` stopped naming a
+  // finding at ADR-0032 D3, so on the demo_rules camera alert this table rendered four rows
+  // reading `rules:flow` that differed only in score. Its absence here was a half-applied
+  // fix — Streamlit's evidence table gained the column in the same commit, and ADR-0031 D7
+  // says the two dashboards may disagree about nothing that matters (ADR-0033).
+  {
+    key: "finding",
+    header: "finding",
+    render: (d) => explanationOf(d) ?? <span className="text-muted">—</span>,
+  },
 ];
 
 const PAGE_SIZE = 50;

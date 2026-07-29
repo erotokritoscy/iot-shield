@@ -42,9 +42,23 @@ class FileSink:
 
 def build(resources: SinkResources, path: str = _DEFAULT_FILENAME) -> FileSink:
     if resources.output_dir is not None:
-        # Confine to the server-configured directory: only the basename is honored, so a
-        # caller-supplied path (e.g. from the UI) cannot traverse out of it.
-        filename = Path(path).name or _DEFAULT_FILENAME
-        return FileSink(resources.output_dir / filename)
+        # Confine to the server-configured directory. VALIDATE rather than sanitize: reducing
+        # a path to its basename silently turns a wrong path into a different wrong path, and
+        # `Path("..").name` is ".." (CPython drops "." components but keeps ".."), so the
+        # `or _DEFAULT_FILENAME` fallback did not fire and the sink was handed the parent
+        # directory. No escape was achieved — the open failed — but the caller got an opaque
+        # OSError, which the Pipeline API maps to a 500 rather than a 422 naming the field.
+        filename = Path(path).name
+        if not filename.strip() or filename in (".", ".."):
+            raise ValueError(
+                f"sink path {path!r} does not name a file; give a plain filename"
+                f" (it is written under the server's configured output directory)"
+            )
+        target = resources.output_dir / filename
+        # The docstring's promise as a checked property rather than a claim about the edge
+        # cases of Path.name — cheap, and it cannot rot if that parsing ever changes.
+        if not target.resolve().is_relative_to(resources.output_dir.resolve()):
+            raise ValueError(f"sink path {path!r} resolves outside the output directory")
+        return FileSink(target)
     # No configured base (host/CLI run): honor the path as given.
     return FileSink(Path(path))

@@ -49,7 +49,12 @@ from iotshield.detect.rules.fields import (
     read_comparable,
     resolve,
 )
-from iotshield.enrichment import Enrichment, EnrichmentSource, MitreTechnique
+from iotshield.enrichment import (
+    Enrichment,
+    EnrichmentSource,
+    MitreTechnique,
+    validate_action_step,
+)
 
 
 class Operator(StrEnum):
@@ -243,6 +248,20 @@ class RuleFile(BaseModel):
     detection: dict[str, Any]
     mitre: list[dict[str, Any]] = Field(default_factory=list)
     suggested_actions: list[str] = Field(default_factory=list)
+
+    @field_validator("suggested_actions")
+    @classmethod
+    def _steps_survive_the_round_trip(cls, value: list[str]) -> list[str]:
+        """Refuse at LOAD what ``action_text``/``action_steps`` could not carry (ADR-0033).
+
+        The pair is documented as each other's inverse, but the only test of that iterates
+        the packaged library — and this file's own guide tells contributors to drop rules
+        into any directory named by ``ruleset:``. Checking here covers both, and turns a
+        silent loss (a step that merges into its neighbour and disappears from the alert)
+        into a load error naming the file.
+        """
+        return [validate_action_step(step) for step in value]
+
     one_line: str | None = Field(
         default=None, description="The analyst-facing headline; falls back to description"
     )

@@ -27,8 +27,25 @@ def test_built_adapters_satisfy_their_ports() -> None:
 
 
 def test_detector_params_are_applied() -> None:
-    detector = build_detector("stub_threshold", {"threshold": 5.0, "lane": "log"})
-    assert detector.lane == Lane.LOG
+    # FLOW, not LOG: this only needs a lane other than the default to prove params reach the
+    # factory, and stub_threshold now refuses the lanes it cannot judge (see below).
+    detector = build_detector("stub_threshold", {"threshold": 5.0, "lane": "flow"})
+    assert detector.lane == Lane.FLOW
+
+
+def test_stub_threshold_refuses_a_lane_whose_events_carry_no_value() -> None:
+    """A LOG event has no `value`, so `lane: log` used to validate clean and never fire —
+    the compatibility guard saw the lane covered and reported nothing, forever."""
+    with pytest.raises(ValueError, match=r"never carries; usable lanes: telemetry, flow"):
+        build_detector("stub_threshold", {"lane": "log"})
+
+
+@pytest.mark.parametrize("threshold", [0.0, -5.0, float("nan"), float("-inf")])
+def test_stub_threshold_refuses_a_threshold_that_cannot_judge(threshold: float) -> None:
+    """Non-positive sends the alert engine down its degenerate-margin branch; non-finite
+    either never fires or fails contract validation mid-run, after ingest."""
+    with pytest.raises(ValueError, match=r"positive, finite"):
+        build_detector("stub_threshold", {"threshold": threshold})
 
 
 def test_normalizer_params_reach_the_factory_and_bad_ones_name_the_adapter() -> None:

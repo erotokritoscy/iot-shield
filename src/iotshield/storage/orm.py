@@ -90,6 +90,24 @@ class AssetRow(Base):
             metadata_=asset.metadata,
         )
 
+    @staticmethod
+    def values_of(asset: Asset) -> dict[str, Any]:
+        """Column values for a Core insert, keyed by ATTRIBUTE name.
+
+        Needed because discovery inserts through Core (ON CONFLICT DO NOTHING) rather than
+        the ORM unit of work. Written beside ``from_contract`` so the two cannot disagree
+        about the column set, and it keeps ``metadata_``'s rename in one place — ``metadata``
+        is taken on a declarative class, and Core wants the attribute key, not the column.
+        """
+        return {
+            "asset_id": asset.asset_id,
+            "name": asset.name,
+            "asset_type": asset.asset_type,
+            "location": asset.location,
+            "criticality": asset.criticality.value,
+            "metadata_": asset.metadata,
+        }
+
     def to_contract(self) -> Asset:
         return Asset(
             asset_id=self.asset_id,

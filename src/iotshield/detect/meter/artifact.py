@@ -18,8 +18,10 @@ from those same rows and the params' ``fp_budget``, so model and threshold are r
 together: a future sklearn that builds slightly different trees produces a matching
 threshold rather than silently mismatched ones. Nothing to migrate, nothing to pin.
 
-The cost is a fit at load (tens of milliseconds, and ``load_artifact`` is cached) and an
-artifact that carries data. That second point is a real constraint, not a footnote: a
+The cost is a fit at load — ~120 ms per meter, measured, and ``load_artifact`` is cached
+per *process*, so a 1,656-meter fleet is minutes of CPU on every cold start (each API
+worker, each container restart) — and an artifact that carries data. That second point is
+a real constraint, not a footnote: a
 committed artifact is only appropriate for data we may commit. Our demo meter is
 synthetic, so it is; a customer's meter would be fitted at deployment instead, which is
 the deployment shape for metering anyway (see the module docstring in ``detector.py``).

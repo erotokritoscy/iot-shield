@@ -4,15 +4,22 @@ Callers pass an explicit Session and speak contract objects exclusively; ORM row
 never escape this module. Repository functions flush (making writes queryable
 in-session) but never commit — transaction boundaries belong to the caller.
 
-Time ranges are half-open: ``start <= t < end``.
+Time ranges are half-open (``start <= t < end``) with ONE deliberate exception:
+``get_events``' upper bound is **closed**, because a point anomaly is a zero-length window
+and evidence recovery queries (asset, window_start..window_end) — with ``< end`` such a
+detection recovered no events at all. The rule is stated per function rather than once here,
+because a blanket claim is what sent a reader to the wrong bound.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import TypeVar
+from typing import TypeVar, overload
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Insert, Select, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, selectinload
 
 from iotshield.contracts import (
@@ -35,16 +42,70 @@ from iotshield.storage.orm import (
 )
 
 _Row = TypeVar("_Row")
+_Item = TypeVar("_Item")
 
 
-def _oldest_first(session: Session, stmt: Select[tuple[_Row]]) -> list[_Row]:
-    """Rows for a DESC + LIMIT query, reversed to oldest-first.
+@dataclass(frozen=True)
+class Page(Sequence[_Item]):
+    """One page of results, and how many rows the filters matched in total.
 
-    The read functions order DESC and LIMIT so the newest rows survive the cap
-    (an ASC + LIMIT would hide recent data), then present them oldest-first for
-    the timeline. That reverse lives here once, not in each caller.
+    A list alone cannot say whether it is complete, which for a monitoring product is the
+    worst kind of wrong answer: a client draws conclusions from a truncated queue with no
+    way to know it was truncated. Carrying ``total`` beside the items makes that detectable
+    at every layer without each one re-counting (ADR-0033).
+
+    A ``Sequence`` rather than a plain record, because a page *is* its items for every
+    existing reader — iteration, ``len``, indexing and unpacking all keep working — while
+    ``.total`` is the one thing they could not previously ask.
     """
-    return list(session.scalars(stmt))[::-1]
+
+    items: list[_Item]
+    total: int
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    @overload
+    def __getitem__(self, index: int) -> _Item: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[_Item]: ...
+
+    def __getitem__(self, index: int | slice) -> _Item | list[_Item]:
+        return self.items[index]
+
+    @property
+    def truncated(self) -> bool:
+        """Whether rows matched the filters that this page does not carry."""
+        return len(self.items) < self.total
+
+
+def _oldest_first(
+    session: Session, stmt: Select[tuple[_Row]], *, limit: int, offset: int = 0
+) -> list[_Row]:
+    """One page of a DESC-ordered query, reversed to oldest-first.
+
+    The read functions order DESC so the newest rows survive the cap (an ASC + LIMIT would
+    hide recent data), then present them oldest-first for the timeline. That reverse lives
+    here once, not in each caller.
+
+    ``offset`` pages *backwards in time* as a consequence: page 0 is the newest ``limit``
+    rows, page 1 the ``limit`` before those. Safe as keyset paging because every ordering
+    here is **total** — each ends in a unique id — so no row can be skipped or repeated
+    between pages, which an ordering with ties would silently do.
+    """
+    return list(session.scalars(stmt.limit(limit).offset(offset)))[::-1]
+
+
+def _total(session: Session, stmt: Select[tuple[_Row]]) -> int:
+    """How many rows the same filters match, ignoring limit/offset.
+
+    Reported so a truncated answer is *detectable*. Without it a capped list is
+    indistinguishable from a complete one — and because these queries order DESC and then
+    reverse, the rows dropped are the OLDEST, so a client reading "here are my events from
+    T" got a list whose front was silently wrong (ADR-0033).
+    """
+    return session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
 
 def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
@@ -64,10 +125,39 @@ def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
     existing = set(
         session.scalars(select(AssetRow.asset_id).where(AssetRow.asset_id.in_(asset_ids)))
     )
-    for asset_id in sorted(asset_ids - existing):
-        session.add(AssetRow.from_contract(discovered_asset(asset_id)))
-    # No flush here: callers flush, and the unit of work orders stub inserts
-    # before their FK-dependent rows within that single flush.
+    missing = sorted(asset_ids - existing)
+    if not missing:
+        return
+    # ON CONFLICT DO NOTHING, not a bare INSERT. The SELECT above is an optimisation, not a
+    # guarantee: two runs can both read "absent" before either writes. ADR-0005 accepted that
+    # race because the MVP runner was single-process — no longer true since ADR-0015, where
+    # POST /runs is a sync endpoint dispatched on the threadpool, so concurrent runs share one
+    # engine. And because PostgresSink wraps a whole run in one transaction, losing the race
+    # did not lose an asset row, it rolled back every event, detection and alert of that run.
+    # A double-click on the compose page's Run button is enough to trigger it.
+    rows = [AssetRow.values_of(discovered_asset(asset_id)) for asset_id in missing]
+    session.execute(_insert_ignoring_conflicts(session, rows))
+    # No flush of the ORM unit of work is needed for these: the statement above writes them
+    # directly, before the FK-dependent rows their callers add.
+
+
+def _insert_ignoring_conflicts(session: Session, rows: list[dict[str, object]]) -> Insert:
+    """An asset insert that yields to whoever won the race, per dialect.
+
+    Postgres and SQLite spell this the same way but through different constructs, and
+    neither is reachable from the generic ``sqlalchemy.insert``. Anything else (MySQL, a
+    future backend) falls back to the plain insert: it keeps the race, which is what the
+    code did everywhere before, rather than failing at import time on a dialect we do not
+    ship.
+    """
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        return pg_insert(AssetRow).values(rows).on_conflict_do_nothing(index_elements=["asset_id"])
+    if dialect == "sqlite":
+        return (
+            sqlite_insert(AssetRow).values(rows).on_conflict_do_nothing(index_elements=["asset_id"])
+        )
+    return insert(AssetRow).values(rows)
 
 
 def upsert_assets(session: Session, assets: Sequence[Asset]) -> None:
@@ -113,10 +203,9 @@ def get_events(
     start: datetime | None = None,
     end: datetime | None = None,
     limit: int = 1000,
-) -> list[NormalizedEvent]:
-    stmt = (
-        select(EventRow).order_by(EventRow.timestamp.desc(), EventRow.event_id.desc()).limit(limit)
-    )
+    offset: int = 0,
+) -> Page[NormalizedEvent]:
+    stmt = select(EventRow).order_by(EventRow.timestamp.desc(), EventRow.event_id.desc())
     if asset_id is not None:
         stmt = stmt.where(EventRow.asset_id == asset_id)
     if lane is not None:
@@ -129,16 +218,18 @@ def get_events(
         # zero-length window (start == end). With `< end` such a detection recovered no
         # events at all (models.py DetectionResult).
         stmt = stmt.where(EventRow.timestamp <= end)
-    return [row.to_contract() for row in _oldest_first(session, stmt)]
+    rows = _oldest_first(session, stmt, limit=limit, offset=offset)
+    return Page([row.to_contract() for row in rows], _total(session, stmt))
 
 
-def list_malformed(session: Session, *, limit: int = 1000) -> list[MalformedRecord]:
-    stmt = (
-        select(MalformedRow)
-        .order_by(MalformedRow.created_at.desc(), MalformedRow.record_id.desc())
-        .limit(limit)
+def list_malformed(
+    session: Session, *, limit: int = 1000, offset: int = 0
+) -> Page[MalformedRecord]:
+    stmt = select(MalformedRow).order_by(
+        MalformedRow.created_at.desc(), MalformedRow.record_id.desc()
     )
-    return [row.to_contract() for row in _oldest_first(session, stmt)]
+    rows = _oldest_first(session, stmt, limit=limit, offset=offset)
+    return Page([row.to_contract() for row in rows], _total(session, stmt))
 
 
 def get_detections(
@@ -149,11 +240,10 @@ def get_detections(
     start: datetime | None = None,
     end: datetime | None = None,
     limit: int = 1000,
-) -> list[DetectionResult]:
-    stmt = (
-        select(DetectionRow)
-        .order_by(DetectionRow.window_start.desc(), DetectionRow.detection_id.desc())
-        .limit(limit)
+    offset: int = 0,
+) -> Page[DetectionResult]:
+    stmt = select(DetectionRow).order_by(
+        DetectionRow.window_start.desc(), DetectionRow.detection_id.desc()
     )
     if asset_id is not None:
         stmt = stmt.where(DetectionRow.asset_id == asset_id)
@@ -163,7 +253,8 @@ def get_detections(
         stmt = stmt.where(DetectionRow.window_start >= start)
     if end is not None:
         stmt = stmt.where(DetectionRow.window_start < end)
-    return [row.to_contract() for row in _oldest_first(session, stmt)]
+    rows = _oldest_first(session, stmt, limit=limit, offset=offset)
+    return Page([row.to_contract() for row in rows], _total(session, stmt))
 
 
 def get_alerts(
@@ -171,23 +262,41 @@ def get_alerts(
     *,
     status: AlertStatus | None = None,
     detection_id: UUID | None = None,
+    asset_id: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     limit: int = 1000,
-) -> list[PrioritizedAlert]:
-    """Alerts in triage order: priority descending (the ranked queue IS the product)."""
+    offset: int = 0,
+) -> Page[PrioritizedAlert]:
+    """Alerts in triage order: priority descending (the ranked queue IS the product).
+
+    ``asset_id`` and the time bounds mirror ``get_detections``: the ranked queue is the
+    headline output, and "which alerts fired on this device last week" was unanswerable
+    without pulling the whole queue and filtering client-side. Time is matched on
+    ``window_start``, half-open, exactly as detections are.
+    """
     stmt = (
         select(AlertRow)
         # Eager-load lineage in one batched query: to_contract() reads
         # detection_links, which would otherwise lazy-load per alert (N+1).
         .options(selectinload(AlertRow.detection_links))
         .order_by(AlertRow.priority_score.desc(), AlertRow.created_at, AlertRow.alert_id)
-        .limit(limit)
     )
     if status is not None:
         stmt = stmt.where(AlertRow.status == status.value)
+    if asset_id is not None:
+        stmt = stmt.where(AlertRow.asset_id == asset_id)
+    if start is not None:
+        stmt = stmt.where(AlertRow.window_start >= start)
+    if end is not None:
+        stmt = stmt.where(AlertRow.window_start < end)
     if detection_id is not None:
         # The junction's reverse direction: which alert covers this detection?
         stmt = stmt.join(AlertDetectionRow).where(AlertDetectionRow.detection_id == detection_id)
-    return [row.to_contract() for row in session.scalars(stmt)]
+    # Not _oldest_first: the triage queue is ranked, not chronological, so its page order is
+    # the ranking itself and reversing it would put the least urgent alert on top.
+    rows = list(session.scalars(stmt.limit(limit).offset(offset)))
+    return Page([row.to_contract() for row in rows], _total(session, stmt))
 
 
 def get_alert_by_id(session: Session, alert_id: UUID) -> PrioritizedAlert | None:

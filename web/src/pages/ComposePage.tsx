@@ -438,10 +438,17 @@ function ComposeForm({ catalogue }: { readonly catalogue: ModulesResponse }) {
   // Detectors the operator chose that cannot run as configured — see `fitted` above for why
   // only the page can know this. H3 permits reading a published declaration; this is not
   // re-deriving server logic.
-  const untrained = detectors.filter((row) => {
-    const module = detectorCatalogue.find((item) => item.name === row.name);
-    return module !== undefined && !fitted(module, row.params);
-  });
+  // Carries the row INDEX, not just the name: detector rows are identified by position
+  // (ADR-0023 D9 makes one adapter twice a first-class case, and this file's own state is
+  // "keyed by index, never by adapter name"). Keying the notices below by name gave two
+  // untrained rows of one adapter the same React key — "the behavior is unsupported and
+  // could change in a future version" (ADR-0033).
+  const untrained = detectors
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => {
+      const module = detectorCatalogue.find((item) => item.name === row.name);
+      return module !== undefined && !fitted(module, row.params);
+    });
 
   return (
     <div className="space-y-8">
@@ -610,8 +617,8 @@ function ComposeForm({ catalogue }: { readonly catalogue: ModulesResponse }) {
               ) : null}
             </>
           )}
-          {untrained.map((row) => (
-            <Notice key={row.name} tone="warning">
+          {untrained.map(({ row, index }) => (
+            <Notice key={index} tone="warning">
               <b>{row.name}</b> has no fitted artifact, so the run will be refused before it
               judges anything. Name one in its parameters, or choose a detector that is ready to
               run. The chain check above cannot see this — it never builds the detector.

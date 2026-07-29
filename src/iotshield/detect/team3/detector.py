@@ -153,6 +153,31 @@ class Team3ZScoreDetector:
         )
         return Team3ZScoreDetector(self._params, state)
 
+    def why_silent(self, events: Sequence[NormalizedEvent]) -> str | None:
+        """The optional ``Diagnosable`` capability: which assets this artifact cannot judge.
+
+        Channel coverage is the one reason this detector declines an asset outright, and it
+        is otherwise indistinguishable from a clean recording — the harness's default
+        protocol never calls ``fit``, so the fit-refusal note that explains it never appears
+        and a full table of zeros arrives with no reason at all (ADR-0033).
+        """
+        state = self._state
+        if state is None:
+            return None
+        uncovered = [
+            asset_id
+            # Same filter detect() uses, so this asks about exactly the assets it would judge.
+            for asset_id, asset_events in group_by_asset(events, lane=self.lane, keep=_has_reading)
+            if not set(state.channels).issubset(wide_frame(asset_events).columns)
+        ]
+        if not uncovered:
+            return None
+        return (
+            f"{self.method} judged nothing on {', '.join(sorted(uncovered))}: its fitted "
+            f"channels ({', '.join(state.channels)}) are not all present, so those assets "
+            f"were skipped rather than scored against a misaligned matrix"
+        )
+
     def _detect_asset(
         self, asset_id: str, events: list[NormalizedEvent], state: Team3State
     ) -> list[DetectionResult]:

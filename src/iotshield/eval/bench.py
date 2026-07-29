@@ -37,21 +37,37 @@ DEFAULT_BENCH_ROOT = _REPO_ROOT / "config" / "bench"
 
 @dataclass(frozen=True)
 class BenchSpec:
-    """One committed spec, ready to benchmark, with the shape it demands of a corpus."""
+    """One committed spec, ready to benchmark, with the shape it demands of a corpus.
+
+    ``spec`` is ``None`` exactly when ``error`` is set: the file is present but unreadable.
+    Mirrors ``CorpusInfo``'s treatment of a broken bundle, so both catalogues answer "what is
+    here, and what is wrong with it" rather than quietly shortening the list.
+    """
 
     name: str
-    spec: PipelineSpec
+    spec: PipelineSpec | None
+    error: str = ""
 
     @property
     def source_formats(self) -> tuple[str, ...]:
+        if self.spec is None:
+            return ()
         return tuple(source.source_format for source in self.spec.sources)
 
     @property
     def detectors(self) -> tuple[str, ...]:
+        if self.spec is None:
+            return ()
         return tuple(entry.name for entry in self.spec.detectors)
 
     def fits(self, source_formats: Sequence[str]) -> bool:
-        """Whether a corpus of this shape can be benchmarked with this spec."""
+        """Whether a corpus of this shape can be benchmarked with this spec.
+
+        A broken spec fits nothing — it is listed so its breakage is visible, not so a run
+        can be attempted against a spec that does not parse.
+        """
+        if self.spec is None:
+            return False
         return self.source_formats == tuple(source_formats)
 
 
@@ -66,9 +82,17 @@ def bench_root(root: Path | None = None) -> Path:
 def list_bench_specs(root: Path | None = None) -> list[BenchSpec]:
     """Every loadable spec under the bench root, in name order.
 
-    A spec that does not parse is skipped rather than raising: this feeds a catalogue and a
-    help message, and one broken file must not make the other five unlistable. It will still
-    fail loudly, with its own message, the moment someone asks for it by name.
+    A spec that does not parse is LISTED WITH ITS REASON rather than dropped: one broken file
+    must not make the other five unlistable, but omitting it silently is worse than either.
+    ``CorpusSummary.error`` already made this decision for bundles — "published rather than
+    filtered out so a broken bundle is visibly broken instead of silently absent from the
+    picker" — and specs got the opposite treatment.
+
+    The old excuse was that a bad spec "will still fail loudly the moment someone asks for it
+    by name". On the API/dashboard path nobody ever asks by name: the endpoint publishes the
+    *parsed* spec and the page forwards the object, so a spec an operator broke while the
+    server was running simply vanished from the picker — and if it was the only fitting one,
+    the page blamed the corpus (ADR-0033).
     """
     directory = bench_root(root)
     if not directory.is_dir():
@@ -77,8 +101,8 @@ def list_bench_specs(root: Path | None = None) -> list[BenchSpec]:
     for path in sorted(directory.glob("*.yaml")):
         try:
             specs.append(BenchSpec(name=path.stem, spec=load_spec(path)))
-        except (ValueError, OSError):
-            continue
+        except (ValueError, OSError) as exc:
+            specs.append(BenchSpec(name=path.stem, spec=None, error=str(exc)))
     return specs
 
 

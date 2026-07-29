@@ -96,6 +96,45 @@ _MITRE_FIELDS = ("tactic", "technique", "technique_id")
 _STEP_BOUNDARY = re.compile(r"\.\s+")
 
 
+def validate_action_step(step: str) -> str:
+    """Refuse a step ``action_text``/``action_steps`` could not round-trip. Returns it.
+
+    The pair is a claim about our own prose, and prose is exactly what a contributor writes:
+    the authoring guide invites rules into any directory named by ``ruleset:``, which no test
+    of the packaged library can reach. So the invariant is enforced where the text is
+    *authored* rather than hoped about downstream, and the message quotes the offender
+    because the audience is someone editing YAML with no type checker in front of them.
+
+    Four refusals, each a measured way the round trip loses data (ADR-0033):
+
+    - **empty** — vanishes entirely on the way back.
+    - **a newline** — ``\\n`` is whitespace, so a YAML block scalar (``- >`` / ``- |``) would
+      split one step into two.
+    - **an interior ``". "``** — the separator itself; ``"Check the I.P. address."`` and
+      ``"Escalate (e.g. the plant engineer)."`` both come back as two half-steps.
+    - **no terminal ``.``/``!``/``?``** — the dangerous one, because it does not split a step,
+      it *merges* two: ``("Block the source", "Review the device.")`` returns as the single
+      string ``"Block the source Review the device."`` and an entire instruction is lost with
+      nothing to indicate it.
+    """
+    cleaned = step.strip()
+    if not cleaned:
+        raise ValueError("an action step must not be empty")
+    if "\n" in step or "\r" in step:
+        raise ValueError(f"an action step must be one line, got {step!r}")
+    if _STEP_BOUNDARY.search(cleaned[:-1]):
+        raise ValueError(
+            f"an action step must not contain '. ' — it is the step separator, so {step!r}"
+            " would come back as two steps; rephrase or drop the interior period"
+        )
+    if cleaned[-1] not in ".!?":
+        raise ValueError(
+            f"an action step must end with '.', '!' or '?', got {step!r};"
+            " without it this step and the next merge into one on the way back"
+        )
+    return cleaned
+
+
 def action_steps(text: str | None) -> list[str]:
     """Split a ``recommended_action`` back into the steps ``action_text`` joined.
 
@@ -296,7 +335,22 @@ class Enrichment:
         device that shows both failed logins *and* a bulk outbound transfer wants both sets
         of next steps; the combination is more informative than either alone (ADR-0032 D5).
         """
-        actions = dict.fromkeys(
-            action for enrichment in contributing for action in enrichment.suggested_actions
+        actions = list(
+            dict.fromkeys(
+                action for enrichment in contributing for action in enrichment.suggested_actions
+            )
         )
-        return replace(self, suggested_actions=tuple(actions)[:_MAX_ACTIONS])
+        if len(actions) > _MAX_ACTIONS:
+            # Say that the checklist was trimmed, rather than trimming it in silence. The cap
+            # is a real product decision, but an analyst cannot tell a complete checklist from
+            # a truncated one, and on the shipped demo_rules camera alert six of twelve steps
+            # were dropped — including the whole exfiltration checklist for a device that had
+            # just uploaded 4.2 MB. Carried as a real step so `action_steps` recovers it and
+            # both dashboards render it with no UI change (ADR-0033).
+            omitted = len(actions) - (_MAX_ACTIONS - 1)
+            actions = [
+                *actions[: _MAX_ACTIONS - 1],
+                f"{omitted} further step(s) from other findings on this alert were omitted;"
+                " see the detections.",
+            ]
+        return replace(self, suggested_actions=tuple(actions))

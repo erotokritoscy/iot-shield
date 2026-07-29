@@ -66,6 +66,7 @@ from iotshield.flow import (
     orient,
     parse_networks,
 )
+from iotshield.normalize._linewise import split_lines
 from iotshield.normalize.port import NormalizeResult
 
 # Canonical field names a dialect maps its columns onto. Required: without an origin, a
@@ -401,7 +402,7 @@ class FlowNormalizer:
                 MalformedRecord(raw=line, error=error, source_format=source_format, origin=origin)
             )
 
-        for line in text.splitlines():
+        for line in split_lines(text):
             if not line.strip():
                 continue
 

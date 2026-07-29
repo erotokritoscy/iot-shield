@@ -124,7 +124,7 @@ _PROFILES: dict[str, _Profile] = {
     "camera": _Profile(
         every_steps=20, distinct_peers=3, port=1883, service="mqtt", bytes_out=840, bytes_in=410
     ),
-    # THE VOLUME CONTROL: thirty flows to ONE destination. Volume is not fan-out — cardinality
+    # THE VOLUME CONTROL: twenty flows per minute to ONE destination. Volume is not fan-out
     # is the signal, which is exactly what a "too many events" rule could not express.
     "gateway": _Profile(
         every_steps=3, distinct_peers=1, port=443, service="ssl", bytes_out=2210, bytes_in=18400

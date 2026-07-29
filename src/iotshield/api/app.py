@@ -10,11 +10,11 @@ No CORS on purpose — the dashboard calls the API server-to-server, so no
 browser cross-origin request ever occurs in this architecture.
 """
 
-from collections.abc import Iterator
-from typing import Annotated
+from collections.abc import Callable, Iterator
+from typing import Annotated, ParamSpec, TypeVar
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -32,8 +32,51 @@ from iotshield.contracts import (
 )
 from iotshield.storage import make_session_factory, repository
 
+_P = ParamSpec("_P")
+_Item = TypeVar("_Item")
+
 # Query-param bounds: generous for an MVP, but never unbounded.
 LimitParam = Annotated[int, Query(ge=1, le=10_000)]
+
+OffsetParam = Annotated[
+    int,
+    Query(
+        ge=0,
+        description=(
+            "How many rows to skip. Every list ordering here is total (each ends in a unique "
+            "id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether "
+            "more remain."
+        ),
+    ),
+]
+
+TOTAL_HEADER = "X-Total-Count"
+"""How many rows matched, before limit/offset.
+
+A header rather than an envelope so the response BODY stays exactly the contract objects,
+which is what lets the generated TypeScript types and their zod schemas keep working
+unchanged. Without it a capped list is indistinguishable from a complete one — and since
+these queries order newest-first and then reverse, the rows dropped are the OLDEST, so the
+FRONT of the list was silently wrong (ADR-0033).
+"""
+
+
+def _paged(
+    response: Response, query: Callable[_P, repository.Page[_Item]]
+) -> Callable[_P, list[_Item]]:
+    """Run a paged repository query, publish its total, return just the items.
+
+    Wrapped once rather than per endpoint so no route can serve a page and forget to say how
+    much it left behind.
+    """
+
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> list[_Item]:
+        page = query(*args, **kwargs)
+        response.headers[TOTAL_HEADER] = str(page.total)
+        return page.items
+
+    return run
+
 
 # Query datetimes reuse the contracts' canonical rule (golden rule 4): naive
 # input is a 422, aware input is normalized to UTC — the same policy every
@@ -82,38 +125,57 @@ def create_app(engine: Engine) -> FastAPI:
 
     @app.get("/events")
     def events(
+        response: Response,
         session: SessionDep,
         asset_id: str | None = None,
         lane: Lane | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
         limit: LimitParam = 1000,
+        offset: OffsetParam = 0,
     ) -> list[NormalizedEvent]:
-        return repository.get_events(
-            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit
+        """Events oldest-first. `end` is a CLOSED bound (see the note on TimeParam)."""
+        return _paged(response, repository.get_events)(
+            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit, offset=offset
         )
 
     @app.get("/detections")
     def detections(
+        response: Response,
         session: SessionDep,
         asset_id: str | None = None,
         lane: Lane | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
         limit: LimitParam = 1000,
+        offset: OffsetParam = 0,
     ) -> list[DetectionResult]:
-        return repository.get_detections(
-            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit
+        """Detections oldest-first. `end` is HALF-OPEN, matched on `window_start`."""
+        return _paged(response, repository.get_detections)(
+            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit, offset=offset
         )
 
     @app.get("/alerts")
     def alerts(
+        response: Response,
         session: SessionDep,
         status: AlertStatus | None = None,
+        asset_id: str | None = None,
+        start: TimeParam = None,
+        end: TimeParam = None,
         limit: LimitParam = 1000,
+        offset: OffsetParam = 0,
     ) -> list[PrioritizedAlert]:
-        """The ranked triage queue: priority descending."""
-        return repository.get_alerts(session, status=status, limit=limit)
+        """The ranked triage queue: priority descending. `end` is HALF-OPEN on window_start."""
+        return _paged(response, repository.get_alerts)(
+            session,
+            status=status,
+            asset_id=asset_id,
+            start=start,
+            end=end,
+            limit=limit,
+            offset=offset,
+        )
 
     @app.get("/alerts/{alert_id}")
     def alert_by_id(session: SessionDep, alert_id: UUID) -> PrioritizedAlert:
@@ -126,16 +188,21 @@ def create_app(engine: Engine) -> FastAPI:
         return repository.get_detections_by_ids(session, alert.detection_ids)
 
     @app.get("/malformed")
-    def malformed(session: SessionDep, limit: LimitParam = 1000) -> list[MalformedRecord]:
+    def malformed(
+        response: Response,
+        session: SessionDep,
+        limit: LimitParam = 1000,
+        offset: OffsetParam = 0,
+    ) -> list[MalformedRecord]:
         """The audit view: inputs that failed normalization (never dropped)."""
-        return repository.list_malformed(session, limit=limit)
+        return _paged(response, repository.list_malformed)(session, limit=limit, offset=offset)
 
     @app.get("/summary")
     def summary(session: SessionDep) -> Summary:
         top = repository.get_alerts(session, limit=1)
         return Summary(
             counts=repository.count_summary(session),
-            top_alert=top[0] if top else None,
+            top_alert=top.items[0] if top.items else None,
         )
 
     return app

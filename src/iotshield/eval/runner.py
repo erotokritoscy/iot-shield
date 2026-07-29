@@ -17,6 +17,7 @@ from typing import Any
 
 from iotshield.contracts import DetectionResult, PrioritizedAlert
 from iotshield.detect._fitted import is_fitted
+from iotshield.detect.port import Diagnosable
 from iotshield.eval.corpus import Case, Corpus
 from iotshield.eval.fit import FitProtocol, Reservation, prepare_detector, reserve
 from iotshield.eval.report import (
@@ -194,6 +195,17 @@ def evaluate_case(
     # reader needs is this case scored honestly at zero with the reason attached
     # (ADR-0022). Every other outcome judges, fitted or as-configured.
     judging = [o.detector for o in outcomes if is_fitted(o.detector)]
+    # Why a fitted detector will still report nothing (ADR-0033). A detector that declines a
+    # whole asset by design — team3 without that asset's channels, meter without its model —
+    # is otherwise indistinguishable from a clean recording, and under the DEFAULT protocol
+    # the fit-refusal note that would have explained it is never produced. This is the path
+    # that keeps "a row of zeros always arrives with its reason" true when nothing was fitted.
+    silence_notes = [
+        note
+        for detector in judging
+        if isinstance(detector, Diagnosable)
+        and (note := detector.why_silent(ingested.events)) is not None
+    ]
     # Detection runs over the WHOLE recording — a windowed detector needs its warm-up — and
     # only the findings that reach the scored region are judged.
     result = compute_result(spec, ingested, judging)
@@ -218,10 +230,20 @@ def evaluate_case(
         # whose params quarantined every record reported zeros with an empty note list:
         # ``_check_alignment`` compares declared *formats*, so a params-level mismatch passes
         # it and then silently ingests nothing.
+        #
+        # Only the INGEST-QUALITY half, though. `normalize_sources` returns the whole spec's
+        # compatibility warnings alongside them, and `_ingest_key` deliberately omits the
+        # detectors because they cannot change the events — true of the events, false of
+        # these warnings, since lane coverage is computed FROM the detector list. So in a
+        # head-to-head the memo handed spec 2 spec 1's warnings, and `trimodal_all` was
+        # annotated "source lane 'flow' has no detector that consumes it" beside its own
+        # `flow=1.00` recall. `_compatibility_notes(spec)` supplies that half per spec and
+        # uncached, which also stops each one printing twice (ADR-0033).
         notes=sorted(
             {outcome.note for outcome in outcomes if outcome.note}
             | set(spec_notes)
-            | set(ingested.warnings)
+            | set(silence_notes)
+            | {warning for warning in ingested.warnings if warning.startswith("[input:")}
         ),
         timeline=(_timeline(reservation.truth, detections, alerts) if include_timeline else None),
     )

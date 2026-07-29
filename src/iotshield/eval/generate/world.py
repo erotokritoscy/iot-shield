@@ -219,6 +219,36 @@ class Recording:
                 "exactly one device, because it selects that device's profile and is the key its "
                 "faults, its clock and its roster entry are all looked up by"
             )
+        # A fault id names one fault, for the structurally identical reason (ADR-0033).
+        # `fault_id` is asset:kind:start_step and ignores length and intensity, so two faults
+        # that differ only in those collide — and the answer key keys on it: `GroundTruth.faults`
+        # is a set of (asset_id, fault_id) and the alert-level denominator counts distinct
+        # faults. `Observed` already identified this hazard and solved it locally by keying
+        # `expressed` on the spec object; downstream still reads the string, so the refusal
+        # belongs here, where every other "this id must be unique" check already lives.
+        fault_ids = Counter(fault.fault_id for fault in self.faults)
+        colliding = sorted(fault_id for fault_id, count in fault_ids.items() if count > 1)
+        if colliding:
+            raise GenerationError(
+                f"recording {self.name!r} declares faults sharing the id(s) {colliding}; a "
+                "fault id is (asset, kind, start_step), so two faults differing only in length "
+                "or intensity collide and the answer key would merge them into one incident"
+            )
+        # A fault must start inside the recording. Only the lower bound was checked, and the
+        # lanes disagree about what an out-of-range start means: telemetry CLAMPS it to the
+        # last sample while the additive lanes keep counting past the end of the clock, so one
+        # declared fault produced projections over an hour apart on different lanes, sharing a
+        # fault_id — and cross-lane correlation, the whole point of a trimodal corpus, could
+        # never fire. Refused rather than clamped, because clamping is what made them disagree.
+        overrun = sorted(
+            fault.fault_id for fault in self.faults if fault.start_step >= self.clock.steps
+        )
+        if overrun:
+            raise GenerationError(
+                f"recording {self.name!r} starts fault(s) {overrun} at or after the end of its "
+                f"{self.clock.steps}-step clock; a fault happens inside the recording, and the "
+                "lanes do not agree about what a fault outside it means"
+            )
 
     def faults_on(self, asset_id: str) -> tuple[FaultSpec, ...]:
         return tuple(fault for fault in self.faults if fault.asset_id == asset_id)

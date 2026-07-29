@@ -30,7 +30,9 @@ from datetime import timedelta
 
 from iotshield.alert._correlate import (
     correlate_and_rank,
+    counted,
     detection_margin,
+    distinct_judgments,
     narrate,
     severity_from_priority,
 )
@@ -51,7 +53,7 @@ _CRITICALITY_WEIGHT = {
 # Factor tuning (every factor >= 1, so more of anything only raises priority).
 _SEVERITY_CAP = 4.0  # margin past this doesn't raise the severity factor further
 _CORROBORATION_STEP = 0.5  # per extra lane agreeing in the bucket
-_VOLUME_STEP = 0.15  # per extra detection, up to the cap (echoes team2's 1.6 anomaly cap)
+_VOLUME_STEP = 0.15  # per extra distinct judgment, up to the cap (echoes team2's 1.6 cap)
 _VOLUME_CAP = 4
 # priority = 100 * (raw - 1) / (raw - 1 + K): absolute, bounded [0, 100), monotone.
 _SATURATION = 2.0
@@ -79,7 +81,9 @@ class WeightedAlertEngine:
 
         severity = max(1.0, min(detection_margin(strongest), _SEVERITY_CAP))
         corroboration = 1.0 + _CORROBORATION_STEP * (len(lanes) - 1)
-        volume = 1.0 + _VOLUME_STEP * min(len(group) - 1, _VOLUME_CAP)
+        # Distinct judgments, not rows — see `distinct_judgments` (ADR-0033).
+        judgments = distinct_judgments(group)
+        volume = 1.0 + _VOLUME_STEP * min(judgments - 1, _VOLUME_CAP)
         criticality = asset.criticality if asset else Criticality.MEDIUM
         asset_weight = _CRITICALITY_WEIGHT[criticality]
 
@@ -90,7 +94,8 @@ class WeightedAlertEngine:
         rationale = (
             f"priority {priority:.1f} = f(severity {severity:.2f} x corroboration"
             f" {corroboration:.2f} x volume {volume:.2f} x asset_weight {asset_weight:.2f}"
-            f" -> raw {raw:.2f}); {len(group)} detection(s) across {len(lanes)} lane(s) on"
+            f" -> raw {raw:.2f}); {counted(len(group), judgments)} across"
+            f" {len(lanes)} lane(s) on"
             f" {asset_label} ({asset_id}, criticality {criticality}); strongest:"
             f" {strongest.method} score {strongest.score:.4g} vs threshold"
             f" {strongest.threshold:.4g}."

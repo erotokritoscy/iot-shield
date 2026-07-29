@@ -26,6 +26,7 @@ from iotshield.detect.meter._iforest import (
     DEFAULT_MAX_SAMPLES,
     DEFAULT_N_ESTIMATORS,
     DEFAULT_RANDOM_STATE,
+    required_clean_rows,
 )
 
 METHOD = "meter_iforest"
@@ -33,6 +34,15 @@ METHOD = "meter_iforest"
 
 DEFAULT_FP_BUDGET = 0.0014
 """~1 false alarm per meter-month (730 hours), the upstream project's operating budget."""
+
+DEFAULT_MIN_TRAIN_HOURS = required_clean_rows(DEFAULT_FP_BUDGET) + WEEK_HOURS
+"""Least clean history the default budget can actually be fitted from — DERIVED, not typed.
+
+The two gates on "enough history" were independent constants and disagreed: this defaulted
+to two weeks (336) while ``fp_budget``'s quantile needs 715 rows plus the rolling window's
+warm-up. Every meter in the gap passed the first gate and raised inside the second, which on
+a fleet threw away every meter already fitted in that call. Deriving the default from the
+budget is what stops them drifting apart again — change ``fp_budget`` and this follows."""
 
 
 class MeterParams(BaseModel):
@@ -63,7 +73,7 @@ class MeterParams(BaseModel):
         default=1, ge=1, description="Shortest reportable run of anomalous hours"
     )
     min_train_hours: int = Field(
-        default=WEEK_HOURS * 2,
+        default=DEFAULT_MIN_TRAIN_HOURS,
         ge=WEEK_HOURS,
         description="Refuse to fit a meter with less clean history than this",
     )
@@ -81,5 +91,23 @@ class MeterParams(BaseModel):
                 f"min_train_hours ({self.min_train_hours}) must be at least "
                 f"profile_window_hours ({self.profile_window_hours}); a shorter history "
                 "cannot fill the rolling window and would yield no usable feature rows"
+            )
+        # The two gates must agree about what "enough history" means. `min_train_hours` is a
+        # declaration that this much clean history suffices; `fp_budget` independently
+        # refuses any history from which its quantile cannot be estimated (ADR-0030 D5), and
+        # the defaults disagreed — 336 hours passed the first gate and the second demanded
+        # 715. A meter in that gap was accepted and then raised mid-fit, which on a fleet
+        # discarded every meter already fitted in the same call. Same class of error as the
+        # window check above, so it belongs in the same place: named at construction with
+        # both knobs quoted, rather than discovered on someone's 1,656-meter deployment.
+        needed = required_clean_rows(self.fp_budget) + self.profile_window_hours
+        if self.min_train_hours < needed:
+            raise ValueError(
+                f"min_train_hours ({self.min_train_hours}) is too short for fp_budget "
+                f"({self.fp_budget}): estimating that quantile needs "
+                f"{required_clean_rows(self.fp_budget)} clean rows, and the rolling window "
+                f"consumes the first {self.profile_window_hours}, so a fit needs at least "
+                f"{needed} hours. Raise min_train_hours to {needed}, or loosen fp_budget to "
+                f"at least {1 / max(1, self.min_train_hours - self.profile_window_hours):.5f}"
             )
         return self

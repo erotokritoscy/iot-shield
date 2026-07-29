@@ -131,8 +131,8 @@ class TestEndToEnd:
             run_pipeline(config, write_input(tmp_path))
         with open_db(config) as session:
             # Atomicity: events were flushed before the crash, but never committed.
-            assert repository.get_events(session) == []
-            assert repository.list_malformed(session) == []
+            assert list(repository.get_events(session)) == []
+            assert list(repository.list_malformed(session)) == []
 
     def test_report_render_is_human_readable(self, tmp_path: Path) -> None:
         report = run_pipeline(make_config(tmp_path), write_input(tmp_path))

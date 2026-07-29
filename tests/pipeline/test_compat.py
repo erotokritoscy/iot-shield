@@ -37,7 +37,7 @@ def test_identically_configured_detector_twice_warns_about_double_counting() -> 
     issues = check_compatibility(cfg(detectors=[entry, dict(entry)]))
     assert [i.level for i in issues] == [CompatLevel.WARNING]
     assert issues[0].stage == "detectors[1]"
-    assert "detectors[0]" in issues[0].message and "double-counted" in issues[0].message
+    assert "detectors[0]" in issues[0].message and "report every finding twice" in issues[0].message
 
 
 def test_duplicate_detection_ignores_the_order_params_were_written_in() -> None:
@@ -58,7 +58,9 @@ def test_duplicate_detection_resolves_defaults_so_omitted_equals_explicit() -> N
     issues = check_compatibility(
         cfg(source_format="flow-csv", normalizer="flow", detectors=entries)
     )
-    assert [i.level for i in issues if "double-counted" in i.message] == [CompatLevel.WARNING]
+    assert [i.level for i in issues if "report every finding twice" in i.message] == [
+        CompatLevel.WARNING
+    ]
 
 
 def test_the_same_detector_with_different_params_is_not_a_duplicate() -> None:
@@ -70,7 +72,7 @@ def test_the_same_detector_with_different_params_is_not_a_duplicate() -> None:
     issues = check_compatibility(
         cfg(source_format="syslog", normalizer="syslog", detectors=entries)
     )
-    assert not [i for i in issues if "double-counted" in i.message]
+    assert not [i for i in issues if "report every finding twice" in i.message]
 
 
 def test_unsupported_source_format_is_an_error() -> None:
@@ -164,8 +166,15 @@ class TestMultiSource:
         assert "sisslog" in errors[0].message
 
     def test_union_of_source_lanes_keeps_a_detector_from_idling(self) -> None:
-        # Two sources, one telemetry + one log; a log-lane detector no longer idles because
+        # Two sources, one telemetry + one log; the log-lane detector no longer idles because
         # a source now produces the log lane (the union across sources feeds the joint).
+        #
+        # log_burst, not a second stub_threshold. This test used to pair stub_threshold with
+        # `lane: log` and assert "both detectors fire: a fully clean chain" — which was false:
+        # a LOG event carries no `value`, so that detector could never fire and the guard was
+        # certifying a chain that produces nothing. It is now refused at construction, and the
+        # assertion here is about lane COVERAGE, which needs a detector that can actually
+        # judge the lane to mean anything.
         config = self.cfg_ms(
             [
                 {"normalizer": "stub", "source_format": "stub-csv"},
@@ -173,8 +182,8 @@ class TestMultiSource:
             ],
             detectors=[
                 {"name": "stub_threshold", "params": {"lane": "telemetry"}},
-                {"name": "stub_threshold", "params": {"lane": "log"}},
+                {"name": "log_burst", "params": {"preset": "auth_failure"}},
             ],
         )
-        # Both produced lanes are consumed and both detectors fire: a fully clean chain.
+        # Both produced lanes are consumed and both detectors can fire: a fully clean chain.
         assert check_compatibility(config) == []

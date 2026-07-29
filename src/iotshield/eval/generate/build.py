@@ -40,7 +40,19 @@ from iotshield.eval.generate.world import (
     Scenario,
 )
 from iotshield.eval.truth import AssetTruth, GroundTruth, Incident
-from iotshield.pipeline.registry import lookup
+from iotshield.pipeline.registry import build_normalizer, lookup
+
+_NORMALIZER_FOR = {
+    "stub-csv": "stub",
+    "syslog": "syslog",
+    "flow-csv": "flow",
+    "zeek-conn": "flow",
+}
+"""Which normalizer reads each renderable format back — the inverse of ``RENDERERS``.
+
+Written out rather than derived, so a renderer added without a reader fails the round-trip
+check loudly instead of skipping it into invisibility.
+"""
 
 
 def _resolve(source_format: str) -> tuple[Renderer, Behaviour]:
@@ -214,6 +226,48 @@ def _validate(
         )
 
 
+def _check_round_trip(recording: Recording, case_input: CaseInput) -> None:
+    """Refuse bytes a normalizer reads back as a different device — or not at all.
+
+    ``Device.asset_id``'s docstring claims "the builder checks this rather than trusting it".
+    It did not: ``_validate``'s stray check inspects the GENERATOR's events, never what a
+    normalizer parses out of the rendered text. The flow lane was protected only by accident
+    (an asset id must be an IP in the monitored networks, so a bad one raises), and telemetry
+    and log were not protected at all.
+
+    The damage is silent and total. ``Device(asset_id="Pump 3")`` on syslog renders and
+    validates cleanly, and the pipeline attributes those events to ``"Pump"`` — because the
+    HOST field is space-delimited — so the roster and every ``fault_id`` name a device that
+    appears nowhere in the data, recall on it is structurally zero forever, and every
+    detection lands in ``unlabelled_detections`` with nothing saying why.
+
+    Round-tripping through the ACTUAL normalizer is what makes this unable to rot: a
+    character policy per renderer would have to be re-derived whenever a dialect changed a
+    delimiter, while this tests the thing itself (ADR-0033).
+    """
+    normalizer_name = _NORMALIZER_FOR.get(case_input.source_format)
+    if normalizer_name is None:  # pragma: no cover - a format with no reader cannot be scored
+        return
+    normalizer = build_normalizer(normalizer_name, {})
+    result = normalizer.normalize(
+        case_input.text, source_format=case_input.source_format, origin=recording.name
+    )
+    if result.malformed:
+        raise GenerationError(
+            f"recording {recording.name!r} rendered {len(result.malformed)} record(s) as "
+            f"{case_input.source_format} that the matching normalizer cannot read back; the "
+            f"first says: {result.malformed[0].error}"
+        )
+    declared = {device.asset_id for device in recording.devices}
+    parsed = {event.asset_id for event in result.events}
+    if parsed - declared:
+        raise GenerationError(
+            f"recording {recording.name!r} rendered as {case_input.source_format} reads back as "
+            f"device(s) {sorted(parsed - declared)}, which it never declared — an asset id must "
+            f"survive its own renderer, or the answer key names a device absent from the data"
+        )
+
+
 def _case(scenario: Scenario, recording: Recording) -> Case:
     inputs: list[CaseInput] = []
     # Per (asset, lane), not per asset: a device's modalities sample at wildly different
@@ -224,6 +278,7 @@ def _case(scenario: Scenario, recording: Recording) -> Case:
 
     for source_format in scenario.formats:
         case_input, events, lane, expressed_here = _observe_lane(scenario, recording, source_format)
+        _check_round_trip(recording, case_input)
         inputs.append(case_input)
         for event in events:
             clocks.setdefault(event.asset_id, {}).setdefault(lane, set()).add(event.timestamp)

@@ -54,7 +54,7 @@ def test_event_round_trip(session: Session) -> None:
         metadata={"line_number": 42},
     )
     repository.insert_events(session, [event])
-    assert repository.get_events(session) == [event]
+    assert list(repository.get_events(session)) == [event]
 
 
 def test_event_timestamp_normalized_to_utc_across_round_trip(session: Session) -> None:
@@ -80,7 +80,7 @@ def test_malformed_round_trip(session: Session) -> None:
         origin="file://demo.csv",
     )
     repository.insert_malformed(session, [record])
-    assert repository.list_malformed(session) == [record]
+    assert list(repository.list_malformed(session)) == [record]
 
 
 def test_detection_round_trip(session: Session) -> None:
@@ -97,7 +97,7 @@ def test_detection_round_trip(session: Session) -> None:
         metadata={"artifact": "artifacts/skab/lstm_ae.pt"},
     )
     repository.insert_detections(session, [detection])
-    assert repository.get_detections(session) == [detection]
+    assert list(repository.get_detections(session)) == [detection]
 
 
 def test_alert_round_trip(session: Session) -> None:

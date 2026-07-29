@@ -327,7 +327,13 @@ class SensorRig(LaneBehaviour):
             # Co-perturbation on the other channels, so a spike reads as a correlated event
             # rather than one lonely column. Deliberately small: it must not itself cross the
             # boundary, or every fault shape would be catchable on every channel.
-            if channel is not profile.surge:
+            # != , not `is not`. Identity on two strings is true only because every profile
+            # spells the channel and its surge name as the same literal in this module, which
+            # CPython interns; a profile whose names came from a device catalogue (JSON, a
+            # config loader, an f-string) would fail the identity test and the surge channel
+            # would receive BOTH perturbations, silently breaking the invariant this branch
+            # exists to protect. ruff's F632 only fires against a literal operand (ADR-0033).
+            if channel != profile.surge:
                 values[span] += 0.1 * float(np.std(values)) * shape
 
     def _drift(self, series: _Series, profile: _Profile, fault: FaultSpec, span: slice) -> None:

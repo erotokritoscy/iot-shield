@@ -74,6 +74,15 @@ def score(forest: IsolationForest, matrix: np.ndarray) -> np.ndarray:
     return -forest.score_samples(np.asarray(matrix, dtype=float))
 
 
+def required_clean_rows(fp_budget: float) -> int:
+    """Fewest clean rows from which ``fp_budget``'s quantile can be estimated at all.
+
+    Named rather than inlined so ``MeterParams`` can check its two gates agree *before* a
+    fit starts, instead of the mismatch surfacing as a raise partway through a fleet.
+    """
+    return int(np.ceil(1.0 / fp_budget))
+
+
 def threshold_at_budget(clean_scores: np.ndarray, fp_budget: float) -> float:
     """The absolute score above which at most ``fp_budget`` of clean hours would alarm.
 
@@ -100,7 +109,7 @@ def threshold_at_budget(clean_scores: np.ndarray, fp_budget: float) -> float:
     if not 0.0 < fp_budget < 1.0:
         raise ValueError(f"fp_budget must be a fraction strictly between 0 and 1, got {fp_budget}")
     if fp_budget * scores.size < 1.0:
-        needed = int(np.ceil(1.0 / fp_budget))
+        needed = required_clean_rows(fp_budget)
         raise ValueError(
             f"fp_budget={fp_budget:g} cannot be estimated from {scores.size} clean row(s): it "
             f"asks for the top {fp_budget * scores.size:.2f} of them. Fit on at least "

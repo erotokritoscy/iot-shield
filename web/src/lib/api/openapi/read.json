@@ -52,6 +52,7 @@
     "/events": {
       "get": {
         "summary": "Events",
+        "description": "Events oldest-first. `end` is a CLOSED bound (see the note on TimeParam).",
         "operationId": "events_events_get",
         "parameters": [
           {
@@ -131,6 +132,19 @@
               "default": 1000,
               "title": "Limit"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain."
           }
         ],
         "responses": {
@@ -164,6 +178,7 @@
     "/detections": {
       "get": {
         "summary": "Detections",
+        "description": "Detections oldest-first. `end` is HALF-OPEN, matched on `window_start`.",
         "operationId": "detections_detections_get",
         "parameters": [
           {
@@ -243,6 +258,19 @@
               "default": 1000,
               "title": "Limit"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain."
           }
         ],
         "responses": {
@@ -276,7 +304,7 @@
     "/alerts": {
       "get": {
         "summary": "Alerts",
-        "description": "The ranked triage queue: priority descending.",
+        "description": "The ranked triage queue: priority descending. `end` is HALF-OPEN on window_start.",
         "operationId": "alerts_alerts_get",
         "parameters": [
           {
@@ -296,6 +324,56 @@
             }
           },
           {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -306,6 +384,19 @@
               "default": 1000,
               "title": "Limit"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain."
           }
         ],
         "responses": {
@@ -438,6 +529,19 @@
               "default": 1000,
               "title": "Limit"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain."
           }
         ],
         "responses": {

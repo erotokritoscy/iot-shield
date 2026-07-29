@@ -339,7 +339,14 @@
             "title": "Name"
           },
           "spec": {
-            "$ref": "#/components/schemas/PipelineSpec"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_formats": {
             "items": {
@@ -361,12 +368,17 @@
             },
             "type": "array",
             "title": "Corpora"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "Why this spec could not be loaded; empty when it loaded. Published rather than filtered out so a spec an operator has broken is visibly broken instead of silently absent from the picker \u2014 the same rule CorpusSummary.error follows.",
+            "default": ""
           }
         },
         "type": "object",
         "required": [
-          "name",
-          "spec"
+          "name"
         ],
         "title": "BenchSpecSummary",
         "description": "One shipped benchmark spec, and the corpora it can actually run on.\n\nPublished so a UI can run **the committed spec** rather than compose a lookalike. The\ndashboard's Evaluate page used to build its own ``PipelineSpec`` from the detectors picked\non screen, which silently dropped the ``assets:`` block and every source and engine\nparameter \u2014 so the page and the CLI reported different numbers for what read as the same\nbenchmark (mean true priority 39.46 from ``stub.yaml``, 35.72 from the page's\nreconstruction) with nothing on either surface disclosing which spec produced them.\n\n``corpora`` is the join a client would otherwise have to compute: which corpora this spec's\nsource shape matches (``eval.bench``)."
@@ -1578,8 +1590,9 @@
         "properties": {
           "content": {
             "type": "string",
+            "maxLength": 4000000,
             "title": "Content",
-            "description": "Raw input payload for this source"
+            "description": "Raw input payload for this source, at most 4,000,000 characters"
           },
           "origin": {
             "type": "string",

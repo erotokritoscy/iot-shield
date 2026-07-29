@@ -1,7 +1,7 @@
 """Shared AlertEngine machinery: correlate, rank, and label — implemented once.
 
-Both alert-engine adapters follow the same skeleton: bucket detections by asset and
-a floored time window, build one alert per bucket, then rank by priority. Only the
+Both alert-engine adapters follow the same skeleton: group an asset's detections into
+episodes by proximity, build one alert per episode, then rank by priority. Only the
 per-bucket scoring differs. That skeleton (``correlate_and_rank``), the bucketing
 and margin measure it builds on, and the analyst-facing priority -> severity mapping
 (``severity_from_priority``, a product convention independent of engine) live here
@@ -11,7 +11,7 @@ and single-asset.
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from iotshield.contracts import AlertSeverity, DetectionResult, PrioritizedAlert
 from iotshield.enrichment import Enrichment
@@ -32,6 +32,33 @@ _SEVERITY_FLOOR = [
 ]
 
 
+def distinct_judgments(group: Sequence[DetectionResult]) -> int:
+    """How many distinct claims a bucket holds, which is what ``volume`` measures (ADR-0033).
+
+    ``(lane, window_start, window_end)`` is the whole of what a detector asserts about the
+    world (ADR-0028 D1), so two rows describing the same lane over the same window are one
+    claim however many detectors or rules produced them. ``method`` is deliberately not in
+    the key — including it would count *producers*, which is the defect this replaces: two
+    rule instances matching one flow record, or two presets of one adapter judging one
+    reading, used to buy corroboration that no additional evidence supported.
+
+    Shared by both engines so they cannot disagree about what "more of this" means.
+    """
+    return len({(item.lane, item.window_start, item.window_end) for item in group})
+
+
+def counted(rows: int, judgments: int) -> str:
+    """How a rationale reports volume's input: rows, and distinct claims when they differ.
+
+    Naming the distinct count only when it differs keeps the common case terse and makes
+    the interesting one — several detectors agreeing about one window — legible rather
+    than looking like an arithmetic error.
+    """
+    if rows == judgments:
+        return f"{rows} detection(s)"
+    return f"{rows} detection(s) ({judgments} distinct)"
+
+
 def detection_margin(detection: DetectionResult) -> float:
     """How far a detection cleared its threshold (score / threshold); 2.0 when the
     threshold is non-positive, so a degenerate detector still reads as anomalous."""
@@ -42,7 +69,22 @@ def detection_margin(detection: DetectionResult) -> float:
 
 def severity_from_priority(priority: float) -> AlertSeverity:
     """Map a 0-100 priority to its analyst-facing label. A shared convention: a 70
-    reads as CRITICAL regardless of which engine produced it."""
+    reads as CRITICAL regardless of which engine produced it.
+
+    The bands are absolute, and each band is ``[floor, next floor)`` — inclusive on the
+    left. What is *shared* is the mapping, not the reachable range: an engine occupies
+    only part of this scale, so a severity is comparable between two alerts of one engine
+    and only loosely between engines.
+
+    - ``weighted`` spans LOW..CRITICAL. Its factors cap at ``4.0 x 2.0 x 1.6 x 1.3 =
+      16.64``, and the saturating transform maps that to **88.66**, so EMERGENCY is out
+      of reach by construction.
+    - ``stub`` spans LOW..EMERGENCY, and reaches 100 when several detections agree.
+
+    Widening either range is a scoring change, not a mapping change: raise a factor cap or
+    ``_SATURATION`` in the engine, never a floor here, or the two engines stop agreeing
+    about what a 70 means.
+    """
     for floor, severity in _SEVERITY_FLOOR:
         if priority >= floor:
             return severity
@@ -132,20 +174,68 @@ def narrate(
     )
 
 
-def _floor_to_bucket(moment: datetime, bucket: timedelta) -> datetime:
-    seconds = bucket.total_seconds()
-    return datetime.fromtimestamp((moment.timestamp() // seconds) * seconds, tz=UTC)
+MAX_BUCKET_SPAN = timedelta(minutes=10)
+"""How far one alert may stretch, however tightly its detections chain (ADR-0033).
+
+Proximity grouping is *single-link*: A joins B and B joins C puts all three in one alert
+even when A and C are far apart. Without a ceiling a slow drizzle of detections chains
+indefinitely and an operator is handed one alert spanning hours, which is not an incident
+they can act on. Ten minutes is a product judgment about what reads as *one* thing, not a
+derived quantity; it is deliberately larger than the default five-minute ``bucket`` so the
+cap only bites on genuine chains rather than on ordinary corroboration.
+"""
 
 
 def bucket_by_asset_window(
-    detections: Sequence[DetectionResult], bucket: timedelta
+    detections: Sequence[DetectionResult],
+    bucket: timedelta,
+    *,
+    max_span: timedelta = MAX_BUCKET_SPAN,
 ) -> list[list[DetectionResult]]:
-    """Group detections into (asset_id, floored window_start) buckets, insertion-ordered."""
-    groups: dict[tuple[str, datetime], list[DetectionResult]] = {}
+    """Group an asset's detections into episodes by PROXIMITY (ADR-0033).
+
+    ``bucket`` is the largest gap that still counts as the same episode: walking an asset's
+    detections in time order, a new episode opens when this one starts more than ``bucket``
+    after the furthest point the current episode has reached.
+
+    Why not a floored grid, which is what this did before. A grid snaps ``window_start``
+    onto fixed multiples of ``bucket`` since the epoch, so grouping became a question of
+    *where* an incident fell rather than how close its detections were: two detections
+    seconds apart straddling a grid line never corroborated, while two nearly ``bucket``
+    apart did. Corroboration is the engine's headline factor, so that made a published
+    priority a property of the wall clock — the same three detections scored CRITICAL at
+    12:00:00 and split into HIGH + MEDIUM at 12:04:40. It also read only ``window_start``,
+    so a long collective span did not absorb a detection lying *inside* it and one incident
+    became two alerts with overlapping ranges.
+
+    Comparing against the running ``max_end`` rather than the previous ``window_start``
+    is what fixes containment: an enclosed detection yields a negative gap and joins.
+    Sorting first is what keeps the result independent of input order, which the grid got
+    for free and a walk has to earn.
+    """
+    by_asset: dict[str, list[DetectionResult]] = {}
     for detection in detections:
-        key = (detection.asset_id, _floor_to_bucket(detection.window_start, bucket))
-        groups.setdefault(key, []).append(detection)
-    return list(groups.values())
+        by_asset.setdefault(detection.asset_id, []).append(detection)
+
+    groups: list[list[DetectionResult]] = []
+    for series in by_asset.values():
+        ordered = sorted(series, key=lambda item: (item.window_start, item.window_end))
+        current: list[DetectionResult] = []
+        start = end = ordered[0].window_start
+        for detection in ordered:
+            if current and (
+                detection.window_start - end > bucket
+                or max(end, detection.window_end) - start > max_span
+            ):
+                groups.append(current)
+                current = []
+            if not current:
+                start, end = detection.window_start, detection.window_end
+            else:
+                end = max(end, detection.window_end)
+            current.append(detection)
+        groups.append(current)
+    return groups
 
 
 def correlate_and_rank(

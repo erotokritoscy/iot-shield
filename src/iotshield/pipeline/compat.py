@@ -20,15 +20,18 @@ The single result feeds three consumers: the runner/CLI raise on any ERROR; the
 Pipeline API returns 422 on ERRORs and passes WARNINGs back; the UI shows both inline.
 """
 
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from iotshield.capabilities import Token, formats_in, lanes_in
 from iotshield.contracts import Lane
 from iotshield.pipeline.config import PipelineSpec, config_fingerprint
 from iotshield.pipeline.registry import (
     alert_engine_capability,
+    build_detector,
     detector_capability,
     effective_detector_params,
     normalizer_capability,
@@ -90,6 +93,7 @@ def check_compatibility(config: PipelineSpec) -> list[CompatIssue]:
     # factor counts detections as *independent corroboration*, which measurably inflates
     # priority for evidence that was only ever gathered once (ADR-0020 D4). Configuring one
     # adapter twice with *different* params is the legitimate case and stays silent.
+    issues.extend(_duplicate_source_issues(config))
     issues.extend(_duplicate_detector_issues(config))
 
     # Lane joint: each detector's lane must be one some source produces, else the detector
@@ -188,6 +192,32 @@ def ensure_compatible(config: PipelineSpec) -> list[CompatIssue]:
     return issues
 
 
+def _built_fingerprint(name: str, written: Mapping[str, Any], resolved: Mapping[str, Any]) -> str:
+    """A detector's identity taken from what it BUILDS, not from what was written.
+
+    ``effective_detector_params`` fills defaults from ``inspect.signature``, which is the
+    real default only for adapters that put it there. Every *learning* adapter's factory
+    params default to the ``None`` sentinel by design (``AdapterSpec.params_type`` says so),
+    and ``flow_burst``'s window and threshold come from its **preset**, not its signature —
+    so ``{preset: fan_out}`` and ``{preset: fan_out, threshold: 20}`` fingerprinted
+    differently while constructing byte-identical detectors, and the duplicate warning never
+    fired. ``config_fingerprint`` hashes with ``json.dumps`` besides, so YAML's ``80`` and a
+    factory's ``80.0`` also disagreed.
+
+    Constructing is the one thing that cannot drift from the truth, and it is affordable
+    *here* because this runs only for a name that appears more than once — the guard's
+    capability reads stay construction-free, which is what ADR-0014 actually requires.
+    Falls back to the param fingerprint if construction fails: a bad param is a separate
+    ERROR the detector loop already reports, and a duplicate warning must not mask it.
+    """
+    try:
+        built = build_detector(name, dict(written))
+    except (ValueError, TypeError):
+        return config_fingerprint(name, resolved)
+    state = {key: repr(value) for key, value in sorted(vars(built).items())}
+    return config_fingerprint(name, state)
+
+
 def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
     """Warn once per detector entry that exactly repeats an earlier one.
 
@@ -197,6 +227,9 @@ def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
     """
     issues: list[CompatIssue] = []
     seen: dict[str, int] = {}
+    repeated_names = {
+        name for name, count in Counter(item.name for item in config.detectors).items() if count > 1
+    }
     for index, detector in enumerate(config.detectors):
         # Compare *effective* params (factory defaults filled in), so `{}` and
         # `{preset: fan_out}` are recognised as the same detector rather than only textually
@@ -206,7 +239,11 @@ def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
             resolved = effective_detector_params(detector.name, detector.params)
         except ValueError:
             resolved = dict(detector.params)
-        fingerprint = config_fingerprint(detector.name, resolved)
+        fingerprint = (
+            _built_fingerprint(detector.name, detector.params, resolved)
+            if (detector.name in repeated_names)
+            else config_fingerprint(detector.name, resolved)
+        )
         first = seen.get(fingerprint)
         if first is None:
             seen[fingerprint] = index
@@ -215,9 +252,50 @@ def _duplicate_detector_issues(config: PipelineSpec) -> list[CompatIssue]:
             CompatIssue(
                 CompatLevel.WARNING,
                 f"detectors[{index}]",
-                f"detector {detector.name!r} is configured identically to detectors[{first}]; "
-                f"it will judge the same events twice and its findings will be double-counted "
-                f"as corroborating evidence. Vary its params, or remove one.",
+                f"detector {detector.name!r} builds the same detector as detectors[{first}]; "
+                f"it will judge the same events twice and report every finding twice. "
+                f"Remove one, or give it a genuinely different configuration.",
+            )
+        )
+    return issues
+
+
+def _duplicate_source_issues(config: PipelineSpec) -> list[CompatIssue]:
+    """Warn once per source entry that ingests the same bytes as an earlier one.
+
+    The detector guard above exists because judging one event twice double-reports it.
+    Duplicating a *source* reaches the same place by a shorter road — every record is
+    ingested twice, so every detector emits every finding twice — and nothing checked it.
+    The project already knows the rule elsewhere: the corpus generator refuses a scenario
+    that records two dialects of one lane, on the stated grounds that "a run pools its
+    sources, so two dialects of one lane double every event" (ADR-0033).
+
+    Keyed on ``path`` as well as normalizer/format/params. Path is deliberately absent from
+    ``config_fingerprint`` because it is not part of the chain's *shape* — but identity of
+    the bytes is exactly what this check is about. A spec with no paths (the API transport,
+    where content arrives in the body) falls back to shape alone, which is the most that can
+    be known there.
+    """
+    issues: list[CompatIssue] = []
+    seen: dict[tuple[str, str, str | None], int] = {}
+    for index, source in enumerate(config.sources):
+        key = (
+            source.source_format,
+            config_fingerprint(source.normalizer, dict(source.params)),
+            source.path,
+        )
+        first = seen.get(key)
+        if first is None:
+            seen[key] = index
+            continue
+        where = f" ({source.path})" if source.path else ""
+        issues.append(
+            CompatIssue(
+                CompatLevel.WARNING,
+                f"sources[{index}]",
+                f"source{where} is ingested identically by sources[{first}]; a run pools its "
+                f"sources, so every record will be counted twice and every detector will "
+                f"report every finding twice. Remove one.",
             )
         )
     return issues

@@ -35,7 +35,16 @@ export const isNumeric = (param: ParamInfo): boolean =>
 export function initialValue(param: ParamInfo): ParamValue {
   if (param.choices && param.choices.length > 0) {
     const wanted = param.default === null || param.default === undefined ? null : String(param.default);
-    return wanted !== null && param.choices.includes(wanted) ? wanted : (param.choices[0] as string);
+    // An OPTIONAL closed vocabulary opens on "not given", like every other optional param.
+    // Preselecting choices[0] fabricated a value the operator never chose and — because
+    // `isUntouched` only recognises "" as untouched when the default is null — submitted it.
+    // Live since /modules started reporting choices for optional Literals: `meter.meter_type`
+    // publishes ["water","electricity"] with default null, and picking a source dialect then
+    // silently pinned the utility. Harmless only while both dialects happen to default to
+    // water; the first adapter whose optional default is not choices[0] would be overridden
+    // with nothing on screen saying so (ADR-0033).
+    if (wanted === null) return "";
+    return param.choices.includes(wanted) ? wanted : (param.choices[0] as string);
   }
   if (param.type === "bool") return Boolean(param.default);
   if (param.default === null || param.default === undefined) return "";

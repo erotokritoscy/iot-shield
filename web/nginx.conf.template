@@ -20,7 +20,10 @@ server {
 
     # Run inputs travel inline as JSON, and an operator uploading a Zeek conn.log is an
     # ordinary case — the default 1 MB would refuse it as a 413 with no useful message.
-    client_max_body_size 64m;
+    # Matches control.MAX_SOURCE_CHARS (4,000,000) with headroom for JSON escaping and
+    # the surrounding spec. A proxy that accepts far more than the app will is a promise
+    # the app cannot keep: the caller uploads for a minute and is then refused.
+    client_max_body_size 8m;
 
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;

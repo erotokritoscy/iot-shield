@@ -32,7 +32,12 @@ def main() -> int:
         ("pipeline", create_control_app(create_engine("sqlite://"))),
     ):
         target = out / f"{name}.json"
-        target.write_text(json.dumps(app.openapi(), indent=2) + "\n", encoding="utf-8")
+        # newline="\n": write_text otherwise translates to os.linesep, so regenerating on
+        # Windows rewrote every line of a committed snapshot as CRLF and buried the real
+        # schema change in a whole-file diff (the same lesson as bundle.NEWLINE, ADR-0028).
+        target.write_text(
+            json.dumps(app.openapi(), indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
         print(f"wrote {target}", file=sys.stderr)
     return 0
 

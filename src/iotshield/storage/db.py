@@ -5,8 +5,10 @@ Whoever runs the app supplies the database URL: tests pass
 deliberately no default URL — config must say where the database is.
 """
 
+import json
 import os
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +37,20 @@ def _enable_sqlite_fks(dbapi_connection: Any, _connection_record: Any) -> None:
 
 
 def make_engine(url: str) -> Engine:
-    engine = create_engine(url)
+    # pool_pre_ping: both API services hold one engine for the process lifetime, and
+    # QueuePool hands out connections without checking them, so after a Postgres restart
+    # or an idle timeout every checked-out-stale connection serves an OperationalError
+    # until it recycles. In compose the APIs deliberately outlive Postgres restarts.
+    #
+    # json_serializer: the belt to _reject_non_finite's braces (contracts/models.py). The
+    # contract refuses nan/inf on the way in; this refuses it on the way OUT, so a row
+    # built by hand or by a future writer cannot put the non-JSON tokens NaN/Infinity into
+    # a JSON column — invalid JSON that SQLite accepts silently and Postgres rejects mid-run.
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        json_serializer=partial(json.dumps, allow_nan=False),
+    )
     if engine.dialect.name == "sqlite":
         sa_event.listen(engine, "connect", _enable_sqlite_fks)
     return engine

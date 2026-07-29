@@ -92,10 +92,18 @@ class BenchSpecSummary(BaseModel):
     """
 
     name: str
-    spec: PipelineSpec
+    spec: PipelineSpec | None = None
     source_formats: list[str] = Field(default_factory=list)
     detectors: list[str] = Field(default_factory=list)
     corpora: list[str] = Field(default_factory=list)
+    error: str = Field(
+        default="",
+        description=(
+            "Why this spec could not be loaded; empty when it loaded. Published rather than "
+            "filtered out so a spec an operator has broken is visibly broken instead of "
+            "silently absent from the picker — the same rule CorpusSummary.error follows."
+        ),
+    )
 
 
 class CorporaResponse(BaseModel):
@@ -265,6 +273,7 @@ def create_eval_router() -> APIRouter:
                 source_formats=list(bench.source_formats),
                 detectors=list(bench.detectors),
                 corpora=[name for name, formats in shapes if bench.fits(formats)],
+                error=bench.error,
             )
             for bench in list_bench_specs()
         ]

@@ -14,7 +14,9 @@ from datetime import timedelta
 
 from iotshield.alert._correlate import (
     correlate_and_rank,
+    counted,
     detection_margin,
+    distinct_judgments,
     narrate,
     severity_from_priority,
 )
@@ -52,16 +54,24 @@ class StubAlertEngine:
         strongest = max(group, key=detection_margin)
         lanes = {detection.lane for detection in group}
 
-        base = 30.0 + 30.0 * max(0.0, min(detection_margin(strongest), 2.0)) / 2.0
+        # Measured from the margin ABOVE the threshold, not from the margin itself. The port
+        # guarantees score > threshold, so margin > 1 always: starting the scale at 30 put a
+        # floor of 45 under every alert this engine could produce and made AlertSeverity.LOW
+        # unreachable — a triage queue whose default engine cannot say "this one is minor".
+        # Subtracting 1 first makes a barely-over-threshold detection score near zero, which
+        # is what the weighted engine already does (ADR-0033).
+        base = 30.0 * max(0.0, min(detection_margin(strongest) - 1.0, 2.0))
         corroboration = 20.0 * (len(lanes) - 1)
-        volume = 5.0 * min(len(group) - 1, 3)
+        # Distinct judgments, not rows — see `_correlate.distinct_judgments` (ADR-0033).
+        judgments = distinct_judgments(group)
+        volume = 5.0 * min(judgments - 1, 3)
         criticality = asset.criticality if asset else Criticality.MEDIUM
         criticality_bonus = _CRITICALITY_BONUS[criticality]
         priority = min(base + corroboration + volume + criticality_bonus, 100.0)
 
         asset_label = asset.name if asset else "unregistered asset"
         rationale = (
-            f"{len(group)} detection(s) across {len(lanes)} lane(s) on {asset_label}"
+            f"{counted(len(group), judgments)} across {len(lanes)} lane(s) on {asset_label}"
             f" ({asset_id}, criticality {criticality}); strongest: {strongest.method}"
             f" score {strongest.score:.4g} vs threshold {strongest.threshold:.4g}."
         )

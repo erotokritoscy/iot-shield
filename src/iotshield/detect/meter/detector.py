@@ -152,6 +152,33 @@ class MeterIForestDetector:
             detections.extend(self._detect_asset(asset_id, asset_events, model))
         return detections
 
+    def why_silent(self, events: Sequence[NormalizedEvent]) -> str | None:
+        """The optional ``Diagnosable`` capability: which meters have no model to judge them.
+
+        One model per meter is the design (ADR-0030 D7), so a meter absent from the artifact
+        is skipped — correctly, since scoring it against another meter's normal would measure
+        the difference between two households. But the run reports only "no detections",
+        which reads as "these meters are fine" (ADR-0033).
+        """
+        fitted = self._fitted
+        if fitted is None:
+            # Untrained entirely: detect() raises NotFitted and compute_run refuses the run
+            # before this is ever asked, so there is no silence to explain here.
+            return None
+        unmodelled = sorted(
+            {
+                asset_id
+                for asset_id, _ in group_by_asset(events, lane=self.lane, keep=_is_meter_reading)
+                if asset_id not in fitted
+            }
+        )
+        if not unmodelled:
+            return None
+        return (
+            f"{METHOD} has no fitted model for {', '.join(unmodelled)}: those meters were "
+            f"skipped, not scored - one model per meter means each needs its own clean history"
+        )
+
     def fit(self, events: Sequence[NormalizedEvent]) -> MeterIForestDetector:
         """Fit one model per meter from ``events`` (assumed clean); return a new detector.
 

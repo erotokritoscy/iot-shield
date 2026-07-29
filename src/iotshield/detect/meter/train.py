@@ -64,8 +64,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     params = MeterParams(fp_budget=args.fp_budget, n_estimators=args.n_estimators)
     detector = fit_from_file(args.source, params, source_format=args.source_format)
     states = [detector.state_for(asset_id) for asset_id in detector.fitted_assets]
+    # newline="\n": write_text otherwise translates to os.linesep, so regenerating on Windows
+    # rewrote every line of a committed artifact as CRLF and buried a real one-value change in
+    # a 3,000-line diff. `bundle.NEWLINE` records the same lesson for corpora (ADR-0028).
     args.out.write_text(
-        MeterArtifact(params=params, meters=states).model_dump_json(indent=2), encoding="utf-8"
+        MeterArtifact(params=params, meters=states).model_dump_json(indent=2),
+        encoding="utf-8",
+        newline="\n",
     )
 
     # Report from the models already in hand. Reading `artifact.fitted` here would re-fit

@@ -6,7 +6,9 @@ Design rules enforced here, not merely documented:
 - Detections and alerts describe time *intervals*; a point anomaly is a zero-length window.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from math import isfinite
 from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 
@@ -51,7 +53,18 @@ def _reject_epoch_number(value: Any) -> Any:
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware (naive datetimes are rejected)")
-    return value.astimezone(UTC)
+    try:
+        return value.astimezone(UTC)
+    except OverflowError as exc:
+        # Shifting the offset can push a datetime past datetime.min/max, and OverflowError
+        # is an ArithmeticError — pydantic only converts ValueError/AssertionError into a
+        # ValidationError, so this escaped the normalizer's handler and killed the whole
+        # run. One line stands between a hostile log line and the trust boundary: a record
+        # pydantic itself parsed (e.g. '9999-12-31T23:59:59-05:00') belongs in the malformed
+        # audit view like any other unusable input, never as a crash (ADR-0004).
+        raise ValueError(
+            "timestamp is out of the representable range once converted to UTC"
+        ) from exc
 
 
 UtcDatetime = Annotated[
@@ -67,6 +80,41 @@ FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 """A float that rejects nan/inf — non-finite values break JSON serialization
 (the API 500s) and storage (SQLite binds NaN as NULL). Named once so every
 numeric contract field is finite-by-default (mirrors UtcDatetime for time)."""
+
+
+def _reject_non_finite(value: dict[str, Any]) -> dict[str, Any]:
+    """Extend the finite-value law to the free-form dicts (ADR-0033).
+
+    ``FiniteFloat`` covered only the scalar fields, but the numbers a detector actually
+    produces live in ``evidence``/``metadata``/``score_components`` — and those were
+    unguarded, so the law held everywhere except where it mattered. The consequences
+    diverged by store, which is the tell that this is a *contract* concern: ``json.dumps``
+    emits the non-JSON tokens ``NaN``/``Infinity``, which Postgres refuses — and since a
+    run is one transaction, one bad number rolled back every event, detection and alert of
+    that run — while SQLite stored the invalid JSON happily and the file sink silently
+    rewrote it to ``null``. Rejecting here means a NaN-producing detector fails loudly and
+    a partner feed's bad record is quarantined, which is what ADR-0009 decided.
+    """
+    for key, item in value.items():
+        if _has_non_finite(item):
+            raise ValueError(f"{key!r} contains a non-finite number (nan/inf is not JSON)")
+    return value
+
+
+def _has_non_finite(item: Any) -> bool:
+    """Walk a JSON-shaped value looking for nan/inf. Bool is excluded deliberately: it is
+    an int subclass in Python but never non-finite, and isinstance would trip on it."""
+    if isinstance(item, float):
+        return not isfinite(item)
+    if isinstance(item, Mapping):
+        return any(_has_non_finite(child) for child in item.values())
+    if isinstance(item, (list, tuple)):
+        return any(_has_non_finite(child) for child in item)
+    return False
+
+
+JsonObject = Annotated[dict[str, Any], AfterValidator(_reject_non_finite)]
+"""A free-form JSON object whose numbers are finite — the dict analog of FiniteFloat."""
 
 
 def _utc_now() -> datetime:
@@ -105,7 +153,7 @@ class Asset(_ContractModel):
     asset_type: str = Field(min_length=1, description='e.g. "pump", "gateway", "plc"')
     location: str | None = None
     criticality: Criticality = Criticality.MEDIUM
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 def discovered_asset(asset_id: str) -> Asset:
@@ -142,7 +190,7 @@ class NormalizedEvent(_ContractModel):
     severity: Severity = Severity.INFO
     message: str | None = None
     raw: str = Field(description="Original record verbatim, for evidence and audit")
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class MalformedRecord(_ContractModel):
@@ -178,8 +226,8 @@ class DetectionResult(_WindowedContract):
     score: FiniteFloat
     threshold: FiniteFloat
     event_kind: EventKind | None = None
-    evidence: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    evidence: JsonObject = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class PrioritizedAlert(_WindowedContract):
@@ -196,7 +244,7 @@ class PrioritizedAlert(_WindowedContract):
     priority_score: FiniteFloat = Field(ge=0.0, le=100.0)
     threat_class: str = "unknown"
     rationale: str = Field(min_length=1, description="Human-readable why, always present")
-    score_components: dict[str, Any] = Field(default_factory=dict)
+    score_components: JsonObject = Field(default_factory=dict)
     detection_ids: list[UUID] = Field(min_length=1)
     recommended_action: str | None = None
     status: AlertStatus = AlertStatus.NEW

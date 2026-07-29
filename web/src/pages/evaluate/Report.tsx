@@ -179,7 +179,7 @@ export function ReportView({ report }: { readonly report: EvalReport }) {
             <>
               <code>event_f1</code> is what an analyst experiences (one finding per fault);{" "}
               <code>point_f1</code> is what papers report (per-row coverage).{" "}
-              <code>compression_ratio</code> is detections-per-incident over alerts-per-incident —
+              <code>compression_ratio</code> is scoreable detections over scoreable alerts —
               what the correlation stage absorbed. An empty cell means <i>undefined</i>, not zero —
               a clean recording has no faults to recall.
             </>

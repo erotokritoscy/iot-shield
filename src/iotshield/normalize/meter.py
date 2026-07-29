@@ -79,7 +79,7 @@ import csv
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -96,6 +96,7 @@ from iotshield.meter import (
     MeterType,
     metric_for,
 )
+from iotshield.normalize._linewise import split_lines
 from iotshield.normalize.port import NormalizeResult
 
 INTERVAL = timedelta(hours=1)
@@ -236,9 +237,18 @@ def _localize(stamp: datetime, zone: ZoneInfo) -> datetime:
     would place a reading up to an hour from where it belongs — and an hour is the entire
     resolution of this data. Comparing the two ``fold`` interpretations detects both cases,
     so they are quarantined with a reason instead.
+
+    Returns **UTC**, not a zone-attached local time. That is what puts the reading on the
+    timeline this docstring promises, and it is load-bearing rather than tidy: CPython's
+    ``datetime.__sub__`` short-circuits when both operands share a ``tzinfo`` *object*, and
+    ``_parse_row`` hands every row the same ``ZoneInfo``. Subtraction therefore compared
+    naive **wall clocks**, so the interval test in ``_closed_intervals`` was a wall-clock
+    test — and at the spring-forward the readings at local 02:00 and 04:00 are one real hour
+    apart but two wall-clock hours, so no event was emitted and no MalformedRecord either.
+    One hour of consumption vanished with no trace, once a year, per meter (ADR-0033).
     """
     if stamp.tzinfo is not None:
-        return stamp
+        return stamp.astimezone(UTC)
     first = stamp.replace(tzinfo=zone, fold=0)
     second = stamp.replace(tzinfo=zone, fold=1)
     if first.utcoffset() != second.utcoffset():
@@ -246,7 +256,7 @@ def _localize(stamp: datetime, zone: ZoneInfo) -> datetime:
             f"local time {stamp.isoformat()} is ambiguous or nonexistent in "
             f"{zone.key} (daylight-saving transition); cannot be placed on the UTC timeline"
         )
-    return first
+    return first.astimezone(UTC)
 
 
 def _clean(text: str | None) -> str | None:
@@ -314,7 +324,7 @@ class MeterNormalizer:
         reject: Callable[[str, str], None],
     ) -> list[_Reading]:
         """Parse every data row into a reading, quarantining the ones that fail."""
-        rows = [line for line in text.splitlines() if line.strip()]
+        rows = [line for line in split_lines(text) if line.strip()]
         if not rows:
             return []
         # The header is peeled off before the loop, so the loop needs no "is this the first
@@ -486,6 +496,31 @@ def _closed_intervals(
 
     for meter_id in sorted(by_meter):
         series = sorted(by_meter[meter_id], key=lambda item: item.timestamp)
+        # One id, two utilities: refuse the meter rather than difference across them.
+        #
+        # The SensiPro dialect exists BECAUSE one table serves water and electricity, and the
+        # unit is resolved per row for that reason (`_meter_type_for`) — but the grouping key
+        # above is the id alone, so a water counter was differenced against an electricity one
+        # and emitted a physically meaningless number with no reject. Worse, when both
+        # utilities report the SAME hour the de-duplication below dropped one as a "duplicate
+        # timestamp": an entire utility disappeared under a message that misdiagnosed it.
+        #
+        # Grouping by (id, type) instead would fix the arithmetic and keep the harm: asset_id
+        # is the meter id, so both series would still land on one asset and feed one
+        # per-meter model. There is no honest way to pick a winner either. So this is refused
+        # visibly, exactly as ADR-0030 already refuses a gap and a rollback — real data the
+        # contract cannot represent. The remedy is upstream: give each utility its own id.
+        # Checked BEFORE the dedupe so the operator gets the true reason (ADR-0033).
+        utilities = {reading.meter_type for reading in series}
+        if len(utilities) > 1:
+            named = ", ".join(sorted(kind.value for kind in utilities))
+            for reading in series:
+                reject(
+                    reading.line,
+                    f"meter {meter_id!r} reports two utilities ({named}); consumption cannot "
+                    "be attributed to one asset - give each utility its own device id",
+                )
+            continue
         # De-duplicate first, so the pairing below is a plain walk over adjacent readings
         # rather than a walk with a "did this one count?" flag threaded through it.
         kept: list[_Reading] = []

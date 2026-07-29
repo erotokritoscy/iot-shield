@@ -199,7 +199,7 @@ class TestRuns:
         bad = spec(detectors=[{"name": "log_burst", "params": {"min_count": 1}}])
         control.client.post("/runs", json={"spec": bad, "inputs": [{"content": STUB_CSV}]})
         with control.session_factory() as session:
-            assert repository.get_events(session) == []
+            assert list(repository.get_events(session)) == []
 
     def test_incompatible_format_is_422_with_issues(self, control: ControlHarness) -> None:
         response = control.client.post(

@@ -300,7 +300,8 @@ class AssetTruth:
 
     The same argument, one dimension further, and it is not a refinement — a pooled clock
     makes multi-lane point metrics meaningless. On ``device_trimodal`` each device is sampled
-    at ~900 telemetry instants, ~275 flow records and ~25 log lines. Union them into one
+    at tens to hundreds of instants per lane, and the ratios differ per device kind and move
+    with the profiles (measure, do not assume). Union them into one
     clock and the fastest lane owns it: a single flow detection covering sixty seconds is
     charged sixty *telemetry* false positives, for instants it was never asked about and could
     not have covered. Point precision on the compromise case read 0.041, and adding lanes to

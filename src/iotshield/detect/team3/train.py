@@ -163,7 +163,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         ),
     )
     artifact = Team3Artifact(params=params, state=state)
-    args.out.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+    # newline="\n": see the note in detect/meter/train.py — write_text translates to
+    # os.linesep, so a Windows regeneration rewrites every line of a committed artifact.
+    args.out.write_text(artifact.model_dump_json(indent=2), encoding="utf-8", newline="\n")
     print(
         f"wrote {args.out} — {len(state.feature_columns)} features "
         f"(from {prefix_rows} normal rows), threshold={state.threshold:.4f}"

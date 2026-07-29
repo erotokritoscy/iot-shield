@@ -25,7 +25,13 @@ def _utc_now() -> datetime:
 
 
 def _compression(counts: Counts) -> float | None:
-    """Detections per incident / alerts per incident — what the alert layer absorbed.
+    """Scoreable detections / scoreable alerts — what the alert layer absorbed.
+
+    NOT the quotient of the two ``/inc`` columns, though it was until ADR-0028 D2 gave
+    the levels different denominators: ``det/inc`` divides by incidents (projections) and
+    ``alt/inc`` by faults, so on a multi-lane corpus those differ by ``incidents/faults``.
+    Dividing counts by counts is the denominator-free reading, which is what >1 / ~1 / <1
+    is meant to be read against.
 
     The transfer function between the two levels, and the only number that shows the stages
     interacting: >1 means correlation compressed the detector's output, ~1 means it passed it
@@ -247,7 +253,7 @@ class SpecReport(BaseModel):
 
     @property
     def compression_ratio(self) -> float | None:
-        """Detections per incident ÷ alerts per incident — what the alert layer absorbed.
+        """Scoreable detections ÷ scoreable alerts — what the alert layer absorbed.
 
         The transfer function between the two levels, and the only number that shows the
         stages interacting: >1 means correlation compressed the detector's output, ~1 means
@@ -476,9 +482,11 @@ def _attribution(spec: SpecReport) -> list[str]:
 
     The per-lane lines are the reason the pooled ``ptF1`` column is no longer allowed to stand
     alone (ADR-0028 D4). Pooling weights each modality by how fast it samples, so a corpus whose
-    flow lane emits a flow every two seconds can report a headline point precision of 0.016
+    flow lane emits a flow every two seconds can report a headline point precision of 0.39
     while the same run's flow-lane precision *without* one deliberately chatty control device is
-    0.706. Both numbers are true; only the per-lane one is diagnosable.
+    0.90. Both numbers are true; only the per-lane one is diagnosable. (These move whenever a
+    corpus profile changes; they illustrate the shape, and the per-lane columns are the
+    thing to read.)
     """
     facts: list[str] = []
     misattributed = sum(case.misattributed_detections for case in spec.cases)
