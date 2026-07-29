@@ -24,6 +24,7 @@ from iotshield.detect import (
 from iotshield.detect._fitted import NotFitted, is_fitted
 from iotshield.flow import METADATA_KEY, Direction, FlowRecord
 from iotshield.pipeline.registry import DETECTORS, build_detector
+from tests import meter_fixtures
 from tests.team3_fixtures import make_detector
 
 
@@ -165,6 +166,23 @@ CASES = [
             registry_name="flow_burst",
         ),
         id="flow-burst",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=meter_fixtures.make_detector,
+            triggering_events=meter_fixtures.leaking_events(),
+            fit_events=meter_fixtures.clean_events(),
+            # n_estimators is the one hyperparameter that changes the fitted forest without
+            # changing the feature schema, so the two fits stay comparable while having to
+            # differ. The rest are the fixtures' small-and-fast settings (see
+            # tests/meter_fixtures.py) and are identical in both.
+            distinguishing_params=(
+                {**meter_fixtures.FIXTURE_PARAMS, "n_estimators": 30},
+                {**meter_fixtures.FIXTURE_PARAMS, "n_estimators": 250},
+            ),
+            registry_name="meter_iforest",
+        ),
+        id="meter-iforest",
     ),
 ]
 

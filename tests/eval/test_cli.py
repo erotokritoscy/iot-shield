@@ -4,6 +4,7 @@ Also pins the two boundary properties the harness is built around (ADR-0021 D1):
 never touches a store, and it measures the *real* pipeline rather than a parallel code path.
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from iotshield.eval import (
     load_corpus,
     render,
 )
-from iotshield.eval.__main__ import main
+from iotshield.eval.__main__ import build_parser, corpus_path_of, main
 from iotshield.eval.fit import FitProtocol
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.pipeline import PipelineSpec, load_spec
@@ -72,10 +73,11 @@ class TestCli:
         err = capsys.readouterr().err
         assert "windo_size" in err and "threshold" in err
 
-    def test_an_unknown_corpus_skips_and_lists_what_exists(self, capsys) -> None:
-        # A skip (exit 0), not a usage error: "that corpus is not here" is an ordinary
-        # state, and the message names the ones that are.
-        assert main(["--corpus", "nope"]) == 0
+    def test_an_unknown_corpus_is_an_error_not_a_skip(self, capsys) -> None:
+        """A typo must not pass. This shared the skip path below, so a mistyped corpus name
+        in a CI benchmark job exited 0 with empty output and the job went green having
+        measured nothing."""
+        assert main(["--corpus", "nope", "--spec", str(STUB_SPEC)]) == 2
         err = capsys.readouterr().err
         assert "unknown corpus" in err and "available:" in err
 
@@ -83,10 +85,32 @@ class TestCli:
         self, tmp_path: Path, capsys
     ) -> None:
         # Exit 0 so CI benchmarking over optional corpora stays green on a fresh clone, and
-        # the message is the command rather than a dead end.
-        assert main(["--corpus", "skab_valve1", "--corpus-path", str(tmp_path)]) == 0
+        # the message is the command rather than a dead end. THIS is what exit 0 is for; a
+        # name that exists nowhere is a different situation and exits 2 above.
+        assert (
+            main(
+                [
+                    "--corpus",
+                    "skab_valve1",
+                    "--spec",
+                    str(STUB_SPEC),
+                    "--corpus-path",
+                    str(tmp_path),
+                ]
+            )
+            == 0
+        )
         err = capsys.readouterr().err
         assert "skipped" in err and "fetch skab" in err
+
+    def test_omitting_the_pair_prints_the_legal_pairings(self, capsys) -> None:
+        """The default used to be `synthetic` + `team3.yaml`, the one pairing that cannot
+        work — so the shortest command in the docs printed a table of zeros. Which pairs are
+        legal is derivable, so the answer to a missing flag is the table."""
+        assert main([]) == 2
+        err = capsys.readouterr().err
+        assert "--corpus and --spec are both required" in err
+        assert "config/bench/stub.yaml" in err
 
     def test_list_corpora(self, capsys) -> None:
         # Only `synthetic` is committed; the SKAB bundles are gitignored (GPL-3.0, ADR-0021
@@ -146,12 +170,18 @@ class TestReport:
         assert spec_report.compression_ratio > 10
 
 
+RIG = "skab-testbed"
+"""The asset the inline readings below describe.
+
+One constant for the readings *and* the answer key, because they must agree: truth is matched
+per asset (ADR-0026), so labelling one device while the rows describe another scores a silent
+zero — which is exactly what this helper did on first run after the rewrite.
+"""
+
+
 def synthetic_corpus(*, flags: list[bool], values: list[float]) -> Corpus:
     """A one-case corpus from inline readings and labels — no external dataset."""
-    rows = [
-        f"{at(index).isoformat()},skab-testbed,Pressure,{value}"
-        for index, value in enumerate(values)
-    ]
+    rows = [f"{at(index).isoformat()},{RIG},Pressure,{value}" for index, value in enumerate(values)]
     return Corpus(
         name="synthetic",
         description="synthetic recording",
@@ -159,7 +189,7 @@ def synthetic_corpus(*, flags: list[bool], values: list[float]) -> Corpus:
             Case(
                 name="synthetic",
                 inputs=[CaseInput(STUB_CSV, "\n".join(rows) + "\n")],
-                truth=truth_of(flags),
+                truth=truth_of(flags, asset_id=RIG),
             )
         ],
     )
@@ -243,3 +273,45 @@ class TestCorpusSpecAlignment:
         )
         with pytest.raises(ValueError, match="supplies 1 input"):
             evaluate(corpus, [("two", two_source)])
+
+
+class TestCorpusPathIsPositionIndependent:
+    """`--corpus-path` must mean the same thing on either side of the verb.
+
+    It silently did not: argparse parses a subcommand into a fresh namespace and copies every
+    attribute onto the real one, so any default reachable from the subparser overwrote what the
+    root parser had already stored. `--corpus-path X list` therefore listed the *default* root
+    while `list --corpus-path X` worked, which is the worst shape for this flag: it points the
+    harness at the wrong data and says nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--corpus-path", "somewhere", "list"],
+            ["list", "--corpus-path", "somewhere"],
+            ["--corpus-path", "somewhere", "generate"],
+            ["generate", "--corpus-path", "somewhere"],
+            ["--corpus-path", "somewhere", "fetch", "skab"],
+            ["--corpus-path", "somewhere", "--corpus", "synthetic"],
+        ],
+        ids=lambda argv: " ".join(argv),
+    )
+    def test_the_flag_is_honoured_wherever_it_appears(self, argv: list[str]) -> None:
+        args = build_parser().parse_args(argv)
+        assert corpus_path_of(args) == Path("somewhere")
+
+    def test_omitting_it_falls_back_to_the_default_root(self) -> None:
+        for argv in ([], ["list"], ["generate"]):
+            assert corpus_path_of(build_parser().parse_args(argv)) is None
+
+    def test_a_declared_default_would_reintroduce_the_bug(self) -> None:
+        """Guard the fix itself, since the mechanism is invisible at the call site.
+
+        `SUPPRESS` is load-bearing: the moment the flag carries a real default, or anything
+        calls `set_defaults` for it, the subparser's copy wins again.
+        """
+        action = next(
+            a for a in build_parser()._actions if "--corpus-path" in (a.option_strings or [])
+        )
+        assert action.default is argparse.SUPPRESS

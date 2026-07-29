@@ -30,13 +30,16 @@ from pydantic import BaseModel, Field
 
 from iotshield.api._eval_gate import EVAL_API_ENV, eval_api_enabled
 from iotshield.api.control import ParamInfo, describe_params
-from iotshield.capabilities import lanes_in
+from iotshield.capabilities import formats_in, lanes_in
+from iotshield.contracts import Lane
 from iotshield.detect import Fittable
 from iotshield.eval import CorpusUnavailable, EvaluationReport, FitProtocol, evaluate, load_corpus
+from iotshield.eval.bench import benchmarkable, list_bench_specs
+from iotshield.eval.bundle import BundleError
 from iotshield.eval.corpus import corpus_root, fetchable, list_corpora
 from iotshield.eval.sweep import expand
 from iotshield.pipeline import PipelineSpec
-from iotshield.pipeline.registry import DETECTORS, build_detector
+from iotshield.pipeline.registry import DETECTORS, NORMALIZERS, build_detector
 
 __all__ = ["EVAL_API_ENV", "create_eval_router", "eval_api_enabled"]
 
@@ -49,6 +52,50 @@ class CorpusSummary(BaseModel):
     provenance: str
     licence: str
     cases: int
+    source_formats: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The input shape a spec must declare to benchmark this corpus: one source format "
+            "per position, in order. A UI composing a spec needs it to build one that fits."
+        ),
+    )
+    lanes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The detector lanes this corpus can actually feed. A UI picking detectors needs "
+            "it: one that consumes none of these lanes is handed no events and scores a row "
+            "of zeros it never had the chance to earn."
+        ),
+    )
+    error: str = Field(
+        default="",
+        description=(
+            "Why this bundle cannot be loaded, when it cannot; empty for a healthy corpus. "
+            "Published rather than filtered out so a broken bundle is visibly broken instead "
+            "of silently absent from the picker."
+        ),
+    )
+
+
+class BenchSpecSummary(BaseModel):
+    """One shipped benchmark spec, and the corpora it can actually run on.
+
+    Published so a UI can run **the committed spec** rather than compose a lookalike. The
+    dashboard's Evaluate page used to build its own ``PipelineSpec`` from the detectors picked
+    on screen, which silently dropped the ``assets:`` block and every source and engine
+    parameter — so the page and the CLI reported different numbers for what read as the same
+    benchmark (mean true priority 39.46 from ``stub.yaml``, 35.72 from the page's
+    reconstruction) with nothing on either surface disclosing which spec produced them.
+
+    ``corpora`` is the join a client would otherwise have to compute: which corpora this spec's
+    source shape matches (``eval.bench``).
+    """
+
+    name: str
+    spec: PipelineSpec
+    source_formats: list[str] = Field(default_factory=list)
+    detectors: list[str] = Field(default_factory=list)
+    corpora: list[str] = Field(default_factory=list)
 
 
 class CorporaResponse(BaseModel):
@@ -106,6 +153,34 @@ class LabelledSpec(BaseModel):
 
 
 @cache
+def _lanes_fed_by(source_formats: tuple[str, ...]) -> tuple[str, ...]:
+    """Which detector lanes a corpus of this shape can feed, given the normalizers registered.
+
+    A corpus's declared formats plus the registry determine it: each format is read by whichever
+    normalizer accepts it, and *that* normalizer's produced lane is what a detector must consume
+    to be handed anything at all. Union across positions, because a multi-lane corpus feeds
+    several and a spec may judge all of them in one run.
+
+    This join belongs on the server for the same reason ``DetectorSummary.lanes`` is decoded
+    here: the ``lane:`` prefix is a private wire detail of ``capabilities.py``, rendered only at
+    this boundary. A UI deriving corpus lanes for itself would have to parse that prefix, which
+    is exactly the scheme-scattered-through-the-code that typed tokens exist to prevent — so the
+    two sides of the comparison are published in the same decoded vocabulary and a client merely
+    intersects them.
+
+    Cached with ``DETECTORS``-style justification: ``NORMALIZERS`` is a module-level constant
+    with static capabilities, so the answer cannot change within a process.
+    """
+    lanes: set[Lane] = set()
+    for source_format in source_formats:
+        for spec in NORMALIZERS.values():
+            capability = spec.capability({})
+            if source_format in formats_in(capability.consumes):
+                lanes |= lanes_in(capability.produces)
+    return tuple(sorted(lane.value for lane in lanes))
+
+
+@cache
 def _is_fittable(name: str) -> bool:
     """Whether a registered detector implements the optional training capability.
 
@@ -160,6 +235,9 @@ def create_eval_router() -> APIRouter:
                     provenance=info.provenance,
                     licence=info.licence,
                     cases=info.cases,
+                    source_formats=list(info.source_formats),
+                    lanes=list(_lanes_fed_by(tuple(info.source_formats))),
+                    error=info.error,
                 )
                 for info in list_corpora()
             ],
@@ -170,6 +248,26 @@ def create_eval_router() -> APIRouter:
     def detectors() -> list[DetectorSummary]:
         """The detectors a benchmark can compare, with their training capability."""
         return detector_catalogue
+
+    @router.get("/specs")
+    def specs() -> list[BenchSpecSummary]:
+        """The committed bench specs, with the corpora each one fits.
+
+        Read per request rather than cached: unlike ``DETECTORS``, these are files an operator
+        can edit while the server runs, and a benchmark replaying a spec the YAML no longer
+        says is the exact class of divergence this endpoint exists to close.
+        """
+        shapes = benchmarkable(list_corpora())
+        return [
+            BenchSpecSummary(
+                name=bench.name,
+                spec=bench.spec,
+                source_formats=list(bench.source_formats),
+                detectors=list(bench.detectors),
+                corpora=[name for name, formats in shapes if bench.fits(formats)],
+            )
+            for bench in list_bench_specs()
+        ]
 
     @router.post("/run")
     def run(request: EvalRunRequest) -> EvaluationReport:
@@ -183,6 +281,11 @@ def create_eval_router() -> APIRouter:
             corpus = load_corpus(request.corpus)
         except CorpusUnavailable as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except BundleError as exc:
+            # The corpus is there and will not load — a stale answer key, a malformed
+            # manifest, a payload path escaping its bundle. 422 rather than 500: the message
+            # names what is wrong and, for a stale key, the command that fixes it.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         try:
             # Sweeps expand before evaluation, into ordinary labelled specs — so a swept

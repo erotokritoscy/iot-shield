@@ -35,10 +35,11 @@ from iotshield.eval.report import (
 )
 from iotshield.eval.runner import evaluate, evaluate_case, evaluate_spec
 from iotshield.eval.score import AlertMetrics, DetectorMetrics, score_alerts, score_detections
-from iotshield.eval.truth import GroundTruth, Incident
+from iotshield.eval.truth import AssetTruth, GroundTruth, Incident
 
 __all__ = [
     "AlertMetrics",
+    "AssetTruth",
     "Case",
     "CaseInput",
     "CaseReport",

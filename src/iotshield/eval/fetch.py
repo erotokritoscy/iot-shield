@@ -26,7 +26,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, to_stub_csv, write_bundle
+from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, write_bundle
+from iotshield.eval.generate.telemetry import to_stub_csv
 from iotshield.eval.truth import GroundTruth
 from iotshield.pipeline.registry import lookup
 
@@ -89,7 +90,11 @@ def _skab_case(path: Path) -> Case:
         # from_timeline owns the collapse of per-row flags into incidents; re-deriving it
         # here would give the answer key a second definition of "one incident", which is
         # exactly what truth.py exists to prevent.
-        truth=GroundTruth.from_timeline(list(zip(timestamps, flags, strict=True))),
+        #
+        # The roster is exactly {_ASSET}: SKAB is one testbed, and its `anomaly` column is
+        # exhaustive for it, so "listed with no incident in this window" really does mean
+        # clean rather than unknown (ADR-0026).
+        truth=GroundTruth.from_timeline(list(zip(timestamps, flags, strict=True)), asset_id=_ASSET),
     )
 
 

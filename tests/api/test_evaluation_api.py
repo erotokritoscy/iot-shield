@@ -87,6 +87,21 @@ class TestCatalogue:
         assert synthetic["cases"] > 0
         assert synthetic["licence"] and synthetic["provenance"]
 
+    def test_each_corpus_publishes_the_detector_lanes_it_can_feed(self, client: TestClient) -> None:
+        """The join a detector picker needs, decoded server-side.
+
+        Published rather than derived by the client for the same reason `DetectorSummary.lanes`
+        is decoded here: the `lane:` prefix is a private detail of `capabilities.py`, so a UI
+        computing this for itself would have to parse it. Both sides of the comparison arrive
+        in the same vocabulary and the client only intersects them.
+        """
+        corpora = {item["name"]: item for item in client.get("/eval/corpora").json()["corpora"]}
+        assert corpora["synthetic"]["lanes"] == ["telemetry"]
+        assert corpora["fleet_scan"]["lanes"] == ["flow"]
+        # The trimodal corpus feeds all three, which is what makes one entry judging three
+        # lanes expressible at all.
+        assert corpora["device_trimodal"]["lanes"] == ["flow", "log", "telemetry"]
+
     def test_detectors_report_their_lane_and_trainability(self, client: TestClient) -> None:
         detectors = {item["name"]: item for item in client.get("/eval/detectors").json()}
         assert detectors["team3_zscore"]["fittable"] is True
@@ -128,6 +143,53 @@ class TestRun:
         payload = response.json()
         assert payload["corpus"] == "synthetic"
         assert payload["specs"][0]["cases"]
+
+    def test_an_entrys_detectors_run_together_and_can_corroborate(self, client: TestClient) -> None:
+        """The measurement the dashboard could not express while it built one detector per spec.
+
+        Detectors in ONE spec pool their detections into a single alert-engine run, so an alert
+        can cite more than one lane. Split across specs, every alert cites exactly one lane by
+        construction — which is why the corroboration result ADR-0026 publishes was unreachable
+        from the UI at any setting. Same corpus, same bytes, same engine: the only difference is
+        whether the three detectors share a spec.
+        """
+        sources = [
+            {"normalizer": "stub", "source_format": "stub-csv"},
+            {"normalizer": "syslog", "source_format": "syslog"},
+            {"normalizer": "flow", "source_format": "flow-csv"},
+        ]
+        detectors = [
+            {"name": "stub_threshold", "params": {"threshold": 80.0, "lane": "telemetry"}},
+            {"name": "log_burst", "params": {"preset": "severity_spike"}},
+            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+        ]
+        engine = {"name": "weighted", "params": {"bucket_minutes": 5}}
+
+        def lanes_cited(specs: list[dict[str, Any]]) -> float:
+            payload = client.post(
+                "/eval/run", json={"corpus": "device_trimodal", "specs": specs}
+            ).json()
+            return max(
+                case["mean_lanes_per_true_alert"] or 0
+                for report in payload["specs"]
+                for case in report["cases"]
+            )
+
+        together = [
+            {
+                "label": "all-three",
+                "spec": {"sources": sources, "detectors": detectors, "alert_engine": engine},
+            }
+        ]
+        apart = [
+            {
+                "label": detector["name"],
+                "spec": {"sources": sources, "detectors": [detector], "alert_engine": engine},
+            }
+            for detector in detectors
+        ]
+        assert lanes_cited(apart) == 1.0
+        assert lanes_cited(together) > 1.0
 
     def test_timelines_are_off_by_default_and_on_when_asked(self, client: TestClient) -> None:
         # The report's other job is to be a small, diffable artifact; spans would dominate it.
@@ -177,6 +239,57 @@ class TestRun:
         assert response.status_code == 200
         labels = [spec["spec"] for spec in response.json()["specs"]]
         assert labels == ["stub[threshold=40.0]", "stub[threshold=80.0]"]
+
+    def _shared_threshold_run(self, sweep: dict[str, list[Any]]) -> dict[str, Any]:
+        """A trimodal spec whose two detectors BOTH declare `threshold`.
+
+        The configuration that had no expressible sweep before: unqualified `threshold` is
+        refused as ambiguous, and there was no other way to name one of them.
+        """
+        return {
+            "corpus": "device_trimodal",
+            "specs": [
+                {
+                    "label": "mix",
+                    "spec": {
+                        "sources": [
+                            {"normalizer": "stub", "source_format": "stub-csv"},
+                            {"normalizer": "syslog", "source_format": "syslog"},
+                            {"normalizer": "flow", "source_format": "flow-csv"},
+                        ],
+                        "detectors": [
+                            {"name": "stub_threshold", "params": {"threshold": 80.0}},
+                            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+                        ],
+                        "alert_engine": {"name": "weighted"},
+                    },
+                    "sweep": sweep,
+                }
+            ],
+        }
+
+    def test_a_qualified_sweep_expands_into_one_labelled_spec_per_value(
+        self, client: TestClient
+    ) -> None:
+        # `detector.param` travels over the wire with no schema change: the sweep key was
+        # already a string, so the grammar stayed confined to eval/sweep.py.
+        body = self._shared_threshold_run({"flow_burst.threshold": [10, 30]})
+        payload = client.post("/eval/run", json=body).json()
+        assert [report["spec"] for report in payload["specs"]] == [
+            "mix[flow_burst.threshold=10]",
+            "mix[flow_burst.threshold=30]",
+        ]
+
+    def test_an_ambiguous_unqualified_sweep_is_422_and_names_the_qualified_form(
+        self, client: TestClient
+    ) -> None:
+        # Still refused, because one label reporting two incomparable knobs would be a lie.
+        # The difference is that the error now carries a remedy the caller can act on.
+        response = client.post(
+            "/eval/run", json=self._shared_threshold_run({"threshold": [10, 30]})
+        )
+        assert response.status_code == 422
+        assert "flow_burst.threshold" in response.json()["detail"]
 
     def test_an_incoherent_sweep_is_422_not_a_500(self, client: TestClient) -> None:
         response = client.post(
@@ -261,3 +374,47 @@ def test_importing_the_control_app_does_not_import_the_eval_plane() -> None:
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "False"
+
+
+class TestBenchSpecCatalogue:
+    """`/eval/specs` publishes the committed specs, so a UI runs one instead of a lookalike.
+
+    The dashboard used to compose its own `PipelineSpec` from the detectors on screen, which
+    dropped the `assets:` block and every source and engine parameter — so the page and the
+    CLI published different numbers for what read as the same benchmark. Publishing the spec
+    itself removes the second implementation rather than trying to keep two in sync.
+    """
+
+    def test_it_publishes_the_committed_specs_with_their_detectors(
+        self, client: TestClient
+    ) -> None:
+        payload = client.get("/eval/specs").json()
+        by_name = {item["name"]: item for item in payload}
+        assert "stub" in by_name and "flow" in by_name
+        assert by_name["stub"]["detectors"] == ["stub_threshold"]
+        # The whole spec, not a description of it: a client forwards this untouched.
+        assert by_name["stub"]["spec"]["sources"][0]["source_format"] == "stub-csv"
+
+    def test_each_spec_names_the_corpora_it_fits(self, client: TestClient) -> None:
+        """The pairing nothing recorded: six specs, six corpora, ~7 legal cells, and the map
+        lived only in YAML comments. Derived from both sides' declared shapes, so it cannot
+        drift from the thing it describes."""
+        payload = client.get("/eval/specs").json()
+        by_name = {item["name"]: item for item in payload}
+        assert "synthetic" in by_name["stub"]["corpora"]
+        assert "fleet_scan" in by_name["flow"]["corpora"]
+        # ... and a spec never claims a corpus whose input shape it cannot ingest.
+        assert "fleet_scan" not in by_name["stub"]["corpora"]
+
+    def test_a_published_spec_actually_runs(self, client: TestClient) -> None:
+        # The point of publishing it: what a client forwards must be a legal request.
+        spec = next(item for item in client.get("/eval/specs").json() if item["name"] == "stub")
+        response = client.post(
+            "/eval/run",
+            json={
+                "corpus": "synthetic",
+                "specs": [{"label": "stub", "spec": spec["spec"]}],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["specs"][0]["spec"] == "stub"

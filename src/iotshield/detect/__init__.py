@@ -4,15 +4,18 @@ Adapters: StubThresholdDetector (reference/fallback, lane-parameterized);
 Team3ZScoreDetector (telemetry robust z-score, vendored from team3 — ADR-0012);
 LogBurstDetector (log-lane rate/burst rule, designed here — ADR-0020);
 FlowBurstDetector (flow-lane behavioural aggregation — fan-out, port scanning,
-exfiltration — designed here, ADR-0024).
+exfiltration — designed here, ADR-0024); MeterIForestDetector (utility-meter Isolation
+Forest over hour-of-week features, vendored from Panayiotis's meterdetect — ADR-0030,
+and the first scikit-learn model in the runtime).
 
 Deferred: a supervised per-flow classifier in team5's shape, once there is a labelled
-flow corpus to prove it on and scikit-learn has earned its own ADR (ADR-0024 D1).
+flow corpus to prove it on (ADR-0024 D1; scikit-learn itself is now available — ADR-0030).
 """
 
 from iotshield.detect._runs import merge_runs
 from iotshield.detect.flow_burst import FlowBurstDetector
 from iotshield.detect.log_burst import LogBurstDetector
+from iotshield.detect.meter import MeterIForestDetector
 from iotshield.detect.port import Detector, Fittable
 from iotshield.detect.stub import StubThresholdDetector
 from iotshield.detect.team3 import Team3ZScoreDetector
@@ -22,6 +25,7 @@ __all__ = [
     "Fittable",
     "FlowBurstDetector",
     "LogBurstDetector",
+    "MeterIForestDetector",
     "StubThresholdDetector",
     "Team3ZScoreDetector",
     "merge_runs",

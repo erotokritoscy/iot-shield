@@ -29,10 +29,10 @@ import numpy as np
 import pandas as pd
 
 from iotshield.capabilities import DETECTIONS, Capability, LaneToken
-from iotshield.contracts import DetectionResult, EventKind, Lane, NormalizedEvent
+from iotshield.contracts import DetectionResult, Lane, NormalizedEvent
 from iotshield.detect._fitted import NotFitted
 from iotshield.detect._group import group_by_asset
-from iotshield.detect._runs import merge_runs
+from iotshield.detect._runs import classify_run, merge_runs
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import featurewise_robust_z
 from iotshield.detect.team3.artifact import Team3State
@@ -42,17 +42,7 @@ from iotshield.detect.team3.train import train_state
 # Fixed telemetry-lane detector; declared for the compatibility guard.
 CAPABILITY = Capability.of(consumes={LaneToken(Lane.TELEMETRY)}, produces={DETECTIONS})
 
-_MIN_COLLECTIVE = 3  # run length at/above which an episode is "collective" (team3 postprocess)
 _TOP_CHANNELS = 3
-
-
-def _classify(run_length: int) -> EventKind:
-    # Mirrors team3 evaluation/postprocess.py:classify_event_type.
-    if run_length <= 1:
-        return EventKind.POINT
-    if run_length >= _MIN_COLLECTIVE:
-        return EventKind.COLLECTIVE
-    return EventKind.CONTEXTUAL
 
 
 def _has_reading(event: NormalizedEvent) -> bool:
@@ -113,7 +103,7 @@ class Team3ZScoreDetector:
         if self._state is None:
             raise NotFitted(
                 f"{METHOD} was built from hyperparameters with no trained baseline; name an "
-                "'artifact' in its params, or fit it first (--fit-protocol prefix|holdout)"
+                "'artifact' in its params, or fit it first (--fit-protocol prefix)"
             )
         detections: list[DetectionResult] = []
         for asset_id, asset_events in group_by_asset(events, lane=self.lane, keep=_has_reading):
@@ -227,7 +217,7 @@ class Team3ZScoreDetector:
                     method=self.method,
                     score=float(scores[peak]),
                     threshold=float(state.threshold),
-                    event_kind=_classify(length),
+                    event_kind=classify_run(length),
                     evidence=self._evidence(
                         state, z_matrix[peak], row_ts[peak], scores[peak], length
                     ),

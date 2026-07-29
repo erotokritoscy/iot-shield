@@ -14,7 +14,7 @@ import httpx
 from iotshield.api.control import ModulesResponse, RunResponse, ValidateResponse
 
 if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see the eval methods
-    from iotshield.api.evaluation import CorporaResponse, DetectorSummary
+    from iotshield.api.evaluation import BenchSpecSummary, CorporaResponse, DetectorSummary
     from iotshield.eval import EvaluationReport
 
 
@@ -69,6 +69,14 @@ class ControlClient:
         response = self._http.get("/eval/detectors")
         response.raise_for_status()
         return [DetectorSummary.model_validate(item) for item in response.json()]
+
+    def eval_specs(self) -> list["BenchSpecSummary"]:
+        """The committed bench specs, so a UI can run one instead of composing a lookalike."""
+        from iotshield.api.evaluation import BenchSpecSummary
+
+        response = self._http.get("/eval/specs")
+        response.raise_for_status()
+        return [BenchSpecSummary.model_validate(item) for item in response.json()]
 
     def evaluate(
         self,

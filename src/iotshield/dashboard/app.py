@@ -7,7 +7,8 @@ Config: IOTSHIELD_API_URL (default http://127.0.0.1:8000)
 import json
 import math
 import os
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +17,7 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
-from iotshield.api.control import ParamInfo
+from iotshield.api.control import ModuleInfo, ParamInfo
 from iotshield.contracts import Asset, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import (
     case_timeline,
@@ -288,17 +289,41 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     return values
 
 
-def _first_index(names: list[str], fits: Callable[[str], bool]) -> int:
-    """Preselect the first name that fits, else fall back to the first entry.
+def _preferred_index(names: list[str], *ranked: Callable[[str], bool]) -> int:
+    """Preselect by the first predicate that matches anything, in order of preference.
 
-    Both pickers need this and neither may preselect "whichever name sorts first": that was
-    silently wrong for detectors the moment a second lane arrived (ADR-0020), and it became
-    wrong for sources when ``flow`` was registered, since it sorts before ``stub`` — a fresh
-    session would have opened on a flow chain fed telemetry CSV. Falling back to 0 rather
-    than to nothing is deliberate: the guard reports a mismatched chain, which is more
-    useful than a row that contributes no adapter at all.
+    No picker here may preselect "whichever name sorts first": that was silently wrong for
+    detectors the moment a second lane arrived (ADR-0020), and wrong for sources once
+    ``flow`` was registered, since it sorts before ``stub`` — a fresh session would have
+    opened on a flow chain fed telemetry CSV.
+
+    Each predicate is tried in turn and only a real match wins, so a second-choice rule can
+    back up a first-choice one. Falling back to 0 when nothing matches is deliberate: the
+    guard reports a mismatched chain, which is more useful than a row contributing no
+    adapter at all.
     """
-    return next((index for index, name in enumerate(names) if fits(name)), 0)
+    for fits in ranked:
+        match = next((index for index, name in enumerate(names) if fits(name)), None)
+        if match is not None:
+            return match
+    return 0
+
+
+def _feeds(detector: ModuleInfo, produced: set[str]) -> bool:
+    """Whether this detector consumes a lane the page's sources actually produce."""
+    return bool(set(detector.consumes) & produced)
+
+
+def _ready(detector: ModuleInfo) -> bool:
+    """Whether this detector can judge without an artifact being named first.
+
+    Declared, not name-sniffed: ``artifact_param`` is published by ``/modules`` precisely so
+    a caller can tell "needs trained weights" from "ready to run" (ADR-0022). Read as a
+    typed attribute rather than via ``getattr`` — a default would silently restore the very
+    regression the field exists to prevent, and against an older API the honest failure is
+    the response model's, not a preselection that quietly reverts.
+    """
+    return detector.artifact_param is None
 
 
 def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
@@ -315,7 +340,7 @@ def _source_widgets(index: int, normalizers: dict[str, Any]) -> tuple[dict[str, 
         names,
         # By the format the reference normalizer accepts, not by its name — follows the
         # registry rather than restating it.
-        index=_first_index(names, lambda name: STUB_CSV_FORMAT in normalizers[name].formats),
+        index=_preferred_index(names, lambda name: STUB_CSV_FORMAT in normalizers[name].formats),
         key=f"src_{index}_norm",
     )
     formats = normalizers[normalizer_name].formats
@@ -363,14 +388,25 @@ def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str])
     name = st.selectbox(
         f"Detector {index + 1}",
         names,
-        # Preselect a detector the page's sources can actually feed. Streamlit honours
-        # `index=` only on a widget's first render, so this reads the sources at their
-        # defaults; switching the source afterwards leaves the operator's choice alone (and
-        # the guard speaks up if it no longer fits). Matching rendered tokens is safe only
-        # because normalizers produce lane tokens and detectors consume them — the typed
-        # version of this joint is `compat.lanes_in`.
+        # Preselect a detector the page's sources can actually feed AND that is ready to
+        # run. Streamlit honours `index=` only on a widget's first render, so this reads the
+        # sources at their defaults; switching the source afterwards leaves the operator's
+        # choice alone (and the guard speaks up if it no longer fits). Matching rendered
+        # tokens is safe only because normalizers produce lane tokens and detectors consume
+        # them — the typed version of this joint is `compat.lanes_in`.
+        #
+        # "Ready to run" is the second condition, and it is not cosmetic: a detector with an
+        # `artifact_param` is *untrained* until one is named, and a run refuses an untrained
+        # detector outright (ADR-0022). Preferring one that needs no cached fit is what stops
+        # the page opening on a chain that cannot run — which is exactly what happened when
+        # `meter_iforest` joined the registry and sorted ahead of `stub_threshold`. Declared,
+        # not name-sniffed: `artifact_param` is published by /modules for this purpose.
         index=(
-            _first_index(names, lambda n: bool(set(detectors[n].consumes) & produced))
+            _preferred_index(
+                names,
+                lambda n: _feeds(detectors[n], produced) and _ready(detectors[n]),
+                lambda n: _feeds(detectors[n], produced),
+            )
             if index == 0
             else 0
         ),
@@ -539,23 +575,74 @@ def load_eval_report(path: Path) -> "EvaluationReport | None":
 PROTOCOL_HELP = {
     "none": "Judge with each detector exactly as configured (its shipped artifact).",
     "prefix": (
-        "Relearn 'normal' from each case's own data before its first fault — what a real "
-        "deployment does. Detectors that cannot train are used as configured and say so."
+        "Relearn 'normal' from a reserved head of each asset's clock, which is then NOT "
+        "scored — what a real deployment does. Detectors that cannot train are used as "
+        "configured and say so."
     ),
-    "holdout": "Relearn from a separate clean recording the corpus supplies.",
 }
+"""The fit protocols, in the order the radio shows them.
+
+There is no ``holdout``: no bundle format can carry a holdout recording, so the option could
+only ever produce a table of zeros (``eval.fit``). Keyed off this dict rather than off
+``FitProtocol`` so the page keeps its own help text, but a protocol added to the enum and not
+here would simply not be offered — which is the safe direction.
+"""
 
 
-def _bench_spec(detector: str, params: dict[str, Any], engine: str) -> dict[str, Any]:
-    """One spec per detector — because several detectors in ONE spec run *together*.
+def _normalizer_for(source_format: str, normalizers: dict[str, Any]) -> str:
+    """Which registered normalizer accepts this format — asked of the registry, not assumed.
 
-    The researcher's mental model is "compare these detectors", but head-to-head comparison
-    needs N specs of one detector each. Building them here is the difference between ticking
-    two boxes and hand-writing two YAML files (ADR-0021 D6).
+    Follows the capability declarations the same way ``_source_widgets`` does, so a new
+    normalizer becomes usable here the moment it is registered.
+    """
+    return next(
+        (name for name in sorted(normalizers) if source_format in normalizers[name].formats),
+        "",
+    )
+
+
+def _composed_spec(
+    detectors: Sequence[dict[str, Any]],
+    engine: str,
+    source_formats: Sequence[str],
+    normalizers: dict[str, Any],
+) -> dict[str, Any]:
+    """One spec from one *entry* — whose detectors run together, in a single pipeline.
+
+    This composes a spec from what is on screen, which is the right thing for an exploratory
+    comparison and the *wrong* thing for reproducing a committed benchmark: it carries no
+    ``assets:`` block and no source or engine parameters, so it is a lookalike of
+    ``config/bench/*.yaml`` rather than the thing itself, and the two published different
+    numbers for what read as the same run. Reproducing a committed benchmark is now its own
+    mode, fed by ``/eval/specs`` (``BenchSpecSummary``); this stays what it always was, and
+    the page shows the spec it built either way.
+
+    The unit of comparison is the entry, not the detector. This used to build exactly one
+    detector per spec, which made head-to-head easy and made the other experiment impossible:
+    several detectors in ONE spec pool their detections into a single alert-engine run, which
+    is what produces cross-lane corroboration. With a detector per spec, every alert cited one
+    lane by construction, so the corroboration measurement ADR-0026 exists to publish could
+    not be expressed from the UI at any setting.
+
+    Both shapes now fall out of the same control. One detector per entry is head-to-head,
+    unchanged; three detectors in one entry approximates ``config/bench/trimodal_all.yaml``.
+    Nothing combines anything on the user's behalf — the entry says what runs together.
+
+    The sources come from **the corpus's own declared shape**, one per position. Hardcoding a
+    single stub-csv source was correct only while every corpus was single-lane telemetry: a
+    benchmark checks a case's inputs against the spec's ``sources`` positionally and by
+    format, so a flow or multi-lane corpus would appear in the picker and then be refused on
+    run (ADR-0026).
     """
     return {
-        "sources": [{"normalizer": "stub", "source_format": STUB_CSV_FORMAT}],
-        "detectors": [{"name": detector, "params": params}],
+        "sources": [
+            {
+                "normalizer": _normalizer_for(source_format, normalizers),
+                "source_format": source_format,
+            }
+            for source_format in source_formats
+        ],
+        "detectors": list(detectors),
         "alert_engine": {"name": engine},
     }
 
@@ -577,12 +664,20 @@ artifact means untrained, ADR-0022), so there is nothing on the wire to prefill 
 blank box is still a legal state — it is reported as a blocker rather than silently
 building an untrained detector. This table disappears the day ``/eval/detectors``
 enumerates each adapter's shipped artifacts, which is the real fix and is why it is
-listed beside ``_bench_spec``'s hardcoded normalizer as a known deferral.
+listed beside ``_composed_spec``'s hardcoded normalizer as a known deferral.
 """
 
 
-def _sweep_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, list[Any]]:
+_NO_SWEEP = "(no sweep)"
+
+
+def _sweep_widgets(prefix: str, offered: dict[str, ParamInfo]) -> dict[str, list[Any]]:
     """Pick one numeric hyperparameter and the values to vary it across.
+
+    ``offered`` is keyed by the *swept key* — the qualified ``flow_burst.threshold`` when the
+    entry holds several detectors, the bare ``threshold`` when it holds one (see
+    ``_offered_knobs``). The key is what the server parses and what the report's label quotes,
+    so the menu shows exactly the text that will identify the run.
 
     One parameter, not many: a 2-D sweep is a surface, and a head-to-head table of 24 rows
     is not how anyone reads one. The server cross-products anyway (the CLI can sweep two),
@@ -592,43 +687,64 @@ def _sweep_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, list[Any]]
     # cannot disagree about whitespace, empty items or value types.
     from iotshield.eval.sweep import values as parse_values
 
-    numeric = [param.name for param in params if param.type in ("int", "float")]
-    if not numeric:
+    if not offered:
         return {}
-    chosen = st.selectbox("Sweep a hyperparameter", ["(no sweep)", *numeric], key=f"{prefix}_sw")
-    if chosen == "(no sweep)":
+    key = f"{prefix}_sw"
+    options = [_NO_SWEEP, *offered]
+    # Editing an entry changes which keys exist, and Streamlit keeps a selectbox's value across
+    # that change — but *silently resets it to the first option* when the value is gone, unlike
+    # a multiselect, which raises. So a configured sweep would vanish with no message and the
+    # run would quietly measure an unswept spec. Say so instead, and reset deliberately.
+    stale = st.session_state.get(key)
+    if stale is not None and stale not in options:
+        st.warning(
+            f"The **{stale}** sweep no longer applies to this entry's detectors and has been "
+            "cleared. Pick one below if you still want a sweep."
+        )
+        st.session_state[key] = _NO_SWEEP
+    chosen = st.selectbox("Sweep a hyperparameter", options, key=key)
+    if chosen == _NO_SWEEP:
         return {}
-    default = next((p.default for p in params if p.name == chosen), None)
+    default = offered[chosen].default
     raw = st.text_input(
         f"{chosen} values (comma-separated)", value=str(default or ""), key=f"{prefix}_swv"
     )
     swept = parse_values(raw)
     if not swept:
+        # Reachable and not an error: several params default to None because their real value
+        # comes from a preset, so the box opens empty and there is nothing to sweep yet.
+        st.caption(f"Enter comma-separated values to sweep {chosen}.")
         return {}
     st.caption(f"-> {len(swept)} run(s), one per value, compared head to head")
     return {chosen: swept}
 
 
 def _eval_catalogue() -> tuple["CorporaResponse", list["DetectorSummary"]]:
-    """The Evaluate page's two catalogue calls.
+    """What the Evaluate page needs *before* the user has chosen a mode.
 
-    Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale
-    catalogue after the Pipeline API goes away, defeating the saved-report fallback below
-    — which is the page's whole degradation story. The server builds this response once
-    (``api/evaluation.py``), so the per-rerun cost is two local round-trips against a
-    precomputed payload, not repeated introspection.
+    Deliberately NOT ``st.cache_data``: caching the *result* would replay a stale catalogue
+    after the Pipeline API goes away, defeating the saved-report fallback below — which is the
+    page's whole degradation story.
+
+    Only these two. The bench-spec list and the normalizer registry each serve exactly one of
+    two mutually exclusive modes, and Streamlit re-runs this whole script on every widget
+    click — so fetching both here meant one guaranteed-dead round trip per keystroke, and
+    ``/eval/specs`` in particular re-walks the corpus root and re-parses every bench YAML
+    (measured ~21 ms). Each mode fetches its own.
     """
     client = get_control_client()
     return client.corpora(), client.eval_detectors()
 
 
 def _run_count(sweep: dict[str, list[Any]]) -> int:
-    """How many benchmarks one detector's plan costs: one per swept value, else one."""
+    """How many benchmarks one entry costs: one per swept value, else one."""
     return math.prod(len(values) for values in sweep.values()) if sweep else 1
 
 
-def _detector_plan(summary: "DetectorSummary", protocol: str) -> tuple[dict[str, Any], str | None]:
-    """One detector's benchmark configuration, plus anything blocking the run.
+def _detector_plan(
+    summary: "DetectorSummary", protocol: str, prefix: str
+) -> tuple[dict[str, Any], str | None, list[ParamInfo]]:
+    """One detector's benchmark configuration, what blocks it, and what it offers to sweep.
 
     Renders the ADR-0022 split as the page's central choice. A detector with no cached-fit
     param (a rule, like ``stub_threshold``) shows only its knobs; one that has an artifact
@@ -636,19 +752,28 @@ def _detector_plan(summary: "DetectorSummary", protocol: str) -> tuple[dict[str,
     which the returned problem says out loud, because an untrained model under protocol
     ``none`` scores a row of zeros that reads like a bad detector rather than a skipped one.
 
-    The blocker rides beside the entry rather than inside it: the entry is serialized whole
-    as the run's cache key, and a UI-only field in there would make an error message part
-    of the identity of a benchmark.
+    ``prefix`` is supplied by the caller rather than derived from the name, because the same
+    detector may now sit in two entries at once (comparing two of its presets is the obvious
+    reason to want that). Widget keys have to separate those instances, exactly as
+    ``_detector_widgets`` keys the Compose page's rows by index.
+
+    The third return value is what this detector contributes to its *entry's* sweep menu:
+    empty in trained mode, since an artifact is atomic and sweeping a knob beside it is the
+    request construction refuses. The entry decides what is finally offered, because
+    ambiguity is a property of the set (see ``_entry_widgets``).
+
+    The blocker rides beside the plan rather than inside it: the plan is serialized whole as
+    the run's cache key, and a UI-only field in there would make an error message part of the
+    identity of a benchmark.
     """
-    prefix = f"eval_{summary.name}"
     tunables = [param for param in summary.params if param.name != summary.artifact_param]
     params: dict[str, Any]
-    sweep: dict[str, list[Any]] = {}
+    sweepable: list[ParamInfo] = []
     problem: str | None = None
 
     if summary.artifact_param is None:
         params = _param_widgets(prefix, summary.params)
-        sweep = _sweep_widgets(prefix, tunables)
+        sweepable = tunables
     else:
         mode = st.radio(
             "Weights",
@@ -671,6 +796,14 @@ def _detector_plan(summary: "DetectorSummary", protocol: str) -> tuple[dict[str,
                 ),
             )
             params = {summary.artifact_param: chosen}
+            # Why this detector contributes nothing to the entry's sweep menu. Without it the
+            # menu silently gains three options when this radio moves, and the radio lives
+            # inside a collapsed expander, so the cause is invisible.
+            st.caption(
+                f"Trained weights are atomic: the artifact supplies **{summary.name}**'s "
+                "hyperparameters too, so there is nothing here to edit or sweep. Switch to "
+                f"*{_SCRATCH}* to choose them yourself."
+            )
             if not chosen:
                 problem = (
                     f"**{summary.name}** is set to use trained weights but no artifact is "
@@ -678,15 +811,219 @@ def _detector_plan(summary: "DetectorSummary", protocol: str) -> tuple[dict[str,
                 )
         else:
             params = _param_widgets(prefix, tunables)
-            sweep = _sweep_widgets(prefix, tunables)
+            sweepable = tunables
             if protocol == "none":
                 problem = (
                     f"**{summary.name}** has no trained weights in this mode, and the fit "
-                    "protocol is `none` — it would judge nothing. Pick `prefix` or "
-                    "`holdout` above, or switch it back to trained weights."
+                    "protocol is `none` — it would judge nothing. Pick `prefix` above, or "
+                    "switch it back to trained weights."
                 )
 
-    return {"name": summary.name, "params": params, "sweep": sweep}, problem
+    return {"name": summary.name, "params": params}, problem, sweepable
+
+
+def _offered_knobs(by_detector: list[tuple[str, list[ParamInfo]]]) -> dict[str, ParamInfo]:
+    """The entry's sweepable knobs, keyed by the text the server will parse.
+
+    Numeric only, because a sweep draws a curve: a preset or a channel list has no axis to
+    vary along.
+
+    Qualified with the detector name as soon as an entry holds more than one, which is what
+    makes every knob reachable. This menu used to *hide* any name two of the entry's detectors
+    shared — ``threshold`` on ``stub_threshold + flow_burst`` — mirroring a server refusal, so
+    the dropdown shrank from four entries to one with no explanation. Naming the detector
+    removes the ambiguity instead of routing around it.
+
+    A single-detector entry keeps bare names, so the common head-to-head case reads
+    ``stub_threshold[threshold=40]`` exactly as it always has and no published label moves.
+    """
+    qualify = len(by_detector) > 1
+    return {
+        f"{name}.{param.name}" if qualify else param.name: param
+        for name, params in by_detector
+        for param in params
+        if param.type in ("int", "float")
+    }
+
+
+def _entry_widgets(
+    index: int,
+    eligible: list[str],
+    summaries: dict[str, "DetectorSummary"],
+    protocol: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """One entry: the detectors that run *together*, their params, and one sweep across them.
+
+    An entry becomes exactly one spec, so it is also one row of the head-to-head table. One
+    detector per entry is the classic comparison; several is a multi-lane pipeline whose
+    alerts can cite more than one lane.
+
+    The sweep lives here rather than on each detector because a spec carries one sweep: the
+    server expands an entry into one labelled spec per value, and which knobs are legal to
+    vary depends on the whole set, not on any one member.
+    """
+    st.markdown(f"**Entry {index + 1}**")
+    key = f"eval_e{index}_dets"
+    # Switching corpus changes which detectors are eligible, and Streamlit keeps a widget's
+    # value in session state across that change — so a flow detector picked on `fleet_scan`
+    # would survive into `synthetic`, where it is not an option, and Streamlit raises rather
+    # than silently dropping it. Pruning before the widget is instantiated is the supported
+    # way to reconcile the two, and it keeps whatever remains valid instead of resetting the
+    # whole entry.
+    if key in st.session_state:
+        st.session_state[key] = [name for name in st.session_state[key] if name in eligible]
+    # Default to one detector per entry, walking down the eligible list, so a fresh page is
+    # the head-to-head everyone expects and multi-detector entries are opt-in.
+    default = [eligible[index]] if index < len(eligible) else []
+    chosen = st.multiselect(
+        f"Detectors in entry {index + 1}",
+        eligible,
+        default=default,
+        key=key,
+        help="Two or more run together in one pipeline, so their alerts can corroborate.",
+    )
+
+    detectors: list[dict[str, Any]] = []
+    problems: list[str] = []
+    offered: list[tuple[str, list[ParamInfo]]] = []
+    for name in chosen:
+        with st.expander(f"{name} — hyperparameters", expanded=False):
+            plan, problem, sweepable = _detector_plan(
+                summaries[name], protocol, f"eval_e{index}_{name}"
+            )
+        detectors.append(plan)
+        if problem is not None:
+            problems.append(problem)
+        offered.append((name, sweepable))
+
+    sweep = _sweep_widgets(f"eval_e{index}", _offered_knobs(offered)) if detectors else {}
+    return {"label": " + ".join(chosen), "detectors": detectors, "sweep": sweep}, problems
+
+
+def _labelled(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop empty entries and make the surviving labels unique.
+
+    A label is a spec's identity in the report, and two entries holding the same detectors
+    would otherwise produce two rows with one name — legitimate to want (the same detector
+    under two fit protocols is a real experiment) but unreadable unless they are told apart.
+    An entry with nothing selected is a transient UI state, not an error, so it is dropped
+    rather than blocking the run.
+    """
+    kept = [entry for entry in entries if entry["detectors"]]
+    seen: Counter[str] = Counter()
+    for entry in kept:
+        seen[entry["label"]] += 1
+        if seen[entry["label"]] > 1:
+            entry["label"] = f"{entry['label']} ({seen[entry['label']]})"
+    return kept
+
+
+_SHIPPED_SPECS = "Run a committed bench spec"
+_COMPOSE_SPECS = "Compose my own"
+
+
+def _shipped_widgets(corpus_name: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Pick one or more committed ``config/bench/*.yaml`` and run them **verbatim**.
+
+    The point of the mode: what runs is the file, not a reconstruction of it, so a number on
+    this page and the same number from the CLI are the same measurement. The specs arrive from
+    ``/eval/specs`` already parsed, and the page forwards the spec object untouched — it never
+    names a path, and it never edits what it was given.
+
+    Only specs whose source shape matches the corpus are offered, which is the pairing the
+    server derives (``eval.bench``). Offering the rest would put a guaranteed alignment failure
+    in a dropdown.
+    """
+    fitting = [item for item in get_control_client().eval_specs() if corpus_name in item.corpora]
+    if not fitting:
+        return [], [
+            f"No committed bench spec matches `{corpus_name}`'s input shape. Compose one "
+            "instead, or add a spec whose `sources` match."
+        ]
+    chosen = st.multiselect(
+        "Bench specs",
+        [item.name for item in fitting],
+        default=[fitting[0].name],
+        key="eval_bench_specs",
+        help="Each becomes one row of the comparison, exactly as the CLI would run it.",
+    )
+    picked = [item for item in fitting if item.name in chosen]
+    for item in picked:
+        st.caption(f"**{item.name}** — {', '.join(item.detectors)}")
+    return [
+        # No sweep: an artifact is atomic and a committed spec is a fixed measurement. Sweeping
+        # one belongs in the compose mode, where the hyperparameters are on screen (ADR-0022).
+        {"label": item.name, "spec": item.spec.model_dump(mode="json"), "sweep": {}}
+        for item in picked
+    ], []
+
+
+def _compose_widgets(
+    detectors: list["DetectorSummary"], corpus: Any, protocol: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build specs from detectors picked on screen — the exploratory mode.
+
+    The alert engine is chosen here rather than beside the corpus, because it is only
+    meaningful here: a committed bench spec brings its own, so a picker outside this branch is
+    a control the user can change while nothing happens.
+    """
+    # Which detectors this corpus can actually feed, from the lanes the API says it yields.
+    # Hardcoding the telemetry lane here was correct only while every corpus was telemetry:
+    # once ADR-0026 shipped a flow corpus and a trimodal one, it hid the only detectors that
+    # could judge them and offered ones guaranteed to score zero. Both sides of this
+    # intersection arrive decoded from /eval, so the page never parses a `lane:` prefix.
+    eligible = [item.name for item in detectors if set(item.lanes) & set(corpus.lanes)]
+    if not eligible:
+        return [], [
+            f"No registered detector consumes this corpus's lane(s): "
+            f"{', '.join(corpus.lanes) or 'none'}."
+        ]
+
+    engine = st.selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
+    st.subheader("Entries")
+    st.caption(
+        "One entry is one row of the comparison. Put a single detector in each to compare "
+        "them head to head; put several in one to run them **together** in a single "
+        "pipeline, which is how alerts come to cite more than one lane."
+    )
+    entry_count = int(
+        st.number_input(
+            "How many entries?",
+            min_value=1,
+            max_value=6,
+            value=min(2, len(eligible)),
+            step=1,
+            key="eval_entry_n",
+        )
+    )
+    summaries = {item.name: item for item in detectors}
+    entries: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for index in range(entry_count):
+        entry, entry_problems = _entry_widgets(index, eligible, summaries, protocol)
+        entries.append(entry)
+        problems.extend(entry_problems)
+    plan = _labelled(entries)
+
+    fittable = {item.name for item in detectors if item.fittable}
+    picked = {detector["name"] for entry in plan for detector in entry["detectors"]}
+    if protocol != "none" and picked and not picked & fittable:
+        st.info(
+            "None of the selected detectors can be trained; they will be evaluated as "
+            "configured and the report will say so."
+        )
+    # The normalizer registry is fetched here rather than with the page's catalogue: only this
+    # mode composes a spec, so asking for it up front was a round trip the shipped-spec mode
+    # never used, on every widget click.
+    normalizers = {info.name: info for info in get_control_client().modules().normalizers}
+    return [
+        {
+            "label": entry["label"],
+            "spec": _composed_spec(entry["detectors"], engine, corpus.source_formats, normalizers),
+            "sweep": entry["sweep"],
+        }
+        for entry in plan
+    ], problems
 
 
 @st.cache_data(show_spinner=False)
@@ -704,31 +1041,27 @@ def _parse_report(payload: str) -> "EvaluationReport":
 
 
 @st.cache_data(show_spinner=False)
-def _run_benchmark(corpus: str, plan_json: str, engine: str, protocol: str) -> str:
+def _run_benchmark(corpus: str, specs_json: str, protocol: str) -> str:
     """Run a benchmark through the API and return its JSON.
 
     Cached on the arguments, which is what makes running one from a Streamlit page safe:
     the script re-executes on *every* interaction, so uncached work here would re-run the
     benchmark on each click. With the cache, it runs on the button press and every later
     interaction (switch spec, switch case) replays instantly. Returns JSON rather than a
-    model because the cache wants a serializable value — and takes the plan as JSON for
-    the same reason, since it is the cache key as well as the request.
+    model because the cache wants a serializable value.
 
-    Sweeps are expanded *server-side* (ADR-0022): the plan carries the values, the API
+    ``specs_json`` is the **finished request body**, not a plan to be turned into one. Composing
+    the spec in here made the cache key a description of a spec rather than the spec, so two
+    different specs could collide on one entry and — worse — nothing on screen could show what
+    actually ran. It is now literally the payload, which makes the key exact and the echo free.
+
+    Sweeps are expanded *server-side* (ADR-0022): the payload carries the values, the API
     cross-products them into labelled specs, and this page never has to know that four
-    rows in the report came from one detector.
+    rows in the report came from one entry.
     """
-    plan = json.loads(plan_json)
     report = get_control_client().evaluate(
         corpus=corpus,
-        specs=[
-            {
-                "label": item["name"],
-                "spec": _bench_spec(item["name"], item["params"], engine),
-                "sweep": item["sweep"],
-            }
-            for item in plan
-        ],
+        specs=json.loads(specs_json),
         fit_protocol=protocol,
         include_timeline=True,
     )
@@ -899,49 +1232,48 @@ def evaluate_page(report_path: Path) -> None:
             st.caption(hint)
         return
 
-    columns = st.columns([2, 2, 3])
-    corpus_name = columns[0].selectbox(
-        "Corpus", [item.name for item in catalogue.corpora], key="eval_corpus"
-    )
-    corpus = next(item for item in catalogue.corpora if item.name == corpus_name)
-    engine = columns[1].selectbox("Alert engine", ["weighted", "stub"], key="eval_engine")
-    protocol = columns[2].radio(
+    # A bundle that cannot be loaded is shown as broken rather than hidden — it is listed with
+    # its reason (which names the fix) and kept out of the picker, so "my corpus vanished" is
+    # never the only feedback.
+    for broken in [item for item in catalogue.corpora if item.error]:
+        st.error(f"`{broken.name}` cannot be loaded: {broken.error}")
+    usable = [item for item in catalogue.corpora if not item.error]
+    if not usable:
+        return
+
+    columns = st.columns([2, 3])
+    corpus_name = columns[0].selectbox("Corpus", [item.name for item in usable], key="eval_corpus")
+    corpus = next(item for item in usable if item.name == corpus_name)
+    protocol = columns[1].radio(
         "Fit protocol", list(PROTOCOL_HELP), key="eval_protocol", horizontal=True
     )
     st.caption(f"{corpus.cases} case(s) · {corpus.description}")
     if corpus.licence:
         st.caption(f"Provenance: {corpus.provenance} · Licence: {corpus.licence}")
 
-    # Only telemetry detectors can judge the telemetry corpora we ship; offering a log
-    # detector here would build a spec whose format the API rightly refuses. The lane comes
-    # back decoded, so this compares against the Lane enum rather than a wire prefix.
-    choices = [item.name for item in detectors if Lane.TELEMETRY.value in item.lanes]
-    fittable = {item.name for item in detectors if item.fittable}
-    chosen = st.multiselect(
-        "Detectors to compare", choices, default=choices[:2], key="eval_detectors"
-    )
     st.caption(PROTOCOL_HELP[protocol])
-    if protocol != "none" and chosen and not set(chosen) & fittable:
-        st.info(
-            "None of the selected detectors can be trained; they will be evaluated as "
-            "configured and the report will say so."
-        )
 
-    # Each detector's own hyperparameters, weights source and sweep. In an expander because
-    # the defaults are the common case: the page still opens as "tick two boxes and run".
-    by_name = {item.name: item for item in detectors}
-    plan = []
-    problems = []
-    for name in chosen:
-        with st.expander(f"{name} — hyperparameters", expanded=False):
-            entry, problem = _detector_plan(by_name[name], protocol)
-        plan.append(entry)
-        problems.append(problem)
-    for problem in filter(None, problems):
+    mode = st.radio(
+        "Specs", [_SHIPPED_SPECS, _COMPOSE_SPECS], key="eval_spec_mode", horizontal=True
+    )
+    if mode == _SHIPPED_SPECS:
+        request_specs, problems = _shipped_widgets(corpus_name)
+    else:
+        request_specs, problems = _compose_widgets(detectors, corpus, protocol)
+
+    for problem in problems:
         st.error(problem)
+    if request_specs:
+        # The exact request, on the page that made it. Neither surface used to display the
+        # spec it ran, so a dashboard number and a CLI number that disagreed could only be
+        # reconciled by reading the page's source.
+        with st.expander(
+            f"Spec sent to the API ({len(request_specs)} entr(y/ies))", expanded=False
+        ):
+            st.json(request_specs)
 
-    total = sum(_run_count(entry["sweep"]) for entry in plan)
-    if total > len(plan):
+    total = sum(_run_count(entry["sweep"]) for entry in request_specs)
+    if total > len(request_specs):
         st.caption(f"This will run **{total}** benchmark(s) — one per swept value.")
 
     # Latch the run into session state rather than rendering only on the click. A bare
@@ -949,15 +1281,16 @@ def evaluate_page(report_path: Path) -> None:
     # first touch of a selectbox inside it (the timeline's spec/case pickers) reruns with
     # the button False and wipes the page. Latching is what lets the cache below pay off:
     # exploring a finished report replays from cache instead of clearing it.
-    # The plan is carried as JSON so the whole selection stays a hashable cache key.
-    selection = (corpus_name, json.dumps(plan, sort_keys=True), engine, protocol)
-    blocked = not chosen or any(problems)
+    # The request rides as JSON so the whole selection stays a hashable cache key — and since
+    # it IS the request body, two different specs can no longer collide on one entry.
+    selection = (corpus_name, json.dumps(request_specs, sort_keys=True), protocol)
+    blocked = not request_specs or bool(problems)
     if st.button("Run benchmark", type="primary", disabled=blocked):
         st.session_state[_EVAL_RUN_KEY] = selection
 
     latched = st.session_state.get(_EVAL_RUN_KEY)
     if latched is None:
-        st.caption("Pick detectors and run — results are cached, so exploring them is instant.")
+        st.caption("Pick specs and run — results are cached, so exploring them is instant.")
         return
 
     # Changing a control after a run leaves the latched report on screen, which reads as
@@ -965,10 +1298,10 @@ def evaluate_page(report_path: Path) -> None:
     # showed the previous protocol's numbers. Say so rather than re-running unasked: a
     # benchmark is not something to trigger on a stray click.
     if latched != selection:
-        previous = ", ".join(item["name"] for item in json.loads(latched[1]))
+        previous = ", ".join(entry["label"] for entry in json.loads(latched[1]))
         st.warning(
             f"Showing the previous run (corpus **{latched[0]}**, {previous}, "
-            f"fit protocol **{latched[3]}**). "
+            f"fit protocol **{latched[2]}**). "
             "Press **Run benchmark** to apply the settings above."
         )
 

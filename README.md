@@ -130,6 +130,27 @@ Note that flows identify a device by IP (that is the only identity a flow carrie
 this demo keys all three sources on the camera's IP address. Reconciling hostname-keyed
 and IP-keyed identities in general needs an asset-aliasing layer that does not exist yet.
 
+### Already-normalized input: the pass-through normalizer
+
+Not every source needs parsing. Some upstream systems already emit our canonical event
+shape. `config/demo_passthrough.yaml` reads JSONL from a partner that does (ADR-0025):
+
+```
+uv run python -m iotshield.pipeline --config config/demo_passthrough.yaml
+```
+
+The `passthrough` normalizer **validates and envelopes** rather than parses — every record
+is still checked against the contract (timezone-aware timestamps, finite values, no unknown
+fields) and every failure is still quarantined, never dropped. Here 7 events flow through
+and 3 lines are captured as malformed: a naive timestamp, a record that declares the wrong
+lane for this source, and a non-JSON line the exporter left in the stream. It is the
+smallest a working normalizer can be — the hello-world for adding your own module.
+
+One design point it introduces: because a pass-through record carries its own lane in the
+data (which the compatibility guard cannot see statically), the lane a source carries is a
+config `param`. That keeps the guard's coverage feedback accurate and lets the adapter
+quarantine a misrouted record — the first normalizer whose declared shape follows its params.
+
 ## Serve the API
 
 ```
@@ -186,34 +207,75 @@ corpus: synthetic - Synthetic rig telemetry: 11 recordings, 9 injected faults
   11 case(s), 9 labelled incident(s)   fit protocol: none
 
 case                      inc   det  alerts    evF1  det/inc  alt/inc   latency
-spike-0                     1    60       1    1.00    60.00     1.00       31s
-drift-0                     1    56       1    1.00    56.00     1.00       47s
+spike-0                     1    62       1    1.00    62.00     1.00       28s
+drift-0                     1    53       1    1.00    53.00     1.00       53s
 stuck-0                     1     0       0    0.00     0.00     0.00         -
 clean-0                     0     0       0       -        -        -         -
 ```
 
 Three things that table is showing. **`stuck` is invisible** to a fixed threshold — the
 sensor freezes at an in-range value, so only a detector that models *normal* can see it;
-that is the shape the corpus exists to discriminate on. **`det/inc 60`** is fragmentation:
-one fault became 60 detections, which the alert layer compressed to 1. And **`-` means
+that is the shape the corpus exists to discriminate on. **`det/inc 62`** is fragmentation:
+one fault became 62 detections, which the alert layer compressed to 1. And **`-` means
 undefined, not zero** — a clean recording has no fault to recall.
+
+The corpus-wide summary above it is **pooled from counts, not averaged from these rows**: a
+rate is undefined on a clean recording, so averaging would let a spec that false-alarmed on
+`clean-0` score exactly as well as one that stayed quiet (ADR-0027). Its `ovl` column is the
+one interval matching cannot see — of a true detection's window, how much was actually fault.
+A single detection spanning the whole recording scores perfect precision, perfect recall and
+zero latency; `ovl` is what says it carried no information.
 
 ### Corpora
 
 ```
 uv run python -m iotshield.eval list        # what is here
-uv run python -m iotshield.eval generate    # rebuild the committed corpus
+uv run python -m iotshield.eval generate    # rebuild every committed corpus
 uv run python -m iotshield.eval fetch skab  # convert a SKAB checkout into local bundles
 ```
 
-A corpus is a **bundle** in `data/eval/` — a manifest, gzipped readings, interval labels —
-and they are *discovered*, so **adding your own is dropping in a directory, not writing
-code**. `synthetic` ships in this repository, so a fresh clone can benchmark immediately.
-SKAB is GPLv3 and therefore converted locally rather than redistributed.
+A corpus is a **bundle** in `data/eval/` — a manifest, gzipped readings, per-asset interval
+labels — and they are *discovered*, so **adding your own is dropping in a directory, not
+writing code**. Three ship in this repository, so a fresh clone can benchmark immediately:
+`synthetic` (telemetry), `fleet_scan` (multi-device network flow) and `device_trimodal` (one
+device on all three lanes). SKAB is GPLv3 and therefore converted locally rather than
+redistributed.
+
+**A finding is judged against the incident on its own device**, never on time alone
+(ADR-0026). That is what lets a fleet corpus measure the thing worth measuring — not whether
+the scanner was caught, but whether the rest of the fleet stayed quiet. A device
+listed with no incidents is *asserted clean*, so an alert on it is an unambiguous false alarm;
+a device the corpus does not list is out of scope and its findings are counted but never
+scored. The report adds `misattributed_detections` for a detection that fired at the right
+moment on the wrong device — which, under time-only matching, counted as a correct catch.
+
+Two questions the shipped corpora answer that a demo cannot:
+
+```
+# Is the flow detector's hand-chosen 20-peer threshold defensible?
+uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
+    --sweep threshold=8,15,20,27,35
+
+# Does cross-lane corroboration improve the queue? Same bundle, same bytes, two specs
+# differing only in how many lanes are judged.
+uv run python -m iotshield.eval --corpus device_trimodal \
+    --spec config/bench/trimodal_telemetry.yaml --spec config/bench/trimodal_all.yaml
+```
+
+Writing your own corpus generator is two objects: a `Behaviour` (what a device's normal looks
+like on one lane, and what a fault does to it) and a `Renderer` (events to wire text). The
+labels are then *derived* from what the behaviour actually perturbed rather than annotated by
+hand, and a meta-test holds the renderer to being the exact inverse of the matching normalizer.
 
 Add `--fit-protocol prefix` to let detectors implementing the optional `Fittable` capability
-relearn their baseline from each case's own clean history; ones that cannot are evaluated as
-configured and the report says so. `--out report.json` writes a diffable artifact.
+relearn their baseline from a reserved head of each asset's own clean history — which is then
+**not scored**, so training data and test data are disjoint by construction. Detectors that
+cannot train are evaluated as configured and the report says so. `--out report.json` writes a
+diffable artifact.
+
+`--corpus` and `--spec` are both required; `eval list` prints which pairs are legal, derived
+from the corpus's declared input shape and each spec's declared sources rather than from a
+list anyone maintains.
 
 ### Choosing hyperparameters
 

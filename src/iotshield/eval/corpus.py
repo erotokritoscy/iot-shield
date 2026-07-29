@@ -19,20 +19,20 @@ names a path is a request to read arbitrary files (ADR-0018 §9-A).
 """
 
 import os
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
-
+from iotshield.contracts import Lane
 from iotshield.eval.bundle import (
     MANIFEST_NAME,
+    AssetLabel,
     BundleError,
     CaseManifest,
     CorpusManifest,
+    IncidentLabel,
     InputManifest,
     Labels,
+    contained,
     discover,
     labels_name,
     manifest_json,
@@ -40,10 +40,10 @@ from iotshield.eval.bundle import (
     read_labels,
     read_manifest,
     read_payload,
+    source_formats,
     write_payload,
 )
-from iotshield.eval.truth import GroundTruth, Incident
-from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
+from iotshield.eval.truth import AssetTruth, GroundTruth, Incident
 
 CORPUS_PATH_ENV = "IOTSHIELD_CORPUS_PATH"
 
@@ -69,7 +69,23 @@ def fetchable() -> dict[str, str]:
 
 
 class CorpusUnavailable(RuntimeError):
-    """A named corpus is not present on this machine (never fetched, or wrong root)."""
+    """A named corpus is not present on this machine (never fetched, or wrong root).
+
+    Deliberately *not* an error for the CLI: a fetchable dataset nobody has fetched yet is a
+    normal state on a fresh clone, so a benchmark over it is skipped with exit 0.
+    """
+
+
+class UnknownCorpus(CorpusUnavailable):
+    """No corpus of that name exists anywhere — a typo, not a missing download.
+
+    The distinction the CLI could not make. Both raised ``CorpusUnavailable`` and the CLI
+    treats that as a skip, so ``--corpus sythetic`` printed nothing and returned **0**: a CI
+    benchmark job with a mistyped name passed green having measured nothing. The information
+    to tell them apart was already computed at the raise site (a fetchable name has a hint, an
+    unknown one does not); only the type was missing. The API maps both to 404, which is still
+    right — subclassing keeps that mapping untouched.
+    """
 
 
 @dataclass(frozen=True)
@@ -99,7 +115,9 @@ class Case:
     name: str
     inputs: list[CaseInput]
     truth: GroundTruth
-    holdout: list[CaseInput] = field(default_factory=list)
+    # There is deliberately no `holdout` here. It existed as a field with no manifest
+    # counterpart, so nothing on disk could ever populate it while three surfaces offered
+    # `--fit-protocol holdout` as a working choice (see ``eval.fit``).
 
 
 @dataclass(frozen=True)
@@ -112,7 +130,18 @@ class Corpus:
 
     @property
     def incidents(self) -> int:
+        """Labelled (fault, lane) projections across every case — the event level's total."""
         return sum(len(case.truth.incidents) for case in self.cases)
+
+    @property
+    def faults(self) -> int:
+        """Distinct causes across every case — the alert level's total (ADR-0028 D2).
+
+        Reported beside ``incidents`` rather than instead of it, because the gap between the
+        two *is* the corpus's multimodality: they are equal on a single-lane corpus, and
+        ``device_trimodal`` carries 7 projections of 3 faults.
+        """
+        return sum(len(case.truth.faults) for case in self.cases)
 
 
 @dataclass(frozen=True)
@@ -128,6 +157,24 @@ class CorpusInfo:
     provenance: str
     licence: str
     cases: int
+    source_formats: tuple[str, ...] = ()
+    """The input shape a spec must declare to benchmark this corpus, from the manifest.
+
+    Carried here so a caller composing a spec on someone's behalf — the dashboard's Evaluate
+    page — can build one that *fits*. Without it the page hardcoded a single stub-csv source,
+    so a multi-lane corpus appeared in its picker and then failed alignment on run.
+    """
+
+    error: str = ""
+    """Why this bundle cannot be loaded, when it cannot — empty for a healthy corpus.
+
+    A broken bundle used to be ``continue``d out of every listing, so a stale answer key or a
+    malformed manifest simply *vanished*: it was absent from ``eval list``, from
+    ``/eval/corpora`` and from the dashboard picker, and the follow-up error said "unknown
+    corpus" without ever mentioning the directory sitting right there. Listing it with its
+    reason turns three silent disappearances into one message, and the reason is already
+    written — see ``bundle.read_labels``, which names the exact regenerate command.
+    """
 
 
 def corpus_root(root: Path | None = None) -> Path:
@@ -138,50 +185,79 @@ def corpus_root(root: Path | None = None) -> Path:
     return Path(configured) if configured else DEFAULT_CORPUS_ROOT
 
 
-def to_stub_csv(frame: pd.DataFrame, timestamps: Sequence[datetime], asset_id: str) -> CaseInput:
-    """Render a wide channel frame as the long CSV the ``stub`` normalizer ingests.
+# Rendering readings into wire text lives with the lane that defines the format:
+# `generate.telemetry.to_stub_csv` and its `StubCsvRenderer` (ADR-0026). It sat here while the
+# generator was one file; keeping it would give stub-csv two writers free to drift apart,
+# which is exactly what a renderer being *the inverse of a normalizer* rules out. This module
+# owns the corpus container and its bundle IO, and knows nothing about formats.
 
-    The inverse of that normalizer's fan-out: one line per (timestamp, channel) reading,
-    which is the contract's one-value-per-event rule (ADR-0003 D1). Going through real CSV
-    text rather than constructing events directly is deliberate — the benchmark then
-    exercises normalization too, so a corpus measures the *pipeline*, not just a detector.
 
-    The format name comes from ``normalize.stub`` rather than a literal here, so the writer
-    is anchored to the reader that defines the dialect.
+def _asset_truth(label: AssetLabel) -> AssetTruth:
+    """One asset's stored labels back into truth, re-deriving its flags from the intervals."""
+    return AssetTruth.from_incidents(
+        label.asset_id,
+        {Lane(lane): moments for lane, moments in label.clocks.items()},
+        [
+            Incident(
+                asset_id=label.asset_id,
+                lane=Lane(incident.lane),
+                spans=tuple(incident.spans),
+                kind=incident.kind,
+                fault_id=incident.fault_id,
+            )
+            for incident in label.incidents
+        ],
+    )
 
-    Values are materialized once via ``to_numpy``; the obvious per-cell ``frame[c].iloc[i]``
-    costs a pandas column selection *and* a scalar lookup per cell, measured at 22x slower
-    over a SKAB recording (100ms vs 4.5ms). This is the write path only — bundles are read
-    back as text — so it costs generation and conversion, not benchmarking.
+
+def _asset_label(asset: AssetTruth) -> AssetLabel:
+    """One asset's truth as stored labels — the inverse of ``_asset_truth``, beside it.
+
+    A named function rather than a comprehension nested in a write call, so the two halves of
+    one mapping read as the pair they are.
     """
-    channels = list(frame.columns)
-    values = frame.to_numpy()
-    # isoformat() once per row, not once per cell — it sat in the inner clause and was 36%
-    # of generating a corpus. Measured 1.7-2.1x; a precomputed line prefix and zip(channels,
-    # row) were both tried and were slower, so the index loop stays.
-    stamps = [moment.isoformat() for moment in timestamps]
-    lines = [
-        f"{stamp},{asset_id},{channels[column]},{row[column]}"
-        for stamp, row in zip(stamps, values, strict=True)
-        for column in range(len(channels))
-    ]
-    return CaseInput(STUB_CSV, "\n".join(lines) + "\n")
+    return AssetLabel(
+        asset_id=asset.asset_id,
+        # Sorted by lane so a regenerated bundle is byte-identical, the same reason `lanes`
+        # below is sorted: a dict keyed off a set has no order gzip would forgive.
+        clocks={
+            lane.value: [moment for moment, _ in rows]
+            for lane, rows in sorted(asset.timelines.items())
+        },
+        # Sorted by (lane, start) so a regenerated bundle is byte-identical however the
+        # generator happened to visit the lanes. The v3 predecessor needed a sort *inside* each
+        # label as well, because a lane set has no order; one incident naming one lane removes
+        # that second ordering problem rather than solving it again.
+        incidents=[
+            IncidentLabel(
+                spans=list(incident.spans),
+                lane=incident.lane.value,
+                kind=incident.kind,
+                fault_id=incident.fault_id,
+            )
+            for incident in sorted(asset.incidents, key=lambda i: (i.lane.value, i.spans))
+        ],
+    )
 
 
 def _case_from_manifest(directory: Path, entry: CaseManifest) -> Case:
+    # Every path a manifest names is resolved through `contained`: a bundle is untrusted data
+    # and may only reference files inside itself (see `bundle.contained`).
     inputs = [
-        CaseInput(source.source_format, read_payload(directory / source.path))
+        CaseInput(source.source_format, read_payload(contained(directory, source.path)))
         for source in entry.inputs
     ]
-    labels = read_labels(directory / entry.labels)
-    truth = GroundTruth.from_incidents(
-        labels.timestamps, [Incident(start, end) for start, end in labels.incidents]
+    labels = read_labels(contained(directory, entry.labels))
+    return Case(
+        name=entry.name,
+        inputs=inputs,
+        truth=GroundTruth.from_assets([_asset_truth(label) for label in labels.assets]),
     )
-    return Case(name=entry.name, inputs=inputs, truth=truth)
 
 
 def _corpus_from(directory: Path, manifest: CorpusManifest) -> Corpus:
     """Build a Corpus from an already-parsed manifest, so callers never re-read it."""
+    source_formats(manifest)  # refuse a mixed-shape corpus here rather than mid-benchmark
     try:
         cases = [_case_from_manifest(directory, entry) for entry in manifest.cases]
     except (OSError, BundleError) as exc:
@@ -200,43 +276,62 @@ def load_bundle(directory: Path) -> Corpus:
     return _corpus_from(directory, read_manifest(directory))
 
 
+def _describe(directory_name: str, directory: Path) -> CorpusInfo:
+    """One bundle as a listing sees it — including one that cannot be loaded.
+
+    A broken bundle is *listed with its reason* rather than skipped. It is still a corpus
+    someone put there; hiding it means the only feedback is an "unknown corpus" error that
+    does not mention it.
+    """
+    try:
+        manifest = read_manifest(directory)
+        shape = source_formats(manifest)
+    except BundleError as exc:
+        return CorpusInfo(
+            name=directory_name,
+            description="(cannot be loaded)",
+            provenance="",
+            licence="",
+            cases=0,
+            error=str(exc),
+        )
+    return CorpusInfo(
+        name=manifest.name,
+        description=manifest.description,
+        provenance=manifest.provenance,
+        licence=manifest.licence,
+        cases=len(manifest.cases),
+        source_formats=shape,
+    )
+
+
 def list_corpora(root: Path | None = None) -> list[CorpusInfo]:
     """Describe every bundle under the root, cheaply (manifests only, no readings)."""
-    infos: list[CorpusInfo] = []
-    for _, directory in discover(corpus_root(root)):
-        try:
-            manifest = read_manifest(directory)
-        except BundleError:
-            continue  # a broken manifest must not break the listing; loading it will say so
-        infos.append(
-            CorpusInfo(
-                name=manifest.name,
-                description=manifest.description,
-                provenance=manifest.provenance,
-                licence=manifest.licence,
-                cases=len(manifest.cases),
-            )
-        )
-    return infos
+    return [_describe(name, directory) for name, directory in discover(corpus_root(root))]
 
 
 def load_corpus(name: str, root: Path | None = None) -> Corpus:
     """Load a corpus by name, or explain how to obtain it.
 
-    An absent corpus is ``CorpusUnavailable`` rather than a plain error because the CLI
-    treats it as a *skip* (exit 0): a fetchable dataset nobody has fetched yet is a normal
-    state on a fresh clone, not a broken invocation.
+    Three outcomes, and they are three different situations. A corpus that loads. One that is
+    *fetchable but not here*, which is ``CorpusUnavailable`` and a normal state on a fresh
+    clone. And a name that exists nowhere, which is ``UnknownCorpus`` — a typo, not a missing
+    download. A broken bundle raises its own ``BundleError`` (a ``ValueError``) rather than
+    disappearing, so the reader is told the directory is there and why it will not load.
     """
     base = corpus_root(root)
     # One pass: parse each manifest once, keep the names seen for the error message, and
-    # reuse the matched manifest rather than reading it a second time. A broken sibling
-    # bundle is skipped here for the same reason list_corpora tolerates it — one bad
-    # directory must not make every other corpus unloadable.
+    # reuse the matched manifest rather than reading it a second time. A broken *sibling*
+    # bundle is skipped — one bad directory must not make every other corpus unloadable —
+    # but a broken bundle that IS the one asked for raises, because silence there is how a
+    # stale answer key turned into "unknown corpus 'x'" with no mention of x sitting on disk.
     seen: list[str] = []
     for directory_name, directory in discover(base):
         try:
             manifest = read_manifest(directory)
         except BundleError:
+            if directory_name == name:
+                raise
             continue
         # A bundle answers to its directory name or its manifest name; they normally agree,
         # and accepting either means renaming a folder does not break a saved command line.
@@ -247,7 +342,7 @@ def load_corpus(name: str, root: Path | None = None) -> Corpus:
     hint = fetchable().get(name)
     if hint is not None:
         raise CorpusUnavailable(f"corpus {name!r} is not in {base}. {hint}")
-    raise CorpusUnavailable(
+    raise UnknownCorpus(
         f"unknown corpus {name!r} in {base}; available: {', '.join(seen) or 'none'}"
     )
 
@@ -270,10 +365,9 @@ def write_bundle(directory: Path, corpus: Corpus) -> CorpusManifest:
         write_payload(
             directory,
             labels_relative,
-            Labels(
-                timestamps=[moment for moment, _ in case.truth.timeline],
-                incidents=[(i.start, i.end) for i in case.truth.incidents],
-            ).model_dump_json(indent=1),
+            Labels(assets=[_asset_label(asset) for asset in case.truth.assets]).model_dump_json(
+                indent=1
+            ),
         )
         cases.append(CaseManifest(name=case.name, inputs=inputs, labels=labels_relative))
 
@@ -284,6 +378,9 @@ def write_bundle(directory: Path, corpus: Corpus) -> CorpusManifest:
         licence=corpus.licence,
         cases=cases,
     )
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / MANIFEST_NAME).write_text(manifest_json(manifest), encoding="utf-8")
+    # Through `write_payload` like every other file above, rather than its own `write_text`.
+    # A bundle's text files must be LF on every platform (`bundle.NEWLINE`), and a second write
+    # site is a second place to forget that — which is exactly how the CRLF reproducibility bug
+    # got in. `MANIFEST_NAME` has no `.gz` suffix, so this takes the plain-text branch.
+    write_payload(directory, MANIFEST_NAME, manifest_json(manifest))
     return manifest

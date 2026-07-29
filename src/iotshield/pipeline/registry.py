@@ -28,6 +28,7 @@ from iotshield.detect import (
     Detector,
     FlowBurstDetector,
     LogBurstDetector,
+    MeterIForestDetector,
     StubThresholdDetector,
     Team3ZScoreDetector,
 )
@@ -36,12 +37,24 @@ from iotshield.detect.flow_burst import CAPABILITY as _FLOW_BURST_CAPABILITY
 from iotshield.detect.flow_burst import DEFAULT_PRESET as _DEFAULT_FLOW_PRESET
 from iotshield.detect.log_burst import CAPABILITY as _LOG_BURST_CAPABILITY
 from iotshield.detect.log_burst import DEFAULT_PRESET as _DEFAULT_LOG_PRESET
+from iotshield.detect.meter import MeterParams
+from iotshield.detect.meter.artifact import load_artifact as _load_meter_artifact
+from iotshield.detect.meter.detector import CAPABILITY as _METER_CAPABILITY
 from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.artifact import load_artifact
 from iotshield.detect.team3.detector import CAPABILITY as _TEAM3_CAPABILITY
 from iotshield.detect.team3.params import Team3Params
-from iotshield.normalize import FlowNormalizer, Normalizer, StubCsvNormalizer, SyslogNormalizer
+from iotshield.normalize import (
+    FlowNormalizer,
+    MeterNormalizer,
+    Normalizer,
+    PassThroughNormalizer,
+    StubCsvNormalizer,
+    SyslogNormalizer,
+)
 from iotshield.normalize.flow import CAPABILITY as _FLOW_NORMALIZER_CAPABILITY
+from iotshield.normalize.meter import CAPABILITY as _METER_NORMALIZER_CAPABILITY
+from iotshield.normalize.passthrough import capability as _passthrough_capability
 from iotshield.normalize.stub import CAPABILITY as _STUB_NORMALIZER_CAPABILITY
 from iotshield.normalize.syslog import CAPABILITY as _SYSLOG_NORMALIZER_CAPABILITY
 from iotshield.sink import ResultSink, SinkResources
@@ -171,6 +184,17 @@ def _flow_normalizer(home_networks: str | list[str] | None = None) -> FlowNormal
     return FlowNormalizer(home_networks=home_networks)
 
 
+def _passthrough_normalizer(
+    lane: Literal["telemetry", "log", "flow"] = "telemetry",
+) -> PassThroughNormalizer:
+    # The first param-driven NORMALIZER capability (ADR-0025): a pass-through record carries
+    # its own lane in source_type, which the static guard cannot see, so the lane this source
+    # carries is declared here and its capability follows it. The Literal is declaration, not
+    # enforcement (params arrive untyped from YAML; Lane() is what rejects a bad value), so
+    # /modules can offer the closed vocabulary as a choice instead of a free-text box.
+    return PassThroughNormalizer(lane=Lane(lane))
+
+
 def _optional_float(value: Any) -> float | None:
     """A tunable left blank means "use the preset's default".
 
@@ -197,10 +221,58 @@ def _flow_burst(
     )
 
 
+def _meter_normalizer(
+    meter_type: Literal["water", "electricity"] | None = None,
+    source_timezone: str | None = None,
+) -> MeterNormalizer:
+    # Both params are deployment facts a dialect cannot know: which utility an export of
+    # SensiPro's one table holds, and which wall clock a client's platform writes in. A bad
+    # value raises ValueError at construction, caught and attributed by _construct — so a
+    # typo fails named rather than silently placing every reading in the wrong hour.
+    return MeterNormalizer(meter_type=meter_type, source_timezone=source_timezone)
+
+
+def _meter_iforest(
+    artifact: str | None = None,
+    profile_window_hours: int | None = None,
+    n_estimators: int | None = None,
+    max_samples: int | None = None,
+    fp_budget: float | None = None,
+    min_episode_hours: int | None = None,
+    min_train_hours: int | None = None,
+    random_state: int | None = None,
+) -> MeterIForestDetector:
+    """Build the meter detector from a cached fit, from hyperparameters, or from both.
+
+    Mirrors ``_team3_zscore``: every param defaults to ``None`` meaning "not given", the
+    sentinel ``resolve_params`` needs to tell an override from an inherited value
+    (ADR-0022). Naming an ``artifact`` supplies both its hyperparameters and its fitted
+    meters; naming none yields an *untrained* detector, legal to build and to fit but
+    refusing to judge. Combining the two is refused, because an artifact is atomic.
+    """
+    loaded = _load_meter_artifact(str(artifact)) if artifact else None
+    params = resolve_params(
+        MeterParams,
+        {
+            "profile_window_hours": profile_window_hours,
+            "n_estimators": n_estimators,
+            "max_samples": max_samples,
+            "fp_budget": fp_budget,
+            "min_episode_hours": min_episode_hours,
+            "min_train_hours": min_train_hours,
+            "random_state": random_state,
+        },
+        loaded.params if loaded else None,
+    )
+    return MeterIForestDetector(params, dict(loaded.fitted) if loaded else None)
+
+
 NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
     "stub": AdapterSpec(StubCsvNormalizer, static(_STUB_NORMALIZER_CAPABILITY)),
     "syslog": AdapterSpec(SyslogNormalizer, static(_SYSLOG_NORMALIZER_CAPABILITY)),
     "flow": AdapterSpec(_flow_normalizer, static(_FLOW_NORMALIZER_CAPABILITY)),
+    "passthrough": AdapterSpec(_passthrough_normalizer, _passthrough_capability),
+    "meter": AdapterSpec(_meter_normalizer, static(_METER_NORMALIZER_CAPABILITY)),
 }
 
 DETECTORS: dict[str, AdapterSpec[Detector]] = {
@@ -213,6 +285,12 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
     ),
     "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
     "flow_burst": AdapterSpec(_flow_burst, static(_FLOW_BURST_CAPABILITY)),
+    "meter_iforest": AdapterSpec(
+        _meter_iforest,
+        static(_METER_CAPABILITY),
+        params_type=MeterParams,
+        artifact_param="artifact",
+    ),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {

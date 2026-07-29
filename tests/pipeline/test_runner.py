@@ -376,6 +376,23 @@ class TestDemoArtifacts:
         # A clean chain (the log lane is both produced and consumed) and a clean input.
         assert report.warnings == []
 
+    def test_passthrough_demo_validates_prenormalized_jsonl_and_ranks_the_spikes(
+        self, tmp_path: Path
+    ) -> None:
+        # ADR-0025: a partner system already emits NormalizedEvent JSONL. The passthrough
+        # normalizer validates and envelopes rather than parses — 7 events through, 3 lines
+        # quarantined (a naive timestamp, a wrong-lane record, a non-JSON checkpoint line).
+        # stub_threshold flags the three spikes above 80; the two on the registered,
+        # high-criticality pump correlate into one alert that outranks the discovered sensor.
+        report = run_pipeline(self._demo("demo_passthrough.yaml", tmp_path))
+        assert (report.events, report.malformed, report.detections, report.alerts) == (7, 3, 3, 2)
+        assert [alert.asset_id for alert in report.top_alerts] == ["pump-07", "sensor-03"]
+        # The two pump spikes fall in one time bucket -> one alert carrying both detections.
+        assert len(report.top_alerts[0].detection_ids) == 2
+        # A clean chain: telemetry is both produced (via the lane param) and consumed, and the
+        # 30% malformed rate is below the input-appropriateness threshold.
+        assert report.warnings == []
+
 
 class TestMalformedRateWarning:
     """The threshold logic behind the input-appropriateness warning (ADR-0017)."""

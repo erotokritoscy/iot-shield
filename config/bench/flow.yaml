@@ -1,0 +1,39 @@
+# Benchmark spec: the flow burst detector on the FLOW lane (ADR-0026).
+#
+# The first spec that measures a lane shipped on judgment alone. ADR-0024 chose fan_out's
+# 20-distinct-peers threshold by argument, and the only evidence for it was
+# `data/demo/demo_flow.log` — a file we wrote, in which the camera contacts 43 peers. A demo
+# you author yourself cannot falsify you. `fleet_scan` can: most of it is innocent devices.
+#
+# `threshold` is the one parameter worth sweeping, and this spec holds exactly ONE detector, so
+# the bare name is unambiguous:
+#
+#   uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
+#       --sweep threshold=8,12,20,30,40
+#
+# In a spec holding several detectors, `threshold` no longer identifies one knob (it means 80.0
+# on the telemetry lane and 20 distinct peers here), so qualify it by detector:
+#
+#   uv run python -m iotshield.eval --corpus device_trimodal \
+#       --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
+#
+# NOTE THE MISSING `assets:` BLOCK. It is absent on purpose. ADR-0021 D7 records that
+# `asset_weight` is circular — criticality is something we type into a config, so "did it rank
+# the critical asset first" measures our own input. With nothing registered, every device
+# auto-discovers at the same weight, and any movement in the ranking metrics cannot be our
+# own thumb on the scale. A test asserts this block stays absent.
+
+source_format: flow-csv
+normalizer: flow
+
+detectors:
+  - name: flow_burst
+    params:
+      preset: fan_out
+      # window_minutes and threshold left blank so each comes from the preset itself
+      # (1 minute / 20 peers) — the shipped values, which is what we are here to measure.
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5

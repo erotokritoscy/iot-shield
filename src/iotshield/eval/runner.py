@@ -15,10 +15,10 @@ an operator's triage queue (ADR-0021 D1).
 from collections.abc import Sequence
 from typing import Any
 
-from iotshield.contracts import NormalizedEvent
+from iotshield.contracts import DetectionResult, PrioritizedAlert
 from iotshield.detect._fitted import is_fitted
 from iotshield.eval.corpus import Case, Corpus
-from iotshield.eval.fit import FitProtocol, prepare_detector
+from iotshield.eval.fit import FitProtocol, Reservation, prepare_detector, reserve
 from iotshield.eval.report import (
     TIMELINE_SPAN_CAP,
     CaseReport,
@@ -27,6 +27,7 @@ from iotshield.eval.report import (
     SpecReport,
 )
 from iotshield.eval.score import score_alerts, score_detections
+from iotshield.eval.truth import GroundTruth
 from iotshield.pipeline import (
     NormalizedInputs,
     PipelineSpec,
@@ -34,8 +35,8 @@ from iotshield.pipeline import (
     compute_result,
     normalize_sources,
 )
+from iotshield.pipeline.compat import CompatLevel, check_compatibility
 from iotshield.pipeline.config import config_fingerprint
-from iotshield.sink import RunResult
 
 
 def _check_alignment(spec: PipelineSpec, case: Case) -> None:
@@ -60,15 +61,56 @@ def _check_alignment(spec: PipelineSpec, case: Case) -> None:
             )
 
 
-def _timeline(case: Case, result: RunResult) -> CaseTimeline:
-    """Capture where truth, detections and alerts fell — capped, and honest about it."""
-    detections = [(d.window_start, d.window_end) for d in result.detections]
-    alerts = [(a.window_start, a.window_end) for a in result.alerts]
+def _compatibility_notes(spec: PipelineSpec) -> list[str]:
+    """Guard warnings about this spec, so a row of zeros arrives with its own explanation.
+
+    ``_check_alignment`` compares a case's inputs against the spec's *sources*, which leaves
+    one layer unchecked: a spec can be perfectly aligned and still incoherent downstream.
+    Ingest the FLOW lane and hand it to a TELEMETRY detector and every input matches, the
+    detector is handed nothing, and the report reads ``evF1 0.00`` — indistinguishable from a
+    detector that ran and was simply bad. That is the single most misleading thing this
+    harness can print, and it is the same failure ``_check_alignment`` exists to prevent, one
+    joint further along.
+
+    The compatibility guard already diagnoses it, in words, and was never asked here. Asking
+    it costs nothing and covers every client at once: the CLI, the API and the dashboard all
+    arrive through ``evaluate``.
+
+    Reported, not refused. A detector that stays deliberately silent on a corpus is a
+    legitimate measurement — it is how ``severity_spike`` demonstrates it sees nothing in a
+    burst of INFO lines — so the honest outcome is the zero, scored, *with* its reason
+    attached. ERROR-level issues are left alone: they describe a spec that cannot construct,
+    and ``build_detectors`` already fails on those with its own message.
+    """
+    return [
+        f"{issue.stage}: {issue.message}"
+        for issue in check_compatibility(spec)
+        if issue.level is CompatLevel.WARNING
+    ]
+
+
+def _timeline(
+    truth: GroundTruth,
+    detections: Sequence[DetectionResult],
+    alerts: Sequence[PrioritizedAlert],
+) -> CaseTimeline:
+    """Capture where truth, detections and alerts fell — capped, and honest about it.
+
+    Drawn from the **scored** truth and findings, not the raw run. A chart of spans the table
+    beside it deliberately does not count is the same misreading the notes exist to prevent,
+    and under ``--fit-protocol prefix --with-timeline`` that is exactly what an unfiltered
+    timeline would show.
+    """
+    detection_spans = [(d.window_start, d.window_end) for d in detections]
+    alert_spans = [(a.window_start, a.window_end) for a in alerts]
     return CaseTimeline(
-        truth=[(incident.start, incident.end) for incident in case.truth.incidents],
-        detections=detections[:TIMELINE_SPAN_CAP],
-        alerts=alerts[:TIMELINE_SPAN_CAP],
-        truncated=max(len(detections), len(alerts)) > TIMELINE_SPAN_CAP,
+        # One bar per *span*, not per incident: a projection's extent is a list of runs
+        # (ADR-0029), and drawing `start`..`end` would paint over the quiet stretches the point
+        # metrics beside it are scoring as clean — the chart contradicting the table it explains.
+        truth=[span for incident in truth.incidents for span in incident.spans],
+        detections=detection_spans[:TIMELINE_SPAN_CAP],
+        alerts=alert_spans[:TIMELINE_SPAN_CAP],
+        truncated=max(len(detection_spans), len(alert_spans)) > TIMELINE_SPAN_CAP,
     )
 
 
@@ -101,10 +143,16 @@ def evaluate_case(
     *,
     protocol: FitProtocol,
     include_timeline: bool = False,
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
-    | None = None,
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
+    reservation_cache: dict[str, Reservation] | None = None,
+    spec_notes: Sequence[str] = (),
 ) -> CaseReport:
     """Run one spec over one labelled case and score both levels.
+
+    ``spec_notes`` are remarks that hold for the whole spec regardless of case — today the
+    compatibility warnings. They are passed in rather than derived here because they depend
+    only on the spec: computing them per case would repeat identical work once per recording
+    (sixteen times over SKAB), and the renderer dedupes notes across cases anyway.
 
     ``ingest_cache`` is an optional memo shared across the specs of one ``evaluate`` call.
     Ingest is pure and depends only on the source chain, so a sweep of N values would
@@ -118,26 +166,27 @@ def evaluate_case(
     if cached is None:
         texts = [given.text for given in case.inputs]
         ingested = normalize_sources(spec, texts, origins=[case.name] * len(texts))
-        holdout_events = (
-            normalize_sources(
-                spec, [given.text for given in case.holdout], origins=[f"{case.name}:holdout"]
-            ).events
-            if case.holdout
-            else None
-        )
         if ingest_cache is not None:
-            ingest_cache[key] = (ingested, holdout_events)
+            ingest_cache[key] = ingested
     else:
-        ingested, holdout_events = cached
+        ingested = cached
 
+    # What the protocol takes for training is what scoring must not look at — one object, so
+    # the two ends cannot drift (``fit.Reservation``). Memoized beside ingest for the same
+    # reason: it depends only on the case and the protocol, both invariant across the specs of
+    # one call, so a sweep of N values would otherwise recompute it N times (measured 0.1 s per
+    # 16-case spec-run on SKAB).
+    if reservation_cache is None:
+        reservation = reserve(case.truth, protocol)
+    else:
+        reservation = reservation_cache.setdefault(case.name, reserve(case.truth, protocol))
+    # Selected once, not once per detector: the choice depends on no detector, so calling it
+    # inside the comprehension was a full scan of the recording per detector — and under
+    # `none`, where `prepare_detector` returns on its first line, a scan whose result was
+    # always discarded (measured at 18% of a trimodal run).
+    training = reservation.training(ingested.events) if protocol is not FitProtocol.NONE else []
     outcomes = [
-        prepare_detector(
-            detector,
-            protocol=protocol,
-            events=ingested.events,
-            truth=case.truth,
-            holdout_events=holdout_events,
-        )
+        prepare_detector(detector, protocol=protocol, training=training)
         for detector in build_detectors(spec)
     ]
     # An untrained detector the protocol could not fit is dropped rather than called: its
@@ -145,18 +194,36 @@ def evaluate_case(
     # reader needs is this case scored honestly at zero with the reason attached
     # (ADR-0022). Every other outcome judges, fitted or as-configured.
     judging = [o.detector for o in outcomes if is_fitted(o.detector)]
+    # Detection runs over the WHOLE recording — a windowed detector needs its warm-up — and
+    # only the findings that reach the scored region are judged.
     result = compute_result(spec, ingested, judging)
+    detections = reservation.scoreable(result.detections)
+    alerts = reservation.scoreable(result.alerts)
 
+    attempted = [outcome for outcome in outcomes if outcome.attempted]
     return CaseReport.build(
         case=case.name,
-        detector_metrics=score_detections(case.truth, result.detections),
-        # The engine ranks its output, and precision@k reads positions in that ranking.
-        alert_metrics=score_alerts(case.truth, result.alerts),
-        # "Fitted" only if every detector that was asked to fit actually did — a partially
-        # fitted chain must not read as a clean fitted run.
-        fitted=all(o.fitted for o in outcomes) and protocol is not FitProtocol.NONE,
-        notes=sorted({o.note for o in outcomes if o.note}),
-        timeline=_timeline(case, result) if include_timeline else None,
+        detector_metrics=score_detections(reservation.truth, detections),
+        # The engine ranks its output, and precision@k reads positions in that ranking. The
+        # detections ride along so the alert level can report how many lanes backed each
+        # true alert — the direct evidence that cross-lane corroboration fired.
+        alert_metrics=score_alerts(reservation.truth, alerts, detections),
+        # "Fitted" only if every detector the protocol *asked* to fit actually did. Asking it
+        # of every detector instead made one rule-based control zero the count for the whole
+        # run, so a report reading `0/11` sat beside a score only a successful fit could
+        # produce (``fit.FitOutcome.attempted``).
+        fitted=bool(attempted) and all(outcome.fitted for outcome in attempted),
+        # Ingest warnings ride with the compatibility ones. ``normalize_sources`` already
+        # computes "this normalizer rejected 100% of input", and dropping it was how a spec
+        # whose params quarantined every record reported zeros with an empty note list:
+        # ``_check_alignment`` compares declared *formats*, so a params-level mismatch passes
+        # it and then silently ingests nothing.
+        notes=sorted(
+            {outcome.note for outcome in outcomes if outcome.note}
+            | set(spec_notes)
+            | set(ingested.warnings)
+        ),
+        timeline=(_timeline(reservation.truth, detections, alerts) if include_timeline else None),
     )
 
 
@@ -167,9 +234,12 @@ def evaluate_spec(
     label: str,
     protocol: FitProtocol,
     include_timeline: bool = False,
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]]
-    | None = None,
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] | None = None,
+    reservation_cache: dict[str, Reservation] | None = None,
 ) -> SpecReport:
+    # Once per spec, not once per case: the guard reads the spec's shape and nothing about
+    # the data, so its verdict is identical for every recording in the corpus.
+    spec_notes = _compatibility_notes(spec)
     return SpecReport(
         spec=label,
         detectors=[entry.name for entry in spec.detectors],
@@ -181,6 +251,8 @@ def evaluate_spec(
                 protocol=protocol,
                 include_timeline=include_timeline,
                 ingest_cache=ingest_cache,
+                reservation_cache=reservation_cache,
+                spec_notes=spec_notes,
             )
             for case in corpus.cases
         ],
@@ -201,13 +273,15 @@ def evaluate(
     than module-level so nothing outlives the benchmark that asked for it — a corpus's
     events are large, and a process-wide cache would pin every corpus ever benchmarked.
     """
-    ingest_cache: dict[tuple[Any, ...], tuple[NormalizedInputs, list[NormalizedEvent] | None]] = {}
+    ingest_cache: dict[tuple[Any, ...], NormalizedInputs] = {}
+    reservation_cache: dict[str, Reservation] = {}
     return EvaluationReport(
         corpus=corpus.name,
         corpus_description=corpus.description,
         fit_protocol=protocol.value,
         cases=len(corpus.cases),
         incidents=corpus.incidents,
+        faults=corpus.faults,
         specs=[
             evaluate_spec(
                 spec,
@@ -216,6 +290,7 @@ def evaluate(
                 protocol=protocol,
                 include_timeline=include_timeline,
                 ingest_cache=ingest_cache,
+                reservation_cache=reservation_cache,
             )
             for label, spec in specs
         ],
