@@ -332,8 +332,37 @@ CRLF while ``.gitattributes`` (``* text=auto eol=lf``) checks the file out with 
 test then failed on a fresh Windows clone for a reason that has nothing to do with the corpus, and
 passed only where a previous local build had already overwritten the file.
 
-Gzipped payloads were never exposed to this (``write_bytes``), which is why it went unnoticed:
-only the manifest and the labels of an uncompressed bundle are text.
+Gzipped payloads were never exposed to *this* (``write_bytes``), which is why it went unnoticed:
+only the manifest and the labels of an uncompressed bundle are text. They have their own
+version of it one layer down, though — see ``GZIP_OS_UNKNOWN``.
+"""
+
+
+_GZIP_OS_OFFSET = 9
+"""RFC 1952 puts the OS byte at offset 9 of gzip's fixed 10-byte header."""
+
+GZIP_OS_UNKNOWN = 255
+"""Value forced into the gzip header's OS byte. **Never the platform's.**
+
+``NEWLINE``'s problem one layer down. That one is the platform leaking into a bundle through
+*text* encoding; this is the platform leaking in through the *container*. The OS byte records
+which filesystem produced the file, and no decompressor ever reads it back — but a
+byte-equality test does.
+
+``gzip.compress(..., mtime=0)`` is asked for precisely because it is reproducible, and on
+CPython <= 3.12 that argument selects the one path that is not: ``if mtime == 0`` hands the
+whole header to zlib, which stamps its own compile-time OS code (``3`` on Unix, ``10`` on
+Windows). 3.13 deleted the shortcut and now overwrites the byte with 255 ("unknown") — its
+source says "replace mtime and OS byte for consistency". So a corpus generated on 3.13 and
+rebuilt on 3.12 differs by one informationless byte per file, with byte-identical content and
+an identical deflate stream. That is exactly how
+``test_a_fresh_build_reproduces_the_committed_bytes`` failed on CI (system Python 3.12.3)
+while passing on a developer machine (3.13).
+
+Forcing the byte here makes a bundle's bytes a property of the bundle *format* rather than of
+whichever interpreter happened to write them. It pins the header, not the deflate stream:
+zlib promises no cross-version output stability, so this is not a proof against every future
+toolchain — but the compressed payload is content-determined in a way a header field is not.
 """
 
 
@@ -343,8 +372,11 @@ def write_payload(directory: Path, relative: str, text: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.suffix == ".gz":
         # mtime=0 keeps the bytes reproducible: a regenerated bundle with unchanged content
-        # must not show up as a diff just because the clock moved.
-        target.write_bytes(gzip.compress(text.encode("utf-8"), mtime=0))
+        # must not show up as a diff just because the clock moved. The OS byte needs forcing
+        # for the same reason and the clock does not reach it — see GZIP_OS_UNKNOWN.
+        blob = bytearray(gzip.compress(text.encode("utf-8"), mtime=0))
+        blob[_GZIP_OS_OFFSET] = GZIP_OS_UNKNOWN
+        target.write_bytes(bytes(blob))
     else:
         target.write_text(text, encoding="utf-8", newline=NEWLINE)
 

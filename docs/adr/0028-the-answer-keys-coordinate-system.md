@@ -359,3 +359,59 @@ call would have bound a `datetime` into `lane` in silence.
 - The vocabulary still collides: `entry` means four different things across `corpus.py`,
   `sweep.py`, `__main__.py` and the dashboard.
 - Asset ids are still hand-copied from `scenarios.py` into the bench specs' `assets:` blocks.
+
+## Amendment (2026-07-29) — reproducible bytes are a property of the format, not the interpreter
+
+`test_a_fresh_build_reproduces_the_committed_bytes` is the check that makes a committed corpus
+*data* rather than a snapshot nobody can rebuild: regenerate every bundle, compare byte for byte,
+and a drifted generator shows up as a failing test rather than as an answer key quietly disagreeing
+with the bytes it describes. `bundle.NEWLINE` records the first thing that broke it — `write_text`
+translating `\n` to `os.linesep`, so a bundle written on Windows carried CRLF into a file
+`.gitattributes` checks out as LF.
+
+That docstring closes by noting gzipped payloads were never exposed to it, because they go through
+`write_bytes`. True of *line endings*, and wrong about the general case: the same leak exists one
+layer down, in the container rather than the text. RFC 1952 byte 9 of the gzip header names the
+filesystem that produced the file. No decompressor reads it. A byte-equality test does.
+
+`write_payload` passes `mtime=0` **because** it is the reproducible option, and on CPython <= 3.12
+that is exactly the argument that selects the non-reproducible path:
+
+```python
+if mtime == 0:
+    # Use zlib as it creates the header with 0 mtime by default.
+    return zlib.compress(data, level=compresslevel, wbits=31)
+```
+
+zlib writes the whole header, stamping its compile-time OS code — `3` on Unix, `10` on Windows.
+CPython 3.13 removed the shortcut and now overwrites the field with `255` ("unknown"), commented
+"replace mtime and OS byte for consistency".
+
+So the corpora committed here — generated on 3.13, OS byte `255` — could not be rebuilt on CI,
+whose `uv sync --frozen` resolves `/usr/bin/python3`, CPython 3.12.3, since nothing pins a version
+(`requires-python = ">=3.11"`, no `.python-version`). Measured in containers holding zlib constant
+at 1.2.13 so only the interpreter varied: Linux 3.11 and 3.12 write `0x03`, Linux 3.13 writes
+`0xff`. Identical file length, identical deflate stream, one differing byte, and **the corpus
+content was never in question**. The test failed on all three committed corpora from the day it
+arrived (`949a732`) and had never once passed on CI — not a regression, a test born failing on an
+interpreter no developer was running.
+
+The fix is to stamp the byte ourselves (`bundle.GZIP_OS_UNKNOWN`) rather than inherit whatever the
+interpreter felt like writing. Two consequences worth recording:
+
+- **No corpus is regenerated.** The committed bundles already carry `255`, so forcing it produces
+  the bytes already on disk — verified against all 86 committed `.gz` payloads on Linux 3.11, 3.12
+  and 3.13, reproducing every one. A fix to a reproducibility bug that itself churns the data would
+  have been hard to review.
+- **The header is pinned; the deflate stream is not.** zlib offers no cross-version guarantee on
+  compressed output, so a future zlib could still move these bytes. The distinction is real rather
+  than a hedge: a compressed payload is determined by its content, while a header field is
+  determined by the toolchain, and only the second kind can drift while the corpus is unchanged.
+
+Rejected: pinning the interpreter instead (`.python-version`), which would have made CI agree with
+one developer's machine without making the format reproducible for anyone else — a contributor on
+3.12 would still fail, and `requires-python = ">=3.11"` would be advertising support for two
+versions CI no longer exercised. Also rejected: comparing decompressed payloads in the test, which
+is airtight against any compressor change but gives up byte identity — and byte identity is
+load-bearing here, both for a clean `git diff` after a regeneration and for the size-budget test
+that measures what is actually committed.
