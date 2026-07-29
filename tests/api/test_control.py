@@ -83,6 +83,24 @@ class TestHealthAndModules:
         assert params["preset"]["choices"] == ["severity_spike", "auth_failure"]
         assert params["window_minutes"]["choices"] is None  # open-ended: no vocabulary
 
+    def test_an_optional_closed_vocabulary_still_reports_its_choices(
+        self, control: ControlHarness
+    ) -> None:
+        # `Literal[...] | None` is the shape every param takes when "not given" has to be
+        # expressible (ADR-0022's sentinel). The type name unwrapped the union and the
+        # choices did not, so the meter normalizer's utility published `type: "Literal"`
+        # with `choices: null` and a UI had nothing to render but a free-text box — for a
+        # two-value vocabulary whose whole point is that it cannot be typed wrong.
+        body = control.client.get("/modules").json()
+        params = {
+            p["name"]: p for n in body["normalizers"] if n["name"] == "meter" for p in n["params"]
+        }
+        assert params["meter_type"]["choices"] == ["water", "electricity"]
+        assert params["meter_type"]["type"] == "str"
+        # The sibling param on the same factory is genuinely open-ended: a timezone name.
+        assert params["source_timezone"]["choices"] is None
+        assert params["source_timezone"]["type"] == "str"
+
 
 class TestValidate:
     def test_matching_chain_is_ok_without_issues(self, control: ControlHarness) -> None:
