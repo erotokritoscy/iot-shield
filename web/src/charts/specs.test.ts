@@ -105,10 +105,19 @@ describe("UTC feeding (V2)", () => {
     raw: "line",
   });
 
-  it("feeds the timeline UTC wall-clock, not the viewer's zone", () => {
+  it("feeds the timeline the true instant and asks Vega for UTC explicitly", () => {
+    // The zone-less wall-clock this used to send relied on Vega's local parse being a
+    // symmetric inverse, which fails inside the DST spring-forward gap. So the instant is real
+    // and the SPEC carries the UTC requirement: `scale.type` for the axis, and `timeUnit` for
+    // the tooltip — a UTC scale does not reach tooltip formatting (H4 covers both).
     const spec = telemetryTimeline([event("2026-07-07T15:00:00+03:00", 45)], [], palette);
-    const layer = spec?.["layer"] as { data: { values: { timestamp: string }[] } }[];
-    expect(layer[0]?.data.values[0]?.timestamp).toBe("2026-07-07T12:00:00.000");
+    const layer = spec?.["layer"] as {
+      data: { values: { timestamp: string }[] };
+      encoding: { x: { scale: { type: string } }; tooltip: { timeUnit?: string }[] };
+    }[];
+    expect(layer[0]?.data.values[0]?.timestamp).toBe("2026-07-07T12:00:00.000Z");
+    expect(layer[0]?.encoding.x.scale.type).toBe("utc");
+    expect(layer[0]?.encoding.tooltip[0]?.timeUnit).toMatch(/^utc/);
   });
 
   it("never plots an event whose value is undefined", () => {
@@ -156,13 +165,31 @@ describe("the case timeline", () => {
       [],
       palette,
     );
-    const values = (spec?.["data"] as { values: { lane: string; start: string; end: string; span_s: number }[] })
-      .values;
+    const values = (
+      spec?.["data"] as {
+        values: {
+          lane: string;
+          start: string;
+          end: string;
+          drawn_end: string;
+          floored: boolean;
+          span_s: number;
+        }[];
+      }
+    ).values;
     const point = values.find((row) => row.lane === "detections");
     expect(point?.span_s).toBe(0);
-    // 3600 s window / 300 = 12 s of drawn width.
-    expect(point?.start).toBe("2026-07-07T12:30:00.000");
-    expect(point?.end).toBe("2026-07-07T12:30:12.000");
+    expect(point?.start).toBe("2026-07-07T12:30:00.000Z");
+    // The width is a minimum (3600 s window / 300 = 12 s), and it is a SEPARATE field from
+    // the end the tooltip reports. Publishing the drawn end as `end` put an inflated
+    // timestamp next to a true duration — three numbers that could not all be true.
+    expect(point?.drawn_end).toBe("2026-07-07T12:30:12.000Z");
+    expect(point?.end).toBe("2026-07-07T12:30:00.000Z");
+    expect(point?.floored).toBe(true);
+    // A span wider than the floor is drawn as measured, and says so.
+    const band = values.find((row) => row.lane === "truth");
+    expect(band?.floored).toBe(false);
+    expect(band?.drawn_end).toBe(band?.end);
   });
 
   it("draws nothing when there are no faults, detections or alerts", () => {
@@ -232,7 +259,9 @@ describe("tooltips (V3)", () => {
           "encoding"
         ],
       ),
-    ).toEqual(["lane", "start", "end", "span_s"]);
+      // `floored` joins them: the drawing cannot say "this width is a minimum, not a
+      // measurement", and below the floor every span looks identical.
+    ).toEqual(["lane", "start", "end", "span_s", "floored"]);
   });
 });
 

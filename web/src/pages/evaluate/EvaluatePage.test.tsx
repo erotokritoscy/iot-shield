@@ -7,7 +7,8 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { captured, evalHandlers, server } from "@/test/msw";
+import * as seed from "@/test/fixtures";
+import { PIPELINE, captured, evalHandlers, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
 const COMPOSE = "Compose my own";
@@ -26,6 +27,76 @@ async function openCompose(): Promise<void> {
   await userEvent.click(screen.getByRole("radio", { name: COMPOSE }));
   await screen.findByTestId("eval_entry_n_add");
 }
+
+
+
+describe("claims the page is entitled to make", () => {
+  it("does not turn a failed catalogue fetch into a fact about the corpus", async () => {
+    // An empty detector list is also what a pending or failed fetch looks like. Stating "no
+    // registered detector consumes this corpus's lanes" from an absence nobody verified told
+    // operators their corpus was unusable when one HTTP call had failed.
+    withEvalPlane();
+    server.use(
+      http.get(`${PIPELINE}/eval/detectors`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    renderApp("/evaluate");
+    await screen.findByTestId("eval_corpus");
+    await userEvent.click(screen.getByRole("radio", { name: COMPOSE }));
+
+    expect(await screen.findByText("Could not read the module registry")).toBeInTheDocument();
+    expect(screen.queryByText(/No registered detector consumes/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("eval_run")).toBeDisabled();
+  });
+
+  it("distinguishes the spec it will send from the spec that produced the report", async () => {
+    // Two questions with different answers the moment a control is touched. One block labelled
+    // in the past tense but fed from the live form answered "what produced this number?" with
+    // the form's current contents — the exact misattribution the disclosure exists to prevent.
+    await openEvaluate();
+    await userEvent.click(screen.getByTestId("eval_run"));
+    await screen.findByRole("heading", { name: "Per case" });
+
+    expect(
+      screen.getByRole("button", { name: /Spec the Run button will send/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Spec that produced the report below/ }),
+    ).not.toBeInTheDocument();
+
+    // Drift the controls: now the two differ, and both are named for what they are.
+    await userEvent.click(screen.getByRole("radio", { name: /prefix/ }));
+    expect(
+      await screen.findByRole("button", { name: /Spec that produced the report below/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("re-runs an unchanged selection instead of doing nothing", async () => {
+    // `staleTime: Infinity` on a key that only moves when the selection moves meant pressing
+    // Run again was a silent no-op — and after a failure, with `retry: false`, a permanently
+    // dead button. Correct caching, wrong affordance: the cache is an optimisation the
+    // operator must be able to override.
+    let calls = 0;
+    withEvalPlane();
+    server.use(
+      http.post(`${PIPELINE}/eval/run`, async ({ request }) => {
+        calls += 1;
+        captured.evalBody = await request.json();
+        return HttpResponse.json(seed.report);
+      }),
+    );
+    renderApp("/evaluate");
+    await screen.findByTestId("eval_corpus");
+
+    await userEvent.click(screen.getByTestId("eval_run"));
+    await screen.findByRole("heading", { name: "Per case" });
+    expect(calls).toBe(1);
+
+    await userEvent.click(screen.getByTestId("eval_run"));
+    await waitFor(() => expect(calls).toBe(2));
+  });
+});
 
 describe("the Evaluate gate (D5/E1)", () => {
   it("hides the mode when the eval router was never registered", async () => {
@@ -158,7 +229,7 @@ describe("committed bench specs (E4, E9)", () => {
     captured.evalBody = null;
     await openEvaluate();
     await screen.findByRole("checkbox", { name: "stub" });
-    await userEvent.click(screen.getByRole("button", { name: /Spec sent to the API/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Spec the Run button will send/ }));
     // The exact request, on the page that made it — the reconciliation tool for
     // "dashboard number ≠ CLI number".
     expect(await screen.findByText(/"assets"/)).toBeInTheDocument();

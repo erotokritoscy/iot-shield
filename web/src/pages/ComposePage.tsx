@@ -40,6 +40,17 @@ const STUB_CSV_FORMAT = "stub-csv";
 const MAX_SOURCES = 10;
 const MAX_DETECTORS = 10;
 
+/**
+ * Most bytes one uploaded source may contribute.
+ *
+ * NOT nginx's `client_max_body_size 64m` (`web/nginx.conf.template`) — that bounds the whole
+ * request, and this file becomes JSON-escaped text inside a body that also carries the spec
+ * and every *other* source. Well under it on purpose: `JSON.stringify` over tens of MB locks
+ * the tab long before the proxy would answer, so the browser is the binding constraint, not
+ * the proxy. A run this large belongs on the CLI, which streams from disk.
+ */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 interface SourceRow {
   readonly normalizer: string;
   readonly format: string;
@@ -89,6 +100,24 @@ const feeds = (detector: ModuleInfo, produced: ReadonlySet<string>): boolean =>
  */
 const ready = (detector: ModuleInfo): boolean =>
   detector.artifact_param === null || detector.artifact_param === undefined;
+
+/**
+ * Whether this *configured instance* will have trained state when the run builds it.
+ *
+ * `ready` asks about the adapter; this asks about the row the operator filled in, and the two
+ * belong together because they read the same declaration. It matters because the compatibility
+ * guard cannot answer it: the guard's defining property is that it reasons about a spec
+ * *without constructing adapters*, and "is this one fitted" is only knowable by constructing
+ * it — so `/runs/validate` says ok and the refusal arrives from `_ensure_fitted` after the
+ * operator has pasted their data.
+ *
+ * Reads the *widget* value, not the submitted spec, and that is deliberate: `submittedParams`
+ * omits a param still sitting at its catalogue default, so a detector whose `artifact_param`
+ * has a non-null default is fitted from that default while the spec carries nothing. Judging
+ * the spec would warn about a chain that runs perfectly well.
+ */
+const fitted = (detector: ModuleInfo, params: ParamValues): boolean =>
+  ready(detector) || String(params[detector.artifact_param ?? ""] ?? "").trim() !== "";
 
 function newSource(normalizers: readonly ModuleInfo[]): SourceRow {
   const chosen =
@@ -167,6 +196,7 @@ function SourceCard({
 }) {
   const module = normalizers.find((item) => item.name === row.normalizer);
   const formats = module?.formats ?? [];
+  const [fileError, setFileError] = React.useState<string | null>(null);
 
   const pickNormalizer = (name: string) => {
     const next = normalizers.find((item) => item.name === name);
@@ -179,11 +209,25 @@ function SourceCard({
   };
 
   const onFile = async (file: File | null) => {
+    setFileError(null);
     if (file === null) {
       onChange({ ...row, content: "", fileName: null });
       return;
     }
-    onChange({ ...row, content: await readTextFile(file), fileName: file.name });
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setFileError(
+        `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is ` +
+          `${MAX_UPLOAD_BYTES / 1024 / 1024} MB per source. Split it, or run the pipeline from the CLI.`,
+      );
+      return;
+    }
+    try {
+      onChange({ ...row, content: await readTextFile(file), fileName: file.name });
+    } catch (cause) {
+      // Swallowing this left the operator believing a file was attached: the origin field
+      // still read `source-N`, the textarea was still enabled, and nothing on screen changed.
+      setFileError(`Could not read ${file.name}: ${describeError(cause)}`);
+    }
   };
 
   return (
@@ -234,11 +278,28 @@ function SourceCard({
           />
         </Field>
         <Field label="Origin" hint="Provenance recorded with every record from this source.">
-          <p className="control bg-raised font-mono text-xs">
-            {row.fileName ?? `source-${index + 1}`}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="control min-w-0 flex-1 truncate bg-raised font-mono text-xs">
+              {row.fileName ?? `source-${index + 1}`}
+            </p>
+            {/* Attaching a file disables the textarea, and the textarea's own onChange was the
+                only thing that cleared it — so the escape was unreachable and a wrong file
+                could only be undone by reloading the whole form. */}
+            {row.fileName !== null ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid={`src_${index}_clear`}
+                onClick={() => void onFile(null)}
+              >
+                Remove file
+              </Button>
+            ) : null}
+          </div>
         </Field>
       </div>
+
+      {fileError ? <Notice tone="error">{fileError}</Notice> : null}
 
       <Field label="…or paste records" htmlFor={`src_${index}_text`}>
         <Textarea
@@ -364,10 +425,23 @@ function ComposeForm({ catalogue }: { readonly catalogue: ModulesResponse }) {
   const validation = useValidation(spec);
   const run = useMutation({ mutationFn: () => pipelineApi.run(spec, inputs) });
 
+  // The debounce buys the guard fewer requests; it also creates a window in which the verdict
+  // on screen describes a spec that no longer exists. `settling` is that window. Showing a
+  // green "Chain is compatible." through it — and letting Run fire — is the page claiming
+  // knowledge it does not have about the chain the operator is actually looking at.
+  const settling = validation.pending || validation.stale;
   const validationOk = validation.result?.ok ?? false;
   const contentReady = inputs.every((input) => input.content.trim().length > 0);
-  const canRun = !gated && validationOk && contentReady && !run.isPending;
+  const canRun = !gated && validationOk && !settling && contentReady && !run.isPending;
   const wrotePostgres = selectedSinks.includes("postgres");
+
+  // Detectors the operator chose that cannot run as configured — see `fitted` above for why
+  // only the page can know this. H3 permits reading a published declaration; this is not
+  // re-deriving server logic.
+  const untrained = detectors.filter((row) => {
+    const module = detectorCatalogue.find((item) => item.name === row.name);
+    return module !== undefined && !fitted(module, row.params);
+  });
 
   return (
     <div className="space-y-8">
@@ -515,22 +589,34 @@ function ComposeForm({ catalogue }: { readonly catalogue: ModulesResponse }) {
         <Notice tone="info">Pick at least one sink so results have somewhere to go.</Notice>
       ) : (
         <Section title="5 · Validate & run">
-          {validation.error !== null ? (
-            <Notice tone="error">Validation request failed: {validation.error}</Notice>
-          ) : null}
-          {validation.result?.issues.map((issue, index) => (
-            <Notice key={index} tone={issue.level === "error" ? "error" : "warning"}>
-              [{issue.stage}] {issue.message}
+          {/* While settling, the previous verdict is withheld rather than dimmed: a dimmed
+              green badge is still a green badge to anyone scanning the page. */}
+          {settling ? (
+            <Spinner label="Checking the chain…" />
+          ) : (
+            <>
+              {validation.error !== null ? (
+                <Notice tone="error">Validation request failed: {validation.error}</Notice>
+              ) : null}
+              {validation.result?.issues.map((issue, index) => (
+                <Notice key={index} tone={issue.level === "error" ? "error" : "warning"}>
+                  [{issue.stage}] {issue.message}
+                </Notice>
+              ))}
+              {validation.result !== null &&
+              validation.result.ok &&
+              validation.result.issues.length === 0 ? (
+                <Notice tone="success">Chain is compatible.</Notice>
+              ) : null}
+            </>
+          )}
+          {untrained.map((row) => (
+            <Notice key={row.name} tone="warning">
+              <b>{row.name}</b> has no fitted artifact, so the run will be refused before it
+              judges anything. Name one in its parameters, or choose a detector that is ready to
+              run. The chain check above cannot see this — it never builds the detector.
             </Notice>
           ))}
-          {validation.result !== null &&
-          validation.result.ok &&
-          validation.result.issues.length === 0 ? (
-            <Notice tone="success">Chain is compatible.</Notice>
-          ) : null}
-          {validation.pending && validation.result === null && validation.error === null ? (
-            <Spinner label="Checking the chain…" />
-          ) : null}
           {!contentReady ? (
             <p className="caption">
               Every source needs content — upload a file or paste records above.
@@ -605,6 +691,7 @@ export function ComposePage() {
           title="Pipeline API unreachable"
           detail={<>{describeError(modules.error)}. Start it with:</>}
           command="IOTSHIELD_DATABASE_URL=sqlite:///demo.db python -m iotshield.api.control"
+          onRetry={() => void modules.refetch()}
         />
       ) : null}
       {modules.isSuccess ? (

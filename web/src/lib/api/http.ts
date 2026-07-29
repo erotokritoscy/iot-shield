@@ -12,7 +12,7 @@
  * (nginx in production, the Vite proxy in dev), which is what keeps both FastAPI apps free
  * of CORS — the stance `api/app.py` deliberately takes (D1).
  */
-import type { ZodType } from "zod";
+import type { ZodError, ZodType } from "zod";
 
 export const READ_BASE = "/api";
 export const PIPELINE_BASE = "/pipeline";
@@ -41,9 +41,51 @@ export class ApiError extends Error {
   }
 }
 
-/** Is this the specific "the service isn't there" failure a health gate looks for? */
+/**
+ * Is this "nothing is listening", as opposed to "it answered, and the answer was a failure"?
+ *
+ * The distinction decides which remedy a health gate prints, so it has to survive the
+ * deployment we actually ship. Behind nginx a stopped upstream never reaches the browser as
+ * a transport failure — the proxy is up and answers **502/504 with an HTML body**, which
+ * `apiRequest` classifies as `kind: "status"`. Only a dead proxy (or `npm run dev` with
+ * nothing behind it) produces a true transport error, so both have to count.
+ *
+ * A 404 deliberately does NOT count: a route that is absent from a *reachable* service is
+ * ADR-0031 D5's "this deployment has no research plane", which `useEvalPlane` reads
+ * separately and must keep reading separately.
+ */
 export function isUnreachable(error: unknown): boolean {
-  return error instanceof ApiError && (error.kind === "transport" || error.status === 404);
+  if (!(error instanceof ApiError)) return false;
+  if (error.kind === "transport") return true;
+  return error.status === 502 || error.status === 503 || error.status === 504;
+}
+
+/**
+ * Is this "that route was never registered", as opposed to "the service is down"?
+ *
+ * The other half of the taxonomy, and deliberately disjoint from `isUnreachable`: a 404 from
+ * a service that plainly answered is ADR-0021 D1's *absent, not guarded* — the deployment
+ * saying it has no research plane — which hides the Evaluate mode, where an unreachable
+ * service leaves it visible and degrades to the saved report (ADR-0031 D5). Kept beside its
+ * sibling so the two cannot drift into overlapping.
+ */
+export function isPlaneAbsent(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === "status" && error.status === 404;
+}
+
+/**
+ * A zod failure as one human clause, path first.
+ *
+ * The path is the whole value: zod's message for a missing key is the bare word "Required",
+ * which names nothing and suggests nothing. Shared by the two places this app parses
+ * untrusted JSON — a wire response and an uploaded report — so one malformed document does
+ * not describe itself two different ways depending on how it arrived.
+ */
+export function describeZodIssue(error: ZodError): string {
+  const issue = error.issues[0];
+  if (issue === undefined) return "unrecognised shape";
+  const where = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+  return `${where}${issue.message}`;
 }
 
 /** A short, human sentence for an error state — never a stack trace (M1–M3). */

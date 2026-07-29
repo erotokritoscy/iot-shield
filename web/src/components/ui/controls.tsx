@@ -123,6 +123,8 @@ export function Checkbox({ label, className, id, ...props }: CheckboxProps) {
 
 interface RadioGroupProps {
   readonly name: string;
+  /** The group's accessible name. Defaults to `name`, which is an identifier, not prose. */
+  readonly label?: string;
   readonly options: readonly { value: string; label: string }[];
   readonly value: string;
   readonly onValueChange: (value: string) => void;
@@ -131,13 +133,21 @@ interface RadioGroupProps {
 
 export function RadioGroup({
   name,
+  label,
   options,
   value,
   onValueChange,
   className,
 }: RadioGroupProps) {
   return (
-    <div role="radiogroup" aria-label={name} className={cn("flex flex-wrap gap-x-5 gap-y-2", className)}>
+    // `name` is a form field name (`eval_protocol`), not prose. Announcing it as the group's
+    // accessible name reads out an identifier; a radiogroup is a div, so the visible `Field`
+    // label beside it cannot be associated with `htmlFor` and has to be passed in.
+    <div
+      role="radiogroup"
+      aria-label={label ?? name}
+      className={cn("flex flex-wrap gap-x-5 gap-y-2", className)}
+    >
       {options.map((option) => (
         <label key={option.value} className="flex cursor-pointer items-center gap-2 text-sm">
           <input

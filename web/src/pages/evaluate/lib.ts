@@ -117,6 +117,9 @@ export function composedSpec(
 ): Record<string, unknown> {
   return {
     sources: sourceFormats.map((sourceFormat) => ({
+      // "" when no registered normalizer declares this format. Left as-is rather than guessed
+      // — the caller turns it into a blocking problem, because a spec naming a nameless
+      // normalizer fails server-side with an error that points nowhere near the real cause.
       normalizer: normalizerFor(sourceFormat, normalizers),
       source_format: sourceFormat,
     })),

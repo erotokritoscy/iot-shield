@@ -9,6 +9,7 @@
 import { AlertTriangle, ChevronRight, CircleAlert, CircleCheck, Info, Loader2 } from "lucide-react";
 import * as React from "react";
 
+import { Button } from "@/components/ui/controls";
 import { cn } from "@/lib/utils";
 
 export function Card({
@@ -167,20 +168,90 @@ export function Spinner({ label }: { readonly label: string }) {
   );
 }
 
+/**
+ * "You are not looking at all of it."
+ *
+ * Takes the whole `Capped` page rather than loose props, and returns null itself when the cap
+ * did not bite — the visibility rule is the reason this component exists, so leaving it to a
+ * ternary at each call site is how a fifth capped list ships without a disclaimer. Taking the
+ * page object also makes it impossible to report one endpoint's `limit` beside another's
+ * `truncated`.
+ *
+ * A permanent disclaimer would be noise that gets tuned out, leaving the one case that matters
+ * indistinguishable from the 99 that do not.
+ */
+export function Truncated({
+  page,
+  noun,
+  total,
+  order,
+}: {
+  readonly page: { readonly truncated: boolean; readonly limit: number };
+  readonly noun: string;
+  /** An uncapped count, where one exists. `/summary` has them for the unfiltered lists only. */
+  readonly total?: number | undefined;
+  /** How the server chose which ones survived — the part that decides if the view is biased. */
+  readonly order: string;
+}) {
+  if (!page.truncated) return null;
+  const shown = page.limit.toLocaleString("en-US");
+  return (
+    <Notice
+      tone="warning"
+      title={
+        total === undefined
+          ? `Showing the first ${shown} ${noun}`
+          : `Showing ${shown} of ${total.toLocaleString("en-US")} ${noun}`
+      }
+    >
+      <p>
+        The API caps this list, so this page is {order}.
+        {/* Only where a page actually shows counts. On Assets there are none, and claiming
+            otherwise would send the reader looking for a number that is not there. */}
+        {total === undefined
+          ? " Anything drawn from the table below describes this slice only."
+          : " Counts above come from the database and are complete; anything drawn from the table below describes this slice only."}
+      </p>
+    </Notice>
+  );
+}
+
+/**
+ * The retry control every failure state carries.
+ *
+ * One definition because the label and the variant are a decision, and two copies of a
+ * decision drift. `errors.test.tsx` asserts on the label.
+ */
+export function RetryButton({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <Button size="sm" variant="ghost" onClick={onRetry}>
+      Try again
+    </Button>
+  );
+}
+
 /** The full-page failure state a health gate renders (M1). */
 export function ErrorState({
   title,
   detail,
   command,
+  onRetry,
 }: {
   readonly title: string;
   readonly detail?: React.ReactNode;
   readonly command?: string;
+  /**
+   * A way out. Typed as the callback rather than as a `ReactNode` slot on purpose: a slot
+   * accepts anything and therefore asks for nothing, which is how one of this app's three
+   * API-failure states shipped without any recovery at all.
+   */
+  readonly onRetry?: () => void;
 }) {
   return (
     <Notice tone="error" title={title}>
       {detail ? <p>{detail}</p> : null}
       {command ? <CommandBlock>{command}</CommandBlock> : null}
+      {onRetry ? <RetryButton onRetry={onRetry} /> : null}
     </Notice>
   );
 }

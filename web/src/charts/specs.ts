@@ -11,7 +11,7 @@
  * Every builder returns `null` for "there is nothing to draw", exactly as the Python ones
  * returned `None`, so the caller renders its empty state instead of an axis with no marks.
  */
-import { utcWallclock } from "@/lib/format";
+import { utcInstant } from "@/lib/format";
 import type { DetectionResult, NormalizedEvent, PrioritizedAlert } from "@/lib/api/types";
 import { SEVERITY_ORDER } from "@/lib/api/types";
 
@@ -46,6 +46,28 @@ function recessive(palette: Palette): Record<string, unknown> {
   };
 }
 
+/**
+ * A temporal axis that renders in UTC, and a temporal tooltip that renders in UTC.
+ *
+ * Two mechanisms because Vega-Lite needs two: `scale: {type: "utc"}` governs the *scale*, so
+ * it fixes axis ticks and nothing else — tooltip values are formatted independently and would
+ * still come out in the viewer's zone. `timeUnit: "utc…"` is what carries UTC into a tooltip
+ * field. H4 requires every rendered timestamp to be UTC, and tooltips are rendered timestamps.
+ */
+const utcX = (field: string, extra: Record<string, unknown> = {}) => ({
+  field,
+  type: "temporal",
+  scale: { type: "utc" },
+  ...extra,
+});
+
+const utcTip = (field: string, extra: Record<string, unknown> = {}) => ({
+  field,
+  type: "temporal",
+  timeUnit: "utcyearmonthdatehoursminutesseconds",
+  ...extra,
+});
+
 // --- Monitor -----------------------------------------------------------------
 
 /**
@@ -67,17 +89,17 @@ export function telemetryTimeline(
   const line = {
     data: {
       values: plotted.map((event) => ({
-        timestamp: utcWallclock(event.timestamp),
+        timestamp: utcInstant(event.timestamp),
         value: event.value,
         metric: event.metric ?? "",
       })),
     },
     mark: { type: "line", strokeWidth: 2, color: palette.series },
     encoding: {
-      x: { field: "timestamp", type: "temporal", title: null },
+      x: utcX("timestamp", { title: null }),
       y: { field: "value", type: "quantitative", title: null },
       tooltip: [
-        { field: "timestamp", type: "temporal" },
+        utcTip("timestamp"),
         { field: "value", type: "quantitative" },
         { field: "metric", type: "nominal" },
       ],
@@ -92,20 +114,16 @@ export function telemetryTimeline(
     layer.push({
       data: {
         values: spans.map((item) => ({
-          start: utcWallclock(item.window_start),
-          end: utcWallclock(item.window_end),
+          start: utcInstant(item.window_start),
+          end: utcInstant(item.window_end),
           method: item.method,
         })),
       },
       mark: { type: "rect", color: palette.critical, opacity: 0.15 },
       encoding: {
-        x: { field: "start", type: "temporal" },
+        x: utcX("start"),
         x2: { field: "end" },
-        tooltip: [
-          { field: "start", type: "temporal" },
-          { field: "end", type: "temporal" },
-          { field: "method", type: "nominal" },
-        ],
+        tooltip: [utcTip("start"), utcTip("end"), { field: "method", type: "nominal" }],
       },
     });
   }
@@ -113,16 +131,16 @@ export function telemetryTimeline(
     layer.push({
       data: {
         values: points.map((item) => ({
-          timestamp: utcWallclock(item.window_start),
+          timestamp: utcInstant(item.window_start),
           method: item.method,
           score: item.score,
         })),
       },
       mark: { type: "rule", color: palette.critical, strokeWidth: 2, opacity: 0.6 },
       encoding: {
-        x: { field: "timestamp", type: "temporal" },
+        x: utcX("timestamp"),
         tooltip: [
-          { field: "timestamp", type: "temporal" },
+          utcTip("timestamp"),
           { field: "method", type: "nominal" },
           { field: "score", type: "quantitative" },
         ],
@@ -418,8 +436,15 @@ export function caseTimeline(
       const drawnEnd = Math.max(endMs, startMs + floorSeconds * 1000);
       return {
         lane,
-        start: utcWallclock(start),
-        end: utcWallclock(new Date(drawnEnd)),
+        start: utcInstant(start),
+        // The end the reader is TOLD, and the end that is DRAWN, are two different numbers
+        // whenever the floor bites — so they are two different fields. Publishing the drawn
+        // one in the tooltip put an inflated end beside a true duration, and a zero-length
+        // detection reported `start 03:00:00 / end 03:04:48 / seconds 0`: three numbers that
+        // cannot all be true. Geometry may exaggerate for visibility; the tooltip may not.
+        end: utcInstant(end),
+        drawn_end: utcInstant(new Date(drawnEnd)),
+        floored: drawnEnd !== endMs,
         span_s: (endMs - startMs) / 1000,
       };
     }),
@@ -430,8 +455,8 @@ export function caseTimeline(
     data: { values },
     mark: { type: "bar", cornerRadius: 2, height: 22 },
     encoding: {
-      x: { field: "start", type: "temporal", title: null },
-      x2: { field: "end" },
+      x: utcX("start", { title: null }),
+      x2: { field: "drawn_end" },
       y: {
         field: "lane",
         type: "nominal",
@@ -452,9 +477,13 @@ export function caseTimeline(
       },
       tooltip: [
         { field: "lane", type: "nominal" },
-        { field: "start", type: "temporal" },
-        { field: "end", type: "temporal" },
+        utcTip("start"),
+        utcTip("end"),
         { field: "span_s", type: "quantitative", title: "seconds" },
+        // Names the one thing the drawing cannot say for itself: this bar's width is a
+        // minimum, not a measurement. Below the floor every span looks identical, so without
+        // it a 3-second detection and an instantaneous one are indistinguishable on screen.
+        { field: "floored", type: "nominal", title: "drawn at minimum width" },
       ],
     },
     width: "container",

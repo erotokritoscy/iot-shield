@@ -10,10 +10,94 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import { emptyHandlers, server } from "@/test/msw";
+import * as seed from "@/test/fixtures";
+import { API, emptyHandlers, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
+
+
+describe("truncation", () => {
+  it("says so when the queue is only the top slice, and scopes the chart's claim to it", async () => {
+    // Every list endpoint takes a `limit`, so every one of them can return a prefix of the
+    // truth that looks exactly like the whole of it. `/alerts` is priority-descending, so the
+    // rows dropped are the low-priority tail — which skews the severity chart drawn from them
+    // while the KPI tile beside it reports the true total from an uncapped `/summary`.
+    // The client asks for limit+1 and renders limit, which is the only test that generalises
+    // to the per-asset queries (`counts.events` is global; `/events` is filtered).
+    const many = Array.from({ length: 1001 }, (_, index) => ({
+      ...seed.alert,
+      alert_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    server.use(
+      http.get(`${API}/alerts`, () => HttpResponse.json(many)),
+      http.get(`${API}/summary`, () =>
+        HttpResponse.json({ ...seed.summary, counts: { ...seed.summary.counts, alerts: 4312 } }),
+      ),
+    );
+    renderApp("/");
+
+    expect(await screen.findByText(/Showing 1,000 of 4,312 alerts/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/among the 1,000 highest-priority alerts/),
+    ).toBeInTheDocument();
+  });
+
+  it("stays quiet when the list is complete", async () => {
+    renderApp("/");
+    expect(await screen.findByTestId("stat-alerts")).toHaveTextContent("1");
+    expect(screen.queryByText(/Showing .* of .* alerts/)).not.toBeInTheDocument();
+    expect(screen.getByText("Alert count per severity.")).toBeInTheDocument();
+  });
+});
+
 describe("Triage", () => {
+  it("selects an alert from the queue itself, and puts the choice in the URL", async () => {
+    // The queue and the inspector used to be disconnected widgets: the only selector was a
+    // native <select> below the whole table, whose labels start with the severity word, so
+    // type-ahead cycles severities rather than finding an alert. Row activation is a real
+    // <button> inside the first cell — NOT role="button" on the <tr>, which would replace the
+    // row's own role and break row/cell relationships for assistive technology.
+    const second = {
+      ...seed.alert,
+      alert_id: "00000000-0000-4000-8000-000000000002",
+      asset_id: "cam-07",
+      severity: "critical",
+      priority_score: 88.4,
+      rationale: "the second alert, reachable only by choosing its row",
+    };
+    server.use(http.get(`${API}/alerts`, () => HttpResponse.json([seed.alert, second])));
+    renderApp("/");
+
+    // The first alert is the fallback selection, so the second one proves row activation did
+    // something rather than the panel merely defaulting.
+    expect(await screen.findByText("seeded incident on Feed pump 2")).toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Inspect CRITICAL 88.4 — cam-07/ }),
+    );
+    expect(
+      await screen.findByText("the second alert, reachable only by choosing its row"),
+    ).toBeInTheDocument();
+    // The picker follows the queue: one selection, two surfaces.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Inspect alert")).toHaveValue(second.alert_id),
+    );
+  });
+
+  it("filters the queue without ever re-sorting it", async () => {
+    // Filtering is a view over rows the server already ranked. Sorting is deliberately absent:
+    // the order IS the product's output (H3), and a client-side re-sort would quietly replace
+    // a ranking with a preference.
+    renderApp("/");
+    const severity = await screen.findByLabelText("Severity");
+    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+
+    await userEvent.selectOptions(severity, "low");
+    expect(await screen.findByText("No alert matches this filter.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 shown")).toBeInTheDocument();
+
+    await userEvent.selectOptions(severity, "high");
+    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+  });
   it("shows the KPI row, the ranked queue and the drill-down", async () => {
     renderApp("/");
 

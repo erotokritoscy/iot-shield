@@ -11,8 +11,8 @@ import { setupServer } from "msw/node";
 
 import * as seed from "./fixtures";
 
-const API = "http://localhost/api";
-const PIPELINE = "http://localhost/pipeline";
+export const API = "http://localhost/api";
+export const PIPELINE = "http://localhost/pipeline";
 
 /** The seeded world: pump-02 at T0, one detection, one HIGH alert, one malformed record. */
 export const seededHandlers: RequestHandler[] = [

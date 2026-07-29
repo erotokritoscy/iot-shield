@@ -11,12 +11,13 @@ import {
   Spinner,
 } from "@/components/ui/surfaces";
 import { pipelineApi } from "@/lib/api/client";
-import { describeError } from "@/lib/api/http";
+import { describeError, describeZodIssue } from "@/lib/api/http";
 import { evaluationReportSchema, type EvalReport } from "@/lib/api/schemas";
 import { readTextFile } from "@/lib/files";
-import { useEvalDetectors, useEvalPlane, useModules } from "@/lib/queries";
+import { keys, useEvalDetectors, useEvalPlane, useModules } from "@/lib/queries";
 
 import { useComposeEntries } from "./ComposeEntries";
+import { useLatch } from "@/lib/latch";
 import { PROTOCOL_HELP, runCount, selectionKey } from "./lib";
 import { ReportView } from "./Report";
 import { useShippedSpecs } from "./ShippedSpecs";
@@ -46,7 +47,16 @@ function SavedReportFallback() {
       const parsed = evaluationReportSchema.safeParse(JSON.parse(await readTextFile(file)));
       if (!parsed.success) {
         setReport(null);
-        setProblem(`${file.name} is not a benchmark report: ${parsed.error.issues[0]?.message ?? "unrecognised shape"}.`);
+        // Shared with the wire-response path, so one malformed document does not describe
+        // itself two different ways depending on whether it arrived over HTTP or through the
+        // file picker.
+        const missing = parsed.error.issues.every((item) => item.code === "invalid_type");
+        setProblem(
+          `${file.name} is not a benchmark report: ${describeZodIssue(parsed.error)}.` +
+            (missing
+              ? " A report written by an older harness is missing fields this page needs — regenerate it with the command above."
+              : ""),
+        );
         return;
       }
       setReport(parsed.data);
@@ -82,16 +92,30 @@ function SavedReportFallback() {
   );
 }
 
+/**
+ * A spinner that counts.
+ *
+ * A benchmark can run for minutes behind a 600 s proxy timeout, and a motionless "Benchmarking…"
+ * gives the operator no way to tell a long run from a dead worker. An elapsed count cannot
+ * prove the server is alive, but it turns "is this stuck?" into a number they can judge.
+ */
+function Benchmarking() {
+  const [seconds, setSeconds] = React.useState(0);
+  React.useEffect(() => {
+    const timer = setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <Spinner label={`Benchmarking… ${seconds}s elapsed`} />;
+}
+
 export function EvaluatePage() {
   const plane = useEvalPlane();
   const [mode, setMode] = React.useState(SHIPPED_SPECS);
   const [protocol, setProtocol] = React.useState("none");
   const [corpusName, setCorpusName] = React.useState<string | null>(null);
-  const [latched, setLatched] = React.useState<{
-    corpus: string;
-    specs: ReturnType<typeof useComposeEntries>["entries"];
-    protocol: string;
-  } | null>(null);
+  // Held on the shell route (see `latch.tsx`) so navigating away does not discard a finished
+  // benchmark whose result is still in the query cache.
+  const [latched, setLatched] = useLatch();
 
   const corpora = plane.query.data;
   const usable = (corpora?.corpora ?? []).filter((item) => !item.error);
@@ -118,7 +142,7 @@ export function EvaluatePage() {
   const latchedKey = latched ? selectionKey(latched.corpus, latched.specs, latched.protocol) : null;
 
   const runQuery = useQuery({
-    queryKey: ["eval", "run", latchedKey],
+    queryKey: keys.evalRun(latchedKey ?? ""),
     queryFn: () =>
       pipelineApi.evalRun({
         corpus: latched?.corpus ?? "",
@@ -133,8 +157,12 @@ export function EvaluatePage() {
     gcTime: Infinity,
   });
 
+  const cataloguesPending = composing && (detectors.isLoading || modules.isLoading);
+  const catalogueError = composing ? (detectors.error ?? modules.error) : null;
+
   const total = entries.reduce((sum, entry) => sum + runCount(entry.sweep), 0);
-  const blocked = entries.length === 0 || problems.length > 0;
+  const blocked =
+    entries.length === 0 || problems.length > 0 || cataloguesPending || catalogueError !== null;
 
   const header = (
     <PageHeader
@@ -218,6 +246,7 @@ export function EvaluatePage() {
               <Field label="Fit protocol">
                 <RadioGroup
                   name="eval_protocol"
+                  label="Fit protocol"
                   options={Object.keys(PROTOCOL_HELP).map((value) => ({ value, label: value }))}
                   value={protocol}
                   onValueChange={setProtocol}
@@ -240,6 +269,7 @@ export function EvaluatePage() {
             <Field label="Specs">
               <RadioGroup
                 name="eval_spec_mode"
+                label="Specs"
                 options={[
                   { value: SHIPPED_SPECS, label: SHIPPED_SPECS },
                   { value: COMPOSE_SPECS, label: COMPOSE_SPECS },
@@ -250,7 +280,26 @@ export function EvaluatePage() {
               />
             </Field>
 
-            {active.element}
+            {/* "No detector consumes this corpus's lanes" is a claim about the registry, and
+                an empty catalogue is also what a pending or failed fetch looks like. Stating
+                it from an absence nobody verified told operators their corpus was unusable
+                when the truth was that one HTTP call had failed.
+
+                `isLoading`, not `isPending`: in TanStack v5 a *disabled* query is `isPending`
+                with `fetchStatus: "idle"`, so the naive check would spin forever in the mode
+                that never enables these. */}
+            {catalogueError !== null ? (
+              <Notice tone="error" title="Could not read the module registry">
+                <p>
+                  {describeError(catalogueError)} — so this page cannot say which detectors
+                  your corpus can feed.
+                </p>
+              </Notice>
+            ) : cataloguesPending ? (
+              <Spinner label="Loading the detector catalogue…" />
+            ) : (
+              active.element
+            )}
 
             {problems.map((problem) => (
               <Notice key={problem} tone="error">
@@ -260,10 +309,21 @@ export function EvaluatePage() {
 
             {/* The exact request, on the page that made it. Neither surface used to display
                 the spec it ran, so a dashboard number and a CLI number that disagreed could
-                only be reconciled by reading the page's source. */}
+                only be reconciled by reading the page's source.
+
+                Two questions, two answers, and they diverge the moment a control is touched:
+                "what will Run send" is the live form, "what produced the report below" is the
+                latched request. One block labelled in the past tense but fed from the form
+                answered the second question with the first one's data — which is the exact
+                misattribution this disclosure exists to prevent. */}
             {entries.length > 0 ? (
-              <Collapsible label={`Spec sent to the API (${entries.length} entr(y/ies))`}>
+              <Collapsible label={`Spec the Run button will send (${entries.length} entr(y/ies))`}>
                 <JsonBlock value={entries} />
+              </Collapsible>
+            ) : null}
+            {latched !== null && latchedKey !== selection ? (
+              <Collapsible label={`Spec that produced the report below (${latched.specs.length} entr(y/ies))`}>
+                <JsonBlock value={latched.specs} />
               </Collapsible>
             ) : null}
 
@@ -276,8 +336,15 @@ export function EvaluatePage() {
             <Button
               variant="primary"
               data-testid="eval_run"
-              disabled={blocked}
-              onClick={() => setLatched({ corpus: corpus.name, specs: entries, protocol })}
+              disabled={blocked || runQuery.isFetching}
+              onClick={() => {
+                // An unchanged selection leaves the query key where it is, so `setLatched`
+                // alone would be a silent no-op — and after a failure, with `retry: false` and
+                // `staleTime: Infinity`, a permanently dead button. `refetch` is what makes
+                // pressing Run always mean something.
+                if (latchedKey === selection) void runQuery.refetch();
+                else setLatched({ corpus: corpus.name, specs: entries, protocol });
+              }}
             >
               Run benchmark
             </Button>
@@ -300,11 +367,15 @@ export function EvaluatePage() {
                     above.
                   </Notice>
                 ) : null}
-                {runQuery.isPending ? <Spinner label="Benchmarking…" /> : null}
-                {runQuery.isError ? (
+                {/* One chain, because these three are mutually exclusive: a refetch over a
+                    cached success must hide the stale report while it runs. */}
+                {runQuery.isFetching ? (
+                  <Benchmarking />
+                ) : runQuery.isError ? (
                   <Notice tone="error">Benchmark failed: {describeError(runQuery.error)}</Notice>
+                ) : runQuery.isSuccess ? (
+                  <ReportView report={runQuery.data} />
                 ) : null}
-                {runQuery.isSuccess ? <ReportView report={runQuery.data} /> : null}
               </>
             )}
           </>

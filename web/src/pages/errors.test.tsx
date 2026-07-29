@@ -9,10 +9,10 @@ import { screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import { server } from "@/test/msw";
+import { API, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
-const API = "http://localhost/api";
+
 
 describe("API failures", () => {
   it("gates Monitor on health and names the start command (M1)", async () => {
@@ -22,6 +22,38 @@ describe("API failures", () => {
     expect(
       screen.getByText("IOTSHIELD_DATABASE_URL=sqlite:///demo.db python -m iotshield.api"),
     ).toBeInTheDocument();
+  });
+
+  it("says the DATABASE is unreachable when the API answers 500, not that the API is down", async () => {
+    // `/health` runs SELECT 1, so a healthy API in front of a dead Postgres answers 500. The
+    // old gate branched on `isError` alone and told the operator to start a service that was
+    // already running — and the command it printed would have repointed the dashboard at an
+    // empty SQLite file. Two causes, two remedies.
+    server.use(http.get(`${API}/health`, () => HttpResponse.json({ detail: "db down" }, { status: 500 })));
+    renderApp("/");
+    expect(await screen.findByText("Read API cannot reach its database")).toBeInTheDocument();
+    expect(screen.queryByText("Read API unreachable")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("IOTSHIELD_DATABASE_URL=sqlite:///demo.db python -m iotshield.api"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still reads a proxied outage as unreachable, which is how nginx reports it", async () => {
+    // Behind nginx a stopped upstream never reaches the browser as a transport error: the
+    // proxy is up and answers 502. Classifying that as "it answered" would print the DB
+    // remedy for a service that is genuinely not running.
+    server.use(http.get(`${API}/health`, () => HttpResponse.text("<html>502</html>", { status: 502 })));
+    renderApp("/");
+    expect(await screen.findByText("Read API unreachable")).toBeInTheDocument();
+  });
+
+  it("offers a way out of a failed request instead of requiring a page reload", async () => {
+    // Nothing retries on its own (`retry: false`, no polling, no focus refetch), so without a
+    // control here one transient blip is permanent until the operator guesses to hit F5.
+    server.use(http.get(`${API}/alerts`, () => HttpResponse.error()));
+    renderApp("/");
+    expect(await screen.findByText("This request failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("renders an in-page error when one endpoint fails after health passed (M2)", async () => {

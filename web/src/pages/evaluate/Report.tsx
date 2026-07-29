@@ -112,6 +112,11 @@ export function ReportView({ report }: { readonly report: EvalReport }) {
   const isSweep = parseSweep(scores) !== null;
   const chart = isSweep ? sweepCurve(scores, palette) : specScores(scores, palette);
 
+  // `lanes` is a counts-of-counts matrix — several hundred characters of JSON in one cell,
+  // which blows out the row and buries every column beside it. `DynamicTable` now drops
+  // non-cell-shaped columns by SHAPE, so it needs no name here; it is not lost, it is rendered
+  // below as what it actually is, a table. (`lane_recall` stays inline: one level of scalars
+  // is cell-shaped, and `formatCell` gives its nulls the same em-dash every undefined gets.)
   const perCase = report.specs.flatMap((spec) =>
     spec.cases.map((item) => {
       const { precision_at_k: _p, timeline: _t, ...rest } = item as EvalCaseReport &
@@ -119,20 +124,34 @@ export function ReportView({ report }: { readonly report: EvalReport }) {
       return { spec: spec.spec, ...rest };
     }),
   );
+  const laneRows = report.specs.flatMap((spec) =>
+    spec.cases.flatMap((item) => {
+      const lanes = (item as unknown as { lanes?: Record<string, Record<string, unknown>> }).lanes;
+      return Object.entries(lanes ?? {}).map(([lane, counts]) => ({
+        spec: spec.spec,
+        case: item.case,
+        lane,
+        ...counts,
+      }));
+    }),
+  );
   const notes = [
     ...new Set(report.specs.flatMap((spec) => spec.cases.flatMap((item) => item.notes))),
   ].sort();
 
-  const variance = caseVariance(
-    report.specs.flatMap((spec) =>
-      spec.cases.map((item) => ({
-        spec: spec.spec,
-        case: item.case,
-        event_f1: item.event_f1,
-      })),
-    ),
-    palette,
+  const varianceRows = report.specs.flatMap((spec) =>
+    spec.cases.map((item) => ({
+      spec: spec.spec,
+      case: item.case,
+      event_f1: item.event_f1,
+    })),
   );
+  const variance = caseVariance(varianceRows, palette);
+  const totalCases = varianceRows.length;
+  const scoredCases = varianceRows.filter(
+    (row) => row.event_f1 !== null && row.event_f1 !== undefined,
+  ).length;
+  const unscored = totalCases - scoredCases;
 
   return (
     <div className="space-y-8">
@@ -170,12 +189,42 @@ export function ReportView({ report }: { readonly report: EvalReport }) {
 
       {report.cases > 1 ? (
         <Section title="Consistency across cases">
-          {variance === null ? null : <Chart spec={variance} label="Event F1 per case, per spec" />}
-          <p className="caption">
-            One dot per recording. A mean hides the shape: a detector scoring 1.0 on most cases and
-            0 on a few is a different problem from one that is mediocre everywhere, and only this
-            view tells them apart.
-          </p>
+          {/* The caption used to render unconditionally, so a corpus of only clean recordings
+              produced a heading and an explanation with nothing between them. */}
+          {variance === null ? (
+            <Notice tone="info">
+              No recording in this corpus has a defined event F1, so there is nothing to plot
+              here — every case is clean (see the per-case table for false alarms).
+            </Notice>
+          ) : (
+            <>
+              <Chart spec={variance} label="Event F1 per case, per spec" />
+              <p className="caption">
+                One dot per <i>scored</i> recording. A mean hides the shape: a detector scoring
+                1.0 on most cases and 0 on a few is a different problem from one that is
+                mediocre everywhere, and only this view tells them apart.
+                {/* The filter is right — F1 is undefined with no incidents, and a dot at 0
+                    would claim the detector scored nothing rather than that nothing was
+                    measurable (ADR-0021 D2). What was wrong is that it was silent, and the
+                    omitted cases are exactly where a false-alarming spec differs from a quiet
+                    one, so a reader counting dots would conclude the corpus is smaller than
+                    it is. Ties also coincide exactly, which the count makes recoverable. */}
+                {" "}
+                {unscored > 0 ? (
+                  <>
+                    <b>
+                      {scoredCases} of {totalCases} recordings are plotted
+                    </b>
+                    : the other {unscored} are clean, so event F1 is undefined for them and a
+                    dot would invent a score.
+                  </>
+                ) : (
+                  <>All {totalCases} recordings are plotted.</>
+                )}{" "}
+                Dots at the same value sit on top of one another.
+              </p>
+            </>
+          )}
         </Section>
       ) : null}
 
@@ -193,6 +242,15 @@ export function ReportView({ report }: { readonly report: EvalReport }) {
           ))}
         </div>
       </Section>
+
+      {laneRows.length > 0 ? (
+        <Section
+          title="Per case, per lane"
+          description="The counts behind each case's lane columns — a matrix, so it gets a table rather than a cell."
+        >
+          <DynamicTable rows={laneRows} leading={["spec", "case", "lane"]} />
+        </Section>
+      ) : null}
     </div>
   );
 }

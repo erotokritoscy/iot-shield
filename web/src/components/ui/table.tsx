@@ -6,7 +6,8 @@
  */
 import * as React from "react";
 
-import { formatCell } from "@/lib/format";
+import { Button } from "@/components/ui/controls";
+import { formatCell, isFlatRecord } from "@/lib/format";
 import type { AlertSeverity } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,57 @@ export interface Column<T> {
   readonly className?: string;
 }
 
+/**
+ * Makes rows activate something.
+ *
+ * One object rather than three optional props, so the combinations that mean nothing —
+ * a highlight with no click, a label with no handler — are unrepresentable.
+ *
+ * `key` is compared against whatever `rowKey` returns, so a caller's selected value must come
+ * from the same function.
+ */
+export interface Selection<T> {
+  readonly key: string | null;
+  readonly onSelect: (row: T) => void;
+  /** The activator's accessible name; the visible cell content is usually not enough. */
+  readonly label: (row: T) => string;
+}
+
+/**
+ * The row's real control.
+ *
+ * A `<button>` inside the first cell, NOT `role="button"` on the `<tr>` — that would replace
+ * the row's own role, make it an invalid child of `rowgroup`, and sever the row↔cell
+ * relationships assistive technology navigates by. A table whose rows do something is still a
+ * table. The row's `onClick` is a pointer affordance layered on top of this.
+ */
+function RowActivator({
+  selected,
+  label,
+  onActivate,
+  children,
+}: {
+  readonly selected: boolean;
+  readonly label: string;
+  readonly onActivate: () => void;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "true" : undefined}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onActivate();
+      }}
+      className="rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    >
+      {children}
+    </button>
+  );
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -25,6 +77,8 @@ export function DataTable<T>({
   caption,
   empty,
   className,
+  selection,
+  pageSize,
 }: {
   readonly columns: readonly Column<T>[];
   readonly rows: readonly T[];
@@ -32,8 +86,26 @@ export function DataTable<T>({
   readonly caption?: React.ReactNode;
   readonly empty?: React.ReactNode;
   readonly className?: string;
+  readonly selection?: Selection<T>;
+  /**
+   * Page the rows rather than rendering all of them.
+   *
+   * Here rather than at a call site because every large table in this app has the same
+   * problem — the read plane caps lists at 1,000–5,000 rows, and 5,000 rows × 5 cells is
+   * 25,000 DOM nodes — and because the clamp below is the sort of arithmetic that gets
+   * copied slightly wrong.
+   */
+  readonly pageSize?: number;
 }) {
+  const [page, setPage] = React.useState(0);
   if (rows.length === 0 && empty) return <>{empty}</>;
+
+  const pages = pageSize ? Math.max(1, Math.ceil(rows.length / pageSize)) : 1;
+  // Clamped, not just reset on filter change: `rows` can also shrink under a refetch, which
+  // would otherwise strand the view on a page that no longer exists.
+  const current = Math.min(page, pages - 1);
+  const visible = pageSize ? rows.slice(current * pageSize, (current + 1) * pageSize) : rows;
+
   return (
     <div className={cn("min-w-0", className)}>
       <div className="overflow-x-auto rounded-lg border border-line">
@@ -55,27 +127,70 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
-              <tr key={rowKey(row, index)} className="border-b border-line/70 last:border-0 hover:bg-raised/60">
-                {columns.map((column) => (
-                  <td
-                    key={column.key}
-                    className={cn(
-                      "px-3 py-1.5 align-top text-ink",
-                      column.align === "right" ? "text-right tabular" : "text-left",
-                      column.className,
-                    )}
-                  >
-                    {column.render
+            {visible.map((row, index) => {
+              const key = rowKey(row, index);
+              const selected = selection !== undefined && key === selection.key;
+              return (
+                <tr
+                  key={key}
+                  onClick={selection ? () => selection.onSelect(row) : undefined}
+                  className={cn(
+                    "border-b border-line/70 last:border-0",
+                    selected ? "bg-accent/10" : "hover:bg-raised/60",
+                    selection && "cursor-pointer",
+                  )}
+                >
+                  {columns.map((column, columnIndex) => {
+                    const content = column.render
                       ? column.render(row)
-                      : formatCell((row as Record<string, unknown>)[column.key])}
-                  </td>
-                ))}
-              </tr>
-            ))}
+                      : formatCell((row as Record<string, unknown>)[column.key]);
+                    return (
+                      <td
+                        key={column.key}
+                        className={cn(
+                          "px-3 py-1.5 align-top text-ink",
+                          column.align === "right" ? "text-right tabular" : "text-left",
+                          column.className,
+                        )}
+                      >
+                        {selection && columnIndex === 0 ? (
+                          <RowActivator
+                            selected={selected}
+                            label={selection.label(row)}
+                            onActivate={() => selection.onSelect(row)}
+                          >
+                            {content}
+                          </RowActivator>
+                        ) : (
+                          content
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {pages > 1 ? (
+        <div className="mt-2 flex items-center gap-3">
+          <Button size="sm" variant="ghost" disabled={current === 0} onClick={() => setPage(current - 1)}>
+            Previous
+          </Button>
+          <span className="caption">
+            Page {current + 1} of {pages} · {rows.length.toLocaleString("en-US")} rows
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={current === pages - 1}
+            onClick={() => setPage(current + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      ) : null}
       {caption ? <p className="caption mt-2">{caption}</p> : null}
     </div>
   );
@@ -104,7 +219,17 @@ export function DynamicTable({
   const keys: string[] = [];
   for (const row of rows) {
     for (const key of Object.keys(row)) {
-      if (!keys.includes(key) && !exclude.includes(key)) keys.push(key);
+      if (keys.includes(key) || exclude.includes(key)) continue;
+      // Matrix-valued fields are dropped by SHAPE, not by name. A named exclusion list is
+      // exactly what this component promises not to have: the next nested metric the harness
+      // adds would land here unlisted, fall through `formatCell` to `JSON.stringify`, and put
+      // several hundred characters in one cell — with no code change, which is the property
+      // the passthrough schemas exist to give and this list would quietly take away.
+      const value = row[key];
+      if (value !== null && value !== undefined && typeof value === "object" && !isFlatRecord(value)) {
+        continue;
+      }
+      keys.push(key);
     }
   }
   const ordered = [...leading.filter((key) => keys.includes(key)), ...keys.filter((key) => !leading.includes(key))];

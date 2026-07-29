@@ -13,8 +13,18 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { pipelineApi, readApi } from "./api/client";
-import { ApiError } from "./api/http";
+import { isPlaneAbsent } from "./api/http";
 import type { Lane } from "./api/types";
+
+/**
+ * The one thing a manual refresh must never touch.
+ *
+ * `invalidateQueries` refetches *active* queries regardless of `staleTime`, so sweeping the
+ * cache would re-run whatever benchmark is on screen — minutes of server work from a button
+ * labelled "Refresh data". Everything else in this app is a cheap read and is safe.
+ */
+export const isBenchmarkResult = (key: readonly unknown[]): boolean =>
+  key[0] === "pipeline" && key[1] === "eval" && key[2] === "run";
 
 export const keys = {
   readHealth: ["read", "health"] as const,
@@ -30,6 +40,12 @@ export const keys = {
   evalCorpora: ["pipeline", "eval", "corpora"] as const,
   evalDetectors: ["pipeline", "eval", "detectors"] as const,
   evalSpecs: ["pipeline", "eval", "specs"] as const,
+  /**
+   * A benchmark result, keyed by the exact request that produced it. Listed here with the
+   * rest rather than inlined at its call site: it was the one key defined outside this table,
+   * so it was also the one key a scope-level invalidation would silently miss.
+   */
+  evalRun: (selection: string) => ["pipeline", "eval", "run", selection] as const,
 };
 
 export const useReadHealth = () => useQuery({ queryKey: keys.readHealth, queryFn: () => readApi.health() });
@@ -103,9 +119,7 @@ export interface EvalPlane {
  */
 export function useEvalPlane(): EvalPlane {
   const query = useCorpora();
-  const error = query.error;
-  const planeOff = error instanceof ApiError && error.kind === "status" && error.status === 404;
-  const unreachable = query.isError && !planeOff;
+  const unreachable = query.isError && !isPlaneAbsent(query.error);
   return {
     available: query.isSuccess || unreachable,
     loading: query.isPending,

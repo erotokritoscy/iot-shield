@@ -48,6 +48,53 @@ describe("Compose & run", () => {
     expect((screen.getByTestId("src_0_norm") as HTMLSelectElement).value).toBe("stub");
   });
 
+  it("withholds the verdict while the edited chain is still being checked", async () => {
+    // The 350 ms debounce buys the guard fewer requests; it also opens a window in which the
+    // verdict on screen describes a spec that no longer exists. Showing a green "Chain is
+    // compatible." through it — and letting Run fire — is the page claiming knowledge it does
+    // not have about the chain the operator is looking at.
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+
+    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    expect(screen.queryByText("Chain is compatible.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("compose_run")).toBeDisabled();
+    expect(screen.getByText("Checking the chain…")).toBeInTheDocument();
+
+    // ...and it comes back once the guard has actually seen the new chain.
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+  });
+
+  it("warns that an untrained detector will be refused, which the guard cannot see", async () => {
+    // The compatibility guard reasons about a spec WITHOUT constructing adapters, so it cannot
+    // know whether one is fitted: `/runs/validate` returns ok and the refusal arrives from
+    // `_ensure_fitted` after the operator has pasted their data. `artifact_param` is published
+    // for exactly this. A warning, never a gate — naming an artifact makes the chain legal.
+    await openCompose();
+    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "team3_zscore");
+    expect(await screen.findByText(/has no fitted artifact/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+  });
+
+  it("lets an uploaded file be taken back", async () => {
+    // Attaching a file disables the paste box, and that box's own onChange was the only thing
+    // that cleared the filename — so the escape was unreachable and a wrong file could only be
+    // undone by reloading the form and rebuilding every other source.
+    await openCompose();
+    const file = new File([CSV], "readings.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByTestId("src_0_file"), file);
+
+    expect(await screen.findByText("readings.csv")).toBeInTheDocument();
+    expect(screen.getByTestId("src_0_text")).toBeDisabled();
+
+    await userEvent.click(screen.getByTestId("src_0_clear"));
+    await waitFor(() => expect(screen.getByTestId("src_0_text")).toBeEnabled());
+    expect(screen.getByText("source-1")).toBeInTheDocument();
+  });
+
   it("shows a format picker only when the normalizer declares more than one dialect (C2)", async () => {
     await openCompose();
     expect(screen.queryByTestId("src_0_fmt")).not.toBeInTheDocument();

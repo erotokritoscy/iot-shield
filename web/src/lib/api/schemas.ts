@@ -38,10 +38,30 @@ import type {
   ValidateResponse,
 } from "./types";
 
-/** `true` when the live server type still satisfies what we parse; a type error otherwise. */
-type Satisfies<Server, Parsed> = Server extends Parsed
-  ? true
-  : { drift: "server type no longer satisfies the parsed shape"; server: Server; parsed: Parsed };
+/**
+ * `true` when the live server type and what we parse are the *same* shape; a type error
+ * otherwise.
+ *
+ * Mutual, not one-way. `Server extends Parsed` alone is satisfied by a server type with
+ * EXTRA properties — structural subtyping — so a field added to a contract compiled clean
+ * and was then stripped at runtime by zod, which is the precise failure the comment at the
+ * top of this file promises to catch. Asking both directions is what makes that promise true.
+ *
+ * The tuple wrappers are load-bearing: a bare `Server extends Parsed` over a naked type
+ * parameter *distributes* across unions, so each member of `Lane` would be tested alone
+ * against the whole union and the enum asserts below would all fail. `[Server] extends
+ * [Parsed]` compares the union as one thing.
+ */
+type Drift<Server, Parsed> = {
+  drift: "server type and parsed shape have diverged";
+  server: Server;
+  parsed: Parsed;
+};
+type Satisfies<Server, Parsed> = [Server] extends [Parsed]
+  ? [Parsed] extends [Server]
+    ? true
+    : Drift<Server, Parsed>
+  : Drift<Server, Parsed>;
 type Assert<T extends true> = T;
 
 const jsonObject = z.record(z.unknown());

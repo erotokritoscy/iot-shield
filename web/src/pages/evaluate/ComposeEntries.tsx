@@ -30,6 +30,7 @@ import {
   DEFAULT_ARTIFACT,
   labelled,
   NO_SWEEP,
+  normalizerFor,
   SCRATCH,
   sweepValues,
   TRAINED,
@@ -289,6 +290,18 @@ export function useComposeEntries({
 
   const problems = derived.flatMap((item) => item.problems);
 
+  // A corpus format no registered normalizer accepts produced `{"normalizer": ""}` in the
+  // spec, with Run still enabled: the server then refused a normalizer with no name, which
+  // reads like a bug in the request rather than a gap in the registry.
+  const unreadable = (corpus?.source_formats ?? []).filter(
+    (format) => normalizerFor(format, normalizers) === "",
+  );
+  if (normalizers.length > 0 && unreadable.length > 0) {
+    problems.push(
+      `No registered normalizer reads ${unreadable.join(", ")}, which this corpus is stored in.`,
+    );
+  }
+
   const fittable = new Set(detectors.filter((item) => item.fittable).map((item) => item.name));
   const picked = new Set(plan.flatMap((item) => item.detectors.map((detector) => detector.name)));
   const noneFittable =
@@ -348,6 +361,7 @@ export function useComposeEntries({
                       <div className="space-y-3">
                         <RadioGroup
                           name={`eval_e${index}_${name}_mode`}
+                          label={`${name}: trained artifact or from scratch`}
                           options={[
                             { value: TRAINED, label: TRAINED },
                             { value: SCRATCH, label: SCRATCH },

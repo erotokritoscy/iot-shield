@@ -1,5 +1,5 @@
 import { QueryState } from "@/components/QueryState";
-import { Notice, PageHeader, Section } from "@/components/ui/surfaces";
+import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
 import { DataTable, DynamicTable, type Column } from "@/components/ui/table";
 import type { MalformedRecord } from "@/lib/api/types";
 import { useMalformed, useSummary } from "@/lib/queries";
@@ -33,15 +33,26 @@ export function DataHealthPage() {
 
         <Section title="Malformed inputs (captured, never dropped)">
           <QueryState query={malformed} label="Loading malformed records…">
-            {(rows) =>
-              rows.length === 0 ? (
+            {(page) =>
+              page.rows.length === 0 ? (
                 <Notice tone="success">No malformed inputs recorded.</Notice>
               ) : (
-                <DataTable
-                  columns={columns}
-                  rows={rows}
-                  rowKey={(row, index) => row.record_id ?? String(index)}
-                />
+                <>
+                  {/* This page states a total and a table in the same breath, so an unmarked
+                      cap reads as a contradiction the operator has to resolve alone. */}
+                  <Truncated
+                    page={page}
+                    noun="malformed records"
+                    total={summary.data?.counts["malformed_records"]}
+                    order="the most recent window only"
+                  />
+                  <DataTable
+                    columns={columns}
+                    rows={page.rows}
+                    rowKey={(row, index) => row.record_id ?? String(index)}
+                    pageSize={50}
+                  />
+                </>
               )
             }
           </QueryState>

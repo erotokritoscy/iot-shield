@@ -1,6 +1,6 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 
-import { Notice, Spinner } from "@/components/ui/surfaces";
+import { ErrorState, Spinner } from "@/components/ui/surfaces";
 import { describeError } from "@/lib/api/http";
 
 /**
@@ -21,12 +21,22 @@ export function QueryState<T>({
   readonly label: string;
   readonly children: (data: T) => React.ReactNode;
 }) {
+  // A *disabled* query is `isPending` in TanStack v5 — status "pending", fetchStatus "idle" —
+  // because it has no data and never asked for any. Rendering a spinner for it would hang
+  // forever on any query whose `enabled` is conditional. Nothing has been requested, so
+  // nothing is the honest render.
+  if (query.isPending && query.fetchStatus === "idle") return null;
   if (query.isPending) return <Spinner label={label} />;
   if (query.isError) {
+    // Nothing in this app retries on its own (`retry: false`, no polling, no focus refetch),
+    // so without a way out a single transient failure is permanent until the operator guesses
+    // that a full page reload is the only escape.
     return (
-      <Notice tone="error" title="This request failed">
-        <p>{describeError(query.error)}</p>
-      </Notice>
+      <ErrorState
+        title="This request failed"
+        detail={describeError(query.error)}
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   return <>{children(query.data)}</>;

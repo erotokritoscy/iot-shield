@@ -1,14 +1,16 @@
-import * as React from "react";
-
 import { Chart, useChartPalette } from "@/components/Chart";
 import { QueryState } from "@/components/QueryState";
 import { Field, Select } from "@/components/ui/controls";
-import { Notice, PageHeader, Section } from "@/components/ui/surfaces";
+import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { telemetryTimeline } from "@/charts/specs";
 import { formatNumber, formatUtc } from "@/lib/format";
 import type { Asset, DetectionResult } from "@/lib/api/types";
 import { useAssets, useDetections, useEvents } from "@/lib/queries";
+import { useUrlChoice } from "@/lib/urlChoice";
+
+/** Rows per page in the detections table; a 5,000-row render is 25,000 DOM nodes. */
+const PAGE_SIZE = 50;
 
 /** `Feed pump 2 [pump-02] (auto-discovered)` — discovery is visible, never implied. */
 export function assetLabel(asset: Asset): string {
@@ -42,18 +44,30 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
       </p>
 
       <QueryState query={events} label="Loading telemetry…">
-        {(eventRows) => (
+        {(eventPage) => (
           <QueryState query={telemetryDetections} label="Loading telemetry detections…">
-            {(detectionRows) => {
-              const spec = telemetryTimeline(eventRows, detectionRows, palette);
-              return spec === null ? (
-                <Notice tone="info">No telemetry with numeric values for this asset.</Notice>
-              ) : (
-                <Chart
-                  spec={spec}
-                  label={`Telemetry values over time for ${asset.asset_id}`}
-                  caption="Blue line: telemetry values. Red bands/rules: telemetry detection windows (all lanes are in the table below)."
-                />
+            {(detectionPage) => {
+              const spec = telemetryTimeline(eventPage.rows, detectionPage.rows, palette);
+              return (
+                <>
+                  {/* The server orders events `timestamp DESC` and *then* limits, so the cap
+                      keeps the NEWEST readings — which means a truncated chart silently
+                      begins at an arbitrary instant rather than at the start of the record. */}
+                  <Truncated
+                    page={eventPage}
+                    noun="telemetry readings"
+                    order="the most recent window only, so the axis does not start where the data does"
+                  />
+                  {spec === null ? (
+                    <Notice tone="info">No telemetry with numeric values for this asset.</Notice>
+                  ) : (
+                    <Chart
+                      spec={spec}
+                      label={`Telemetry values over time for ${asset.asset_id}`}
+                      caption="Blue line: telemetry values. Red bands/rules: telemetry detection windows (all lanes are in the table below)."
+                    />
+                  )}
+                </>
               );
             }}
           </QueryState>
@@ -61,15 +75,17 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
       </QueryState>
 
       <QueryState query={allDetections} label="Loading detections…">
-        {(rows) =>
-          rows.length === 0 ? (
+        {(page) =>
+          page.rows.length === 0 ? (
             <Notice tone="info">No detections for this asset.</Notice>
           ) : (
             <Section title="Detections">
+              <Truncated page={page} noun="detections" order="the most recent window only" />
               <DataTable
                 columns={detectionColumns}
-                rows={rows}
+                rows={page.rows}
                 rowKey={(row, index) => row.detection_id ?? String(index)}
+                pageSize={PAGE_SIZE}
               />
             </Section>
           )
@@ -81,7 +97,7 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
 
 export function AssetsPage() {
   const assets = useAssets();
-  const [chosenId, setChosenId] = React.useState<string | null>(null);
+  const [chosenId, choose] = useUrlChoice("asset");
 
   return (
     <>
@@ -102,10 +118,11 @@ export function AssetsPage() {
           if (selected === undefined) return null;
           return (
             <div className="space-y-6">
-              <Field label="Asset" className="max-w-md">
+              <Field label="Asset" htmlFor="assets_asset" className="max-w-md">
                 <Select
+                  id="assets_asset"
                   value={selected.asset_id}
-                  onChange={(event) => setChosenId(event.target.value)}
+                  onChange={(event) => choose(event.target.value)}
                   options={rows.map((asset) => asset.asset_id)}
                   labelFor={(id) => {
                     const asset = rows.find((item) => item.asset_id === id);

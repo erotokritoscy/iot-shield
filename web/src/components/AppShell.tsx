@@ -6,10 +6,14 @@
  * than using it — the same grouping `dashboard/app.py: main` explains, kept because it is
  * the shape of the product, not a menu layout.
  */
+import { useQueryClient } from "@tanstack/react-query";
+import { RotateCw } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { useEvalPlane } from "@/lib/queries";
+import { Button } from "@/components/ui/controls";
+import { LatchProvider } from "@/lib/latch";
+import { isBenchmarkResult, useEvalPlane } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -61,6 +65,14 @@ export function AppShell() {
   // *probing* the plane instead of by a second flag. A 404 means the router was never
   // registered (ADR-0021 D1: absent, not guarded), which is the deployment saying no.
   const evalPlane = useEvalPlane();
+  const client = useQueryClient();
+  // Everything EXCEPT a benchmark result. Expressed as the one exclusion it really is rather
+  // than as a list of what is safe: scoping to the read plane also made the button a silent
+  // no-op on Compose and Evaluate, whose catalogues are cheap and safe to re-read. The
+  // exclusion is not cosmetic — `invalidateQueries` refetches active queries regardless of
+  // `staleTime: Infinity`, so including the eval-run key would silently re-run a benchmark.
+  const refresh = () =>
+    void client.invalidateQueries({ predicate: (query) => !isBenchmarkResult(query.queryKey) });
 
   return (
     <div className="flex min-h-full">
@@ -72,13 +84,32 @@ export function AppShell() {
         <nav className="flex-1 overflow-y-auto px-2 py-2">
           <NavGroup title="Monitor" items={MONITOR} />
           <NavGroup title="Operate" items={OPERATE} />
-          {evalPlane.available ? <NavGroup title="Evaluate" items={EVALUATE} /> : null}
+          {/* The probe cannot answer before the first paint, and `available` is false while it
+              is in flight — so branching on `loading` renders nothing either way and the
+              sidebar still grows underneath the cursor when the answer lands. The only fix
+              that fixes it is to reserve the space the answer will need. */}
+          {evalPlane.loading ? (
+            <div className="mb-6 h-[3.25rem]" aria-hidden />
+          ) : evalPlane.available ? (
+            <NavGroup title="Evaluate" items={EVALUATE} />
+          ) : null}
         </nav>
-        <p className="px-3 py-3 text-2xs text-muted">All timestamps UTC</p>
+        <div className="space-y-2 px-3 py-3">
+          {/* Nothing here polls or refetches on focus (H5, and a queue that re-ranks under the
+              cursor is worse than a stale one). That makes an explicit refresh the only way to
+              ask for current data without reloading the page. */}
+          <Button size="sm" variant="ghost" className="w-full" onClick={refresh}>
+            <RotateCw className="h-3.5 w-3.5" aria-hidden /> Refresh data
+          </Button>
+          <p className="text-2xs text-muted">All timestamps UTC</p>
+        </div>
       </aside>
       <main className="ml-56 min-w-0 flex-1 px-8 py-7">
         <div className="mx-auto min-w-0 max-w-[1400px]">
-          <Outlet />
+          {/* Above the routes, so a finished benchmark survives a look at Triage. */}
+          <LatchProvider>
+            <Outlet />
+          </LatchProvider>
         </div>
       </main>
     </div>
