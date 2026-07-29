@@ -159,24 +159,36 @@ class RunResponse(BaseModel):
 # --- Registry introspection (drives /modules) --------------------------------
 
 
-def _type_name(annotation: Any) -> str | None:
-    """The name a form should type a widget by, seeing through ``X | None``.
+def _optional_inner(annotation: Any) -> Any:
+    """``X | None`` -> ``X``; anything else unchanged.
 
     Learning adapters declare every hyperparameter as ``T | None`` — ``None`` is the
-    "not given" sentinel ADR-0022 needs — and a union has no ``__name__``, so without this
-    every one of them would reach a UI as an untyped text box.
+    "not given" sentinel ADR-0022 needs — so this unwrapping decides what a UI sees for
+    almost every tunable in the registry. Shared by both describers below because they
+    must agree about what the annotation *is*: when only the type name unwrapped,
+    ``Literal["water", "electricity"] | None`` reported its type through the union and its
+    choices through the raw annotation, so a closed vocabulary published ``choices: null``
+    and rendered as a free-text box (the failure ADR-0023 D9 exists to prevent).
+
+    A ``Literal`` is returned untouched. Its arguments are *values*, not types, so the
+    one-member ``Literal["water"]`` would otherwise unwrap to the string ``"water"``.
     """
+    if get_origin(annotation) is Literal:
+        return annotation
+    inner = [arg for arg in get_args(annotation) if arg is not type(None)]
+    return inner[0] if len(inner) == 1 else annotation
+
+
+def _type_name(annotation: Any) -> str | None:
+    """The name a form should type a widget by, seeing through ``X | None``."""
     if annotation is inspect.Parameter.empty:
         return None
+    annotation = _optional_inner(annotation)
     # A closed vocabulary (ADR-0023 D9) reports the type of its *members*, which are
     # strings by construction. Without this the name would be "Literal", which no client
-    # can map to a widget — and the union-unwrapping below would mangle a one-member
-    # Literal into the value itself.
+    # can map to a widget.
     if get_origin(annotation) is Literal:
         return "str"
-    inner = [arg for arg in get_args(annotation) if arg is not type(None)]
-    if len(inner) == 1:
-        annotation = inner[0]
     return getattr(annotation, "__name__", None)
 
 
@@ -215,7 +227,12 @@ def _literal_choices(annotation: Any) -> list[str] | None:
     Read off the factory signature so a closed vocabulary is declared exactly once — in the
     factory that already validates it — instead of being restated in a UI list that can
     drift. Meta-tests pin each Literal against the vocabulary it mirrors.
+
+    Sees through ``X | None`` for the same reason ``_type_name`` does: an optional closed
+    vocabulary is still a closed vocabulary, and a client that is handed no choices has
+    nothing to render but a text box.
     """
+    annotation = _optional_inner(annotation)
     if get_origin(annotation) is not Literal:
         return None
     return [str(value) for value in get_args(annotation)]
