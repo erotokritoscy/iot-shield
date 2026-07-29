@@ -11,6 +11,7 @@ from iotshield.enrichment import (
     EnrichmentFieldError,
     EnrichmentSource,
     MitreTechnique,
+    action_steps,
 )
 
 T0 = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
@@ -123,6 +124,53 @@ def test_the_rationale_clause_attributes_the_claim() -> None:
 def test_actions_render_as_one_paragraph_or_nothing() -> None:
     assert make_enrichment(suggested_actions=("A.", "B.")).action_text() == "A. B."
     assert make_enrichment(suggested_actions=()).action_text() is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("A. B. C.", ["A.", "B.", "C."]),
+        # The generated fallback: one sentence holding a period-free ISO instant and a
+        # semicolon. Splitting it would invent two half-instructions out of one.
+        (
+            "Inspect pump-02 around 2026-07-07T12:01:00+00:00; review flow_burst evidence.",
+            ["Inspect pump-02 around 2026-07-07T12:01:00+00:00; review flow_burst evidence."],
+        ),
+        ("Only one step.", ["Only one step."]),
+        # A trailing step that never had a period does not acquire one.
+        ("First step. Second with no stop", ["First step.", "Second with no stop"]),
+        (None, []),
+        ("", []),
+        ("   ", []),
+    ],
+)
+def test_action_steps_recovers_the_checklist(text: str | None, expected: list[str]) -> None:
+    assert action_steps(text) == expected
+
+
+def test_action_steps_inverts_action_text_for_every_shipped_claim() -> None:
+    """The property that makes the split a fact about our data rather than a hope.
+
+    ``recommended_action`` is one string and the thing inside it is a list, so a UI has to
+    recover the steps by splitting. That is only safe while every action we ship is a single
+    sentence ending in a period — an action containing a mid-sentence ``". "`` would reach an
+    analyst as two half-steps. Rather than trusting the rule library and the presets to stay
+    that way, this asserts it over every claim the product ships, so the day someone writes
+    "Check the device's I.P. address." the test says so instead of the dashboard.
+    """
+    from iotshield.detect.flow_burst import PRESETS as FLOW_PRESETS
+    from iotshield.detect.log_burst import PRESETS as LOG_PRESETS
+    from iotshield.detect.rules.loader import load_ruleset
+
+    shipped = [rule.enrichment for rule in load_ruleset()]
+    shipped += [preset.enrichment for preset in (*LOG_PRESETS.values(), *FLOW_PRESETS.values())]
+    assert len(shipped) >= 11, "expected the six packaged rules and the five presets"
+
+    for enrichment in shipped:
+        assert enrichment.suggested_actions, f"{enrichment.origin} suggests nothing"
+        assert action_steps(enrichment.action_text()) == list(enrichment.suggested_actions), (
+            f"{enrichment.origin}'s actions do not survive the join/split round trip"
+        )
 
 
 def test_union_deduplicates_and_preserves_order() -> None:

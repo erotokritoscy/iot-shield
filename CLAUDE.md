@@ -553,6 +553,22 @@ checks is prose. The supporting detail stays per-detector, because a z-score, a 
 attribution and a peer count are genuinely different things and flattening them into one
 schema would serve the dashboard and nobody else.
 
+That sentence is also **what both dashboards name a finding by** (ADR-0032 amendment).
+`method` was a good name only by accident — one detector used to mean one kind of finding —
+and D3 ends that deliberately, so a rule detector's six rules all report `rules:flow` and
+`demo_rules.yaml`'s gateway alert rendered three identical `rules:flow` disclosures for an
+SSH session, an SMB conversation and a bulk upload. Labelling by the explanation fixes it for
+every detector at once instead of special-casing `rules:*`, and falls back to `method` for
+rows stored before the law existed. Two fields of the same origin were also invisible:
+`recommended_action` is a *checklist* (D5 unions up to six steps across the bucket) flattened
+into one `str`, so `enrichment.action_steps` is the documented inverse of
+`Enrichment.action_text` — with a test round-tripping every shipped rule and preset through
+the pair, which is what makes the split a checked property rather than a guess about our own
+text; and the MITRE tactics, which `threat_class` drops, are now listed from the alert's own
+evidence. `web/src/lib/evidence.ts` is `enrichment.py`'s read path in TypeScript, keeping the
+untyped hop one module wide on that side too. Carrying the actions as a real list is a
+contract change and remains open.
+
 **Hyperparameters vs fitted state (ADR-0022, a LAW for any adapter that learns).**
 A detector's hyperparameters are *exactly* its registry factory's parameters — declared as
 a frozen pydantic model on `AdapterSpec.params_type`, so config sets them, `/modules`

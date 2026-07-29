@@ -353,3 +353,53 @@ lives inside a YAML file, so `--sweep` cannot reach it. Tuning a rule means edit
   from ours); sweeping a threshold that lives inside a rule file; asset aliasing, still open
   from ADR-0023, which is what would let a hostname-keyed log rule and an IP-keyed flow rule
   corroborate without the sources agreeing on an identifier by hand.
+
+## Amendment (2026-07-29) — the presentation consequence D3 opened
+
+D3 records that `method` is a property of the detector, so a rule detector holding six rules
+reports `rules:flow` on every one of them and names the firing rule in `Enrichment.origin`
+instead. That is right, and it was recorded here. What was not checked is that **both
+dashboards used `method` as the name of a finding** — a table column, a disclosure heading,
+a chart tooltip — which was a good name only by accident: until this ADR, one detector meant
+one kind of finding, so naming the detector named what happened.
+
+The result, in the shipped demo: `config/demo_rules.yaml`'s gateway alert renders three rows
+and three disclosures all reading `rules:flow`, for an inbound SSH session, an SMB
+conversation and a bulk upload. The drill-down panel is the thing that makes an alert
+actionable, and it had become ambiguous exactly where the new detector fires.
+
+The fix is **not** to special-case `rules:*` in the UI; the next detector that fires several
+ways would need the same patch. It is to label a detection by `evidence["explanation"]` —
+the sentence D7 already requires of *every* detector and the port suite already enforces —
+falling back to `method` for detections stored before this ADR, since the law binds what we
+produce and not what is already persisted. `method` stays alongside as the secondary fact it
+now is: which detector, not which finding.
+
+Two further gaps of the same origin, both fixed here:
+
+- **`recommended_action` read as a wall of text.** D5 unions the actions across the bucket,
+  and the contract carries them joined into one `str`; six imperatives from four rules
+  rendered as one paragraph stops being a next step. `enrichment.action_steps` is now the
+  documented **inverse** of `Enrichment.action_text`, so a UI renders the checklist the
+  field actually holds. Recovering the list rather than carrying it keeps the contract, the
+  stored alerts, the API schema and the generated clients untouched — the price is that the
+  split is a claim about our own generated text, so a test round-trips **every shipped rule
+  and preset** through the pair. An action containing a mid-sentence `". "` fails that test
+  rather than reaching an analyst as two half-steps.
+- **The MITRE mapping was invisible.** `threat_class` carries the winning technique and its
+  id, but not its tactic, and not the other techniques when several rules fire; those
+  existed only inside the raw JSON dump. Both dashboards now list every technique the
+  alert's evidence cites. This is a *summary* of what is on screen, not a second promotion:
+  picking one winning claim by precedence stays in `alert/_correlate.py` where both engines
+  share it.
+
+`web/src/lib/evidence.ts` is the TypeScript counterpart of `enrichment.py`'s read path —
+the same discipline, that the untyped hop is exactly one module wide and the key names
+appear in one place. It parses defensively (a malformed payload reads as *absent*) because
+this is a drill-down panel: failing it closed would blank an analyst's evidence over a
+cosmetic drift, which is the opposite of what the strict server-side `from_evidence` is for.
+
+**Still open, deliberately:** `PrioritizedAlert.recommended_action` remains a `str` holding a
+list. Carrying it as a list is the honest fix and is a contract change — its own ADR, a
+storage column, an API schema and both generated clients — so it was not smuggled in behind
+a display fix.

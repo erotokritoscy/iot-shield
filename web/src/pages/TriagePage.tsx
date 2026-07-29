@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/surfaces";
 import { DataTable, DynamicTable, SeverityBadge, StatTile, type Column } from "@/components/ui/table";
 import { severityBar } from "@/charts/specs";
+import { actionSteps, explanationOf, mitreOf } from "@/lib/evidence";
 import { formatNumber, formatUtc } from "@/lib/format";
 import type { DetectionResult, PrioritizedAlert } from "@/lib/api/types";
 import { SEVERITY_ORDER, SUMMARY_KEYS } from "@/lib/api/types";
@@ -47,6 +48,32 @@ const evidenceColumns: Column<DetectionResult>[] = [
 
 const PAGE_SIZE = 50;
 
+/**
+ * What one piece of evidence is *called*.
+ *
+ * `method` used to be a good name by accident: one detector meant one kind of finding, so
+ * naming the detector named what happened. The rule detector ends that deliberately — the
+ * Detector port gives an adapter one lane and the port suite pins `detection.method` to it,
+ * so six rules on the flow lane all report `rules:flow` and the firing rule rides in
+ * `Enrichment.origin` instead (ADR-0032 D3). Labelling by method therefore produced three
+ * identical "rules:flow — why it fired" headings on one alert, for an inbound SSH session,
+ * an SMB conversation and a bulk upload.
+ *
+ * The fix is not to special-case `rules:*` here — the next detector that fires several ways
+ * would need the same patch. It is to label a detection by the sentence *every* detection is
+ * required to carry (ADR-0032 D7). `method` stays alongside as the secondary fact it now is:
+ * which detector, not which finding.
+ */
+function EvidenceLabel({ detection }: { readonly detection: DetectionResult }) {
+  const explanation = explanationOf(detection);
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="truncate text-ink">{explanation ?? "why it fired"}</span>
+      <span className="shrink-0 font-mono text-2xs text-muted">{detection.method}</span>
+    </span>
+  );
+}
+
 function AlertInspector({
   alerts,
   chosenId,
@@ -73,6 +100,12 @@ function AlertInspector({
 
   if (selected === undefined) return null;
   const components = selected.score_components ?? {};
+  const steps = actionSteps(selected.recommended_action);
+  // Read off the detections already fetched for the evidence table below, so the techniques
+  // and the payload they came from cannot disagree. Empty while that query is in flight,
+  // which is the same thing "no detection claims a technique" renders as — correct in both
+  // cases, since the block only appears when there is something to show.
+  const techniques = mitreOf(detections.data ?? []);
 
   return (
     <Section title="Alert inspector">
@@ -96,12 +129,52 @@ function AlertInspector({
         </div>
         {/* Only when present: an engine that recommends nothing must not render an empty
             heading that reads as "no action needed". */}
-        {selected.recommended_action ? (
+        {steps.length > 0 ? (
           <div>
             <dt className="text-2xs font-semibold uppercase tracking-wide text-muted">
               Recommended action
             </dt>
-            <dd className="text-ink">{selected.recommended_action}</dd>
+            {/* A list, because the field IS one: up to six steps unioned from every rule
+                that fired (ADR-0032 D5), which an analyst works through one at a time. The
+                contract carries them joined into one string, so `actionSteps` recovers what
+                `Enrichment.action_text` joined. A single-step fallback renders as a
+                one-item list, which is the same sentence with a bullet in front of it. */}
+            <dd>
+              <ul
+                aria-label="Recommended action steps"
+                className="list-disc space-y-1 pl-4 text-ink marker:text-muted"
+              >
+                {steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ) : null}
+        {techniques.length > 0 ? (
+          <div>
+            <dt className="text-2xs font-semibold uppercase tracking-wide text-muted">
+              MITRE ATT&CK
+            </dt>
+            {/* `threat_class` already carries the winning technique, but only that one, and
+                without its tactic. An alert whose evidence spans four rules implicates four
+                techniques; they existed only inside the raw JSON dump below. */}
+            <dd>
+              <ul
+                aria-label="MITRE ATT&CK techniques"
+                className="flex flex-wrap gap-1.5 pt-0.5"
+              >
+                {techniques.map((technique) => (
+                  <li
+                    key={technique.technique_id}
+                    className="rounded border border-line bg-raised px-1.5 py-0.5 text-2xs text-dim"
+                  >
+                    {technique.tactic} — {technique.technique}{" "}
+                    <span className="font-mono text-muted">({technique.technique_id})</span>
+                  </li>
+                ))}
+              </ul>
+            </dd>
           </div>
         ) : null}
       </dl>
@@ -139,7 +212,7 @@ function AlertInspector({
                   .map((row, index) => (
                     <Collapsible
                       key={row.detection_id ?? String(index)}
-                      label={`${row.method} — why it fired`}
+                      label={<EvidenceLabel detection={row} />}
                     >
                       <JsonBlock value={row.evidence} />
                     </Collapsible>

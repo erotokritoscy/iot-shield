@@ -7,7 +7,7 @@ Statuses: `todo` · `done` (verified, evidence cited) · `blocked` · `contested
 **Every row is `done`.** Nothing was dropped, so `DEVIATIONS.md` carries choices, not losses.
 
 Evidence is a test name or a screenshot. Test files are under `web/src/`; screenshots under
-`docs/react-rewrite/screenshots/`. The suite is 87 tests (`npm run check`); the screenshots
+`docs/react-rewrite/screenshots/`. The suite is 115 tests (`npm run check`); the screenshots
 come from a Playwright walkthrough of the real `docker compose` stack against demo data.
 
 Shorthand for the test files:
@@ -33,8 +33,10 @@ Shorthand for the test files:
 | T4 | Ranked queue table (severity, priority 1dp, asset, window start UTC, threat class, status) | done | `monitor`: same test asserts the badge, `62.0`, `pump-02`, `2026-07-07 12:00:30`; `01-triage-light.png` |
 | T5 | Alert inspector (label format, rationale, conditional recommended action, score components) | done | `monitor`: asserts the option label `HIGH 62.0 — pump-02 @ 2026-07-07 12:00`, the rationale, the action and `asset_criticality`; `01-triage-light.png` |
 | T6 | Evidence table via `/alerts/{id}/detections` | done | `monitor`: same test; `01-triage-light.png` (method / lane / score / threshold / window start / end) |
-| T7 | Per-detection evidence collapsibles (non-empty `evidence` only) | done | `monitor`: same test clicks "stub_threshold — why it fired" and asserts the payload; `03-triage-evidence.png` |
+| T7 | Per-detection evidence collapsibles (non-empty `evidence` only) | done | `monitor`: same test clicks the disclosure and asserts the payload; `03-triage-evidence.png`. Named by `evidence.explanation` since ADR-0032 — see T9 |
 | T8 **(added)** | A count key absent from `/summary` renders 0, not blank | done | `monitor`: "renders a KPI the summary does not carry as 0, not as blank (T8)" |
+| T9 **(added)** | Evidence is named by what it found, not by which detector found it | done | `monitor`: "names each piece of evidence by what it found, not by which detector found it". Parity kept with Streamlit, which had the same defect: `tests/dashboard/test_app.py::TestTriage::test_evidence_is_named_by_what_it_found_not_by_which_detector_found_it` |
+| T10 **(added)** | `recommended_action` renders as a checklist; every MITRE technique the evidence cites is shown | done | `monitor`: "renders the unioned next steps as a checklist and lists every technique cited"; same Streamlit test |
 
 ## Monitor → Assets & telemetry
 
@@ -116,7 +118,7 @@ Shorthand for the test files:
 
 | ID | Capability | Status | Evidence |
 |----|-----------|--------|----------|
-| X1 | `web/` scaffold; `npm run check` green | done | `npm run check` = typecheck + eslint + 87 tests + build, exits 0 (output in the session transcript) |
+| X1 | `web/` scaffold; `npm run check` green | done | `npm run check` = typecheck + eslint + 115 tests + build, exits 0 (output in the session transcript) |
 | X2 | nginx + Vite dev proxy (large bodies, ≥120 s on `/pipeline/*`) | done | `web/nginx.conf.template` (64 MB body, 600 s read timeout) and `vite.config.ts` `server.proxy` mirroring both routes; verified live: `GET :8080/api/health` → `{"status":"ok"}` and `GET :8080/pipeline/eval/corpora` → the corpus list |
 | X3 | `web/Dockerfile` multi-stage + `dashboard-web` compose service on :8080 | done | `docker compose ps` shows `dashboard-web  Up  0.0.0.0:8080->80/tcp`; every screenshot was taken through it |
 | X4 | React counterparts of all old AppTest scenario families | done | seeded Triage incl. KPI values, seeded Assets, seeded Health, three empty states, unreachable-API, endpoint-failure-mid-page, contract-drift-mid-page — `monitor` + `errors`; plus the Compose and Evaluate families in `compose` + `eval` |

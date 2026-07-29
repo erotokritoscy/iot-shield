@@ -18,7 +18,7 @@ import streamlit as st
 from pydantic import ValidationError
 
 from iotshield.api.control import ModuleInfo, ParamInfo
-from iotshield.contracts import Asset, Lane, PrioritizedAlert
+from iotshield.contracts import Asset, DetectionResult, Lane, PrioritizedAlert
 from iotshield.dashboard.charts import (
     case_timeline,
     case_variance,
@@ -29,6 +29,7 @@ from iotshield.dashboard.charts import (
 )
 from iotshield.dashboard.client import ApiClient
 from iotshield.dashboard.control_client import ControlClient
+from iotshield.enrichment import Enrichment, MitreTechnique, action_steps
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV_FORMAT
 
 if TYPE_CHECKING:  # type-only: the runtime imports are deferred, see load_eval_report
@@ -90,6 +91,40 @@ def _alert_label(alert: PrioritizedAlert) -> str:
     )
 
 
+def _finding(detection: DetectionResult) -> str:
+    """What one detection is *called* — the sentence it carries, not the detector's name.
+
+    ``method`` used to be a good name by accident: one detector meant one kind of finding.
+    ADR-0032 D3 ends that deliberately (the port pins ``method`` to the adapter's lane, so
+    six rules on the flow lane all report ``rules:flow`` and the firing rule rides in
+    ``Enrichment.origin``), which left several rows on one alert differing only in score.
+    Labelling by the sentence every detection is required to carry (D7) fixes it for every
+    detector at once rather than special-casing ``rules:*``.
+
+    Falls back to the method: the law binds what we *produce*, and a store populated before
+    ADR-0032 holds detections that predate it.
+    """
+    explanation = detection.evidence.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        return explanation.strip()
+    return detection.method
+
+
+def _techniques(detections: Sequence[DetectionResult]) -> list[MitreTechnique]:
+    """Every technique cited across an alert's detections, deduplicated, in the order met.
+
+    A summary of what is already on screen, not a re-derivation of the server's judgment:
+    promotion picks one winning claim by precedence and that stays in ``alert/_correlate``,
+    while this only answers "which techniques does this alert implicate".
+    """
+    seen: dict[str, MitreTechnique] = {}
+    for detection in detections:
+        enrichment = Enrichment.from_detection(detection)
+        for technique in enrichment.mitre if enrichment else ():
+            seen.setdefault(technique.technique_id, technique)
+    return list(seen.values())
+
+
 def triage_page(client: ApiClient) -> None:
     st.title("Alert triage")
     summary = client.summary()
@@ -126,13 +161,25 @@ def triage_page(client: ApiClient) -> None:
 
     selected = st.selectbox("Inspect alert", alerts, format_func=_alert_label)
     st.markdown(f"**Rationale:** {selected.rationale}")
-    if selected.recommended_action:
-        st.markdown(f"**Recommended action:** {selected.recommended_action}")
+    evidence = client.alert_detections(selected.alert_id)
+    steps = action_steps(selected.recommended_action)
+    if steps:
+        # A list, because the field IS one: up to six steps unioned from every rule that
+        # fired (ADR-0032 D5), which an analyst works through one at a time. The contract
+        # carries them joined into one string, so `action_steps` recovers what
+        # `Enrichment.action_text` joined; a single-step fallback is a one-item list.
+        st.markdown("**Recommended action:**")
+        st.markdown("\n".join(f"- {step}" for step in steps))
+    techniques = _techniques(evidence)
+    if techniques:
+        # `threat_class` above carries the winning technique only, and without its tactic.
+        st.markdown(
+            "**MITRE ATT&CK:** " + " · ".join(f"{t.tactic} — {t.label()}" for t in techniques)
+        )
     st.markdown("**Score components** (the explainability receipt):")
     st.table(pd.DataFrame([selected.score_components]))
 
     st.markdown("**Evidence** — the detections behind this alert:")
-    evidence = client.alert_detections(selected.alert_id)
     st.dataframe(
         pd.DataFrame(
             {
@@ -142,6 +189,7 @@ def triage_page(client: ApiClient) -> None:
                 "threshold": [d.threshold for d in evidence],
                 "window start": [d.window_start for d in evidence],
                 "window end": [d.window_end for d in evidence],
+                "finding": [_finding(d) for d in evidence],
             }
         ),
         hide_index=True,
@@ -151,7 +199,7 @@ def triage_page(client: ApiClient) -> None:
     # score. It reached the API but nothing rendered it, so the analyst never saw it.
     for detection in evidence:
         if detection.evidence:
-            with st.expander(f"{detection.method} — why it fired"):
+            with st.expander(f"{_finding(detection)} — {detection.method}"):
                 st.json(detection.evidence)
 
 
@@ -196,6 +244,10 @@ def assets_page(client: ApiClient) -> None:
                     "score": [d.score for d in detections],
                     "threshold": [d.threshold for d in detections],
                     "window start": [d.window_start for d in detections],
+                    # Last, so the numeric block stays adjacent, but present: `method` no
+                    # longer identifies a finding, so without this the table lists several
+                    # rows that differ only in score.
+                    "finding": [_finding(d) for d in detections],
                 }
             ),
             hide_index=True,

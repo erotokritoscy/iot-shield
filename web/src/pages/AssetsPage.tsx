@@ -4,6 +4,7 @@ import { Field, Select } from "@/components/ui/controls";
 import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { telemetryTimeline } from "@/charts/specs";
+import { explanationOf } from "@/lib/evidence";
 import { formatNumber, formatUtc } from "@/lib/format";
 import type { Asset, DetectionResult } from "@/lib/api/types";
 import { useAssets, useDetections, useEvents } from "@/lib/queries";
@@ -24,6 +25,14 @@ const detectionColumns: Column<DetectionResult>[] = [
   { key: "score", header: "score", align: "right", render: (d) => formatNumber(d.score, 4) },
   { key: "threshold", header: "threshold", align: "right", render: (d) => formatNumber(d.threshold, 4) },
   { key: "window_start", header: "window start", render: (d) => formatUtc(d.window_start) },
+  // Last, so the numeric block stays adjacent and readable, but present: `method` no longer
+  // identifies a finding (ADR-0032 D3 — six rules on one lane all report `rules:flow`), and
+  // without this the table lists several rows that differ only in score.
+  {
+    key: "finding",
+    header: "finding",
+    render: (d) => explanationOf(d) ?? <span className="text-muted">—</span>,
+  },
 ];
 
 function AssetDetail({ asset }: { readonly asset: Asset }) {

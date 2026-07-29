@@ -11,6 +11,7 @@
  * Every builder returns `null` for "there is nothing to draw", exactly as the Python ones
  * returned `None`, so the caller renders its empty state instead of an axis with no marks.
  */
+import { explanationOf } from "@/lib/evidence";
 import { utcInstant } from "@/lib/format";
 import type { DetectionResult, NormalizedEvent, PrioritizedAlert } from "@/lib/api/types";
 import { SEVERITY_ORDER } from "@/lib/api/types";
@@ -117,13 +118,22 @@ export function telemetryTimeline(
           start: utcInstant(item.window_start),
           end: utcInstant(item.window_end),
           method: item.method,
+          // Hovering a band asked "what is this?" and got a detector name, which since
+          // ADR-0032 D3 no longer answers it: two rule bands on one lane are both
+          // `rules:flow`. The sentence every detection carries does answer it.
+          finding: explanationOf(item) ?? item.method,
         })),
       },
       mark: { type: "rect", color: palette.critical, opacity: 0.15 },
       encoding: {
         x: utcX("start"),
         x2: { field: "end" },
-        tooltip: [utcTip("start"), utcTip("end"), { field: "method", type: "nominal" }],
+        tooltip: [
+          utcTip("start"),
+          utcTip("end"),
+          { field: "finding", type: "nominal" },
+          { field: "method", type: "nominal" },
+        ],
       },
     });
   }
@@ -133,6 +143,7 @@ export function telemetryTimeline(
         values: points.map((item) => ({
           timestamp: utcInstant(item.window_start),
           method: item.method,
+          finding: explanationOf(item) ?? item.method,
           score: item.score,
         })),
       },
@@ -141,6 +152,7 @@ export function telemetryTimeline(
         x: utcX("timestamp"),
         tooltip: [
           utcTip("timestamp"),
+          { field: "finding", type: "nominal" },
           { field: "method", type: "nominal" },
           { field: "score", type: "quantitative" },
         ],

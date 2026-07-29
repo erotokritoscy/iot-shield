@@ -52,9 +52,77 @@ export const detection = {
   window_start: at(30),
   window_end: at(30),
   event_kind: "point",
-  evidence: { peak: 96.0, metric: "Pressure" },
+  // `explanation` is on every detection because ADR-0032 D7 makes it a port law, enforced by
+  // `tests/ports/test_detector_port.py`. The fixture carries one so the mocked world matches
+  // what the real stack now produces; the rest of evidence stays per-detector.
+  evidence: {
+    explanation: "Pressure 96 is above the configured threshold of 80",
+    peak: 96.0,
+    metric: "Pressure",
+  },
   metadata: {},
 };
+
+/**
+ * Two rule detections on ONE lane, which is the shape `method` cannot name.
+ *
+ * The Detector port gives an adapter one lane and the port suite pins `detection.method` to
+ * it, so every rule on the flow lane reports `rules:flow` and the firing rule rides in
+ * `Enrichment.origin` (ADR-0032 D3). Both rows below are therefore `rules:flow`, exactly as
+ * `config/demo_rules.yaml` produces — the gateway alert there renders three of them.
+ */
+export const ruleDetections = [
+  {
+    ...detection,
+    detection_id: "33333333-3333-3333-3333-333333333333",
+    lane: "flow",
+    method: "rules:flow",
+    score: 2.55,
+    threshold: 1.0,
+    evidence: {
+      explanation: "The device originated a connection to port 23 (telnet).",
+      rule_id: "telnet-outbound-propagation",
+      matched_events: 6,
+      enrichment: {
+        threat_class: "Remote Services (T1021)",
+        source: "rule",
+        origin: "rule:telnet-outbound-propagation",
+        is_heuristic: false,
+        mitre: [
+          { tactic: "Lateral Movement", technique: "Remote Services", technique_id: "T1021" },
+        ],
+        suggested_actions: ["Isolate the device.", "Block outbound telnet."],
+      },
+    },
+  },
+  {
+    ...detection,
+    detection_id: "44444444-4444-4444-4444-444444444444",
+    lane: "flow",
+    method: "rules:flow",
+    score: 1.7,
+    threshold: 1.0,
+    evidence: {
+      explanation: "Outbound bytes on one flow exceed 10000.",
+      rule_id: "high-upload-volume",
+      matched_events: 1,
+      enrichment: {
+        threat_class: "Exfiltration Over C2 Channel (T1041)",
+        source: "rule",
+        origin: "rule:high-upload-volume",
+        is_heuristic: false,
+        mitre: [
+          {
+            tactic: "Exfiltration",
+            technique: "Exfiltration Over C2 Channel",
+            technique_id: "T1041",
+          },
+        ],
+        suggested_actions: ["Review the destination.", "Investigate possible exfiltration."],
+      },
+    },
+  },
+];
 
 export const alert = {
   alert_id: "22222222-2222-2222-2222-222222222222",

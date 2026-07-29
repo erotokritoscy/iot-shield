@@ -23,6 +23,7 @@ from iotshield.contracts import (
 )
 from iotshield.dashboard.client import ApiClient
 from iotshield.dashboard.control_client import ControlClient
+from iotshield.enrichment import EVIDENCE_KEY, Enrichment, EnrichmentSource, MitreTechnique
 from iotshield.storage import create_schema, make_engine, make_session_factory, repository
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -134,3 +135,74 @@ def eval_control_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cont
     engine = make_engine(f"sqlite:///{(tmp_path / 'eval.db').as_posix()}")
     create_schema(engine)
     return ControlClient(TestClient(create_control_app(engine)))
+
+
+@pytest.fixture()
+def rule_seeded(tmp_path: Path) -> ApiClient:
+    """One alert whose evidence is two rules on ONE lane — the shape `method` cannot name.
+
+    The Detector port gives an adapter one lane and the port suite pins `detection.method`
+    to it, so every rule on the flow lane reports `rules:flow` and the firing rule rides in
+    `Enrichment.origin` (ADR-0032 D3). Both detections below are therefore `rules:flow`,
+    exactly as `config/demo_rules.yaml` produces.
+    """
+    client, engine = _client_for(tmp_path)
+    telnet = Enrichment(
+        threat_class="Remote Services (T1021)",
+        source=EnrichmentSource.RULE,
+        origin="rule:telnet-outbound-propagation",
+        mitre=(
+            MitreTechnique(
+                tactic="Lateral Movement", technique="Remote Services", technique_id="T1021"
+            ),
+        ),
+        suggested_actions=("Isolate the device.", "Block outbound telnet."),
+    )
+    upload = Enrichment(
+        threat_class="Exfiltration Over C2 Channel (T1041)",
+        source=EnrichmentSource.RULE,
+        origin="rule:high-upload-volume",
+        mitre=(
+            MitreTechnique(
+                tactic="Exfiltration",
+                technique="Exfiltration Over C2 Channel",
+                technique_id="T1041",
+            ),
+        ),
+        suggested_actions=("Review the destination.",),
+    )
+    # Distinct instants, because `get_detections_by_ids` orders by (window_start,
+    # detection_id) — sharing one would leave a random UUID deciding the row order.
+    detections = [
+        DetectionResult(
+            asset_id="cam-07",
+            window_start=T0 + timedelta(minutes=offset),
+            window_end=T0 + timedelta(minutes=offset),
+            lane=Lane.FLOW,
+            method="rules:flow",
+            score=score,
+            threshold=1.0,
+            evidence={"explanation": explanation, EVIDENCE_KEY: enrichment.to_evidence()},
+        )
+        for offset, explanation, score, enrichment in [
+            (0, "The device originated a connection to port 23 (telnet).", 2.55, telnet),
+            (1, "Outbound bytes on one flow exceed 10000.", 1.70, upload),
+        ]
+    ]
+    promoted = telnet.with_union_of([telnet, upload])
+    alert = PrioritizedAlert(
+        asset_id="cam-07",
+        window_start=T0,
+        window_end=T0,
+        severity=AlertSeverity.CRITICAL,
+        priority_score=73.9,
+        threat_class=promoted.threat_class,
+        rationale="two rules fired on one device",
+        score_components={"severity": 2.55},
+        detection_ids=[d.detection_id for d in detections],
+        recommended_action=promoted.action_text(),
+    )
+    with make_session_factory(engine)() as session, session.begin():
+        repository.insert_detections(session, detections)
+        repository.insert_alerts(session, [alert])
+    return client

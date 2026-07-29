@@ -242,7 +242,10 @@ describe("tooltips (V3)", () => {
     );
     const layer = timeline?.["layer"] as { encoding: unknown }[];
     expect(fields(layer[0]?.encoding)).toEqual(["timestamp", "value", "metric"]);
-    expect(fields(layer[1]?.encoding)).toEqual(["start", "end", "method"]);
+    // `finding` before `method`: hovering a detection band asks "what is this?", and since
+    // ADR-0032 D3 the detector's name no longer answers it (two rule bands on one lane are
+    // both `rules:flow`). The sentence every detection carries does.
+    expect(fields(layer[1]?.encoding)).toEqual(["start", "end", "finding", "method"]);
 
     expect(fields(specScores([{ spec: "a", event_f1: 1 }], palette)?.["encoding"])).toEqual([
       "spec",

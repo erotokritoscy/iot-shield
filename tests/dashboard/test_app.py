@@ -49,6 +49,42 @@ class TestTriage:
         at = run_app(monkeypatch, empty_client)
         assert at.info  # "no alerts yet" guidance, not a stack trace
 
+    def test_evidence_is_named_by_what_it_found_not_by_which_detector_found_it(
+        self, monkeypatch: pytest.MonkeyPatch, rule_seeded: ApiClient
+    ) -> None:
+        """The regression ADR-0032 D3 opened, and the two fields that were invisible.
+
+        Six rules share one ``method``, so a UI that names evidence by method renders
+        several identical headings for genuinely different findings — three of them on
+        `config/demo_rules.yaml`'s gateway alert. The fix is the sentence D7 requires of
+        every detection, which is also what makes this assertable at all.
+        """
+        at = run_app(monkeypatch, rule_seeded)
+        rendered = " ".join(str(md.value) for md in at.markdown)
+
+        # Both rows report `rules:flow`, so the method column cannot tell them apart...
+        evidence = at.dataframe[1].value  # [0] is the ranked queue
+        assert list(evidence["method"]) == ["rules:flow", "rules:flow"]
+        # ...and the finding column can. The column, not the frame's repr: these sentences
+        # are long enough that pandas elides them, which would pass on truncated text.
+        assert list(evidence["finding"]) == [
+            "The device originated a connection to port 23 (telnet).",
+            "Outbound bytes on one flow exceed 10000.",
+        ]
+        # The same sentence names each disclosure, which is what the analyst clicks.
+        assert [e.label for e in at.expander] == [
+            "The device originated a connection to port 23 (telnet). — rules:flow",
+            "Outbound bytes on one flow exceed 10000. — rules:flow",
+        ]
+
+        # The unioned next steps are a checklist, not a paragraph (D5).
+        assert "- Isolate the device." in rendered
+        assert "- Review the destination." in rendered
+
+        # Every technique the evidence cites, tactic included; `threat_class` carries one.
+        assert "Lateral Movement — Remote Services (T1021)" in rendered
+        assert "Exfiltration — Exfiltration Over C2 Channel (T1041)" in rendered
+
 
 class TestAssets:
     def test_seeded_renders_timeline_and_detections(

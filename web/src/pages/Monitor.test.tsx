@@ -124,12 +124,69 @@ describe("Triage", () => {
     expect(await screen.findByText("asset_criticality")).toBeInTheDocument();
 
     // The evidence table, and the per-detection payload that makes a finding actionable.
-    expect(await screen.findByText("stub_threshold")).toBeInTheDocument();
+    // The disclosure is named by the sentence the detection carries, not by its method —
+    // which now appears twice, once as the table's cell and once beside that heading.
+    expect(await screen.findAllByText("stub_threshold")).toHaveLength(2);
     const disclosure = await screen.findByRole("button", {
-      name: /stub_threshold — why it fired/,
+      name: /Pressure 96 is above the configured threshold of 80/,
     });
     await userEvent.click(disclosure);
     expect(await screen.findByText(/"peak": 96/)).toBeInTheDocument();
+  });
+
+  it("names each piece of evidence by what it found, not by which detector found it", async () => {
+    // The regression ADR-0032 D3 opened: six rules share one `method`, so labelling the
+    // disclosures by method rendered several identical "rules:flow — why it fired" headings
+    // for genuinely different findings. `config/demo_rules.yaml`'s gateway alert shows three.
+    server.use(
+      http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json(seed.ruleDetections)),
+    );
+    renderApp("/");
+
+    for (const finding of [
+      "The device originated a connection to port 23 (telnet).",
+      "Outbound bytes on one flow exceed 10000.",
+    ]) {
+      // A function matcher, not a RegExp: these sentences contain parentheses and periods,
+      // which a `new RegExp(finding)` would silently reinterpret as a group and a wildcard.
+      expect(
+        await screen.findByRole("button", { name: (name) => name.startsWith(finding) }),
+      ).toBeInTheDocument();
+    }
+    // The method is still shown — it is now the secondary fact (which detector), which is
+    // exactly why it appears twice while the two headings differ.
+    expect(await screen.findAllByText("rules:flow")).toHaveLength(4); // 2 table cells + 2 labels
+  });
+
+  it("renders the unioned next steps as a checklist and lists every technique cited", async () => {
+    // `recommended_action` is one string holding up to six imperatives unioned from every
+    // rule that fired (ADR-0032 D5); as a paragraph it is a wall nobody works through. The
+    // MITRE tactics existed only inside the raw JSON dump.
+    const alert = {
+      ...seed.alert,
+      threat_class: "Remote Services (T1021)",
+      recommended_action: "Isolate the device. Block outbound telnet. Review the destination.",
+    };
+    server.use(
+      http.get(`${API}/alerts`, () => HttpResponse.json([alert])),
+      http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json(seed.ruleDetections)),
+    );
+    renderApp("/");
+
+    const actions = await screen.findByRole("list", { name: "Recommended action steps" });
+    expect(within(actions).getAllByRole("listitem").map((step) => step.textContent)).toEqual([
+      "Isolate the device.",
+      "Block outbound telnet.",
+      "Review the destination.",
+    ]);
+
+    // Every technique the alert's evidence cites, tactic included — `threat_class` carries
+    // only the winning one, and the rest reached the UI as raw JSON or not at all.
+    const techniques = await screen.findByRole("list", { name: "MITRE ATT&CK techniques" });
+    expect(within(techniques).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "Lateral Movement — Remote Services (T1021)",
+      "Exfiltration — Exfiltration Over C2 Channel (T1041)",
+    ]);
   });
 
   it("draws the severity chart with its caption", async () => {

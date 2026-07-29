@@ -48,6 +48,7 @@ is wrong an analyst stops trusting the whole column.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
@@ -91,6 +92,39 @@ order is a wire vocabulary someone may one day reorder for an unrelated reason. 
 one from the other would let that edit silently re-rank the queue."""
 
 _MITRE_FIELDS = ("tactic", "technique", "technique_id")
+
+_STEP_BOUNDARY = re.compile(r"\.\s+")
+
+
+def action_steps(text: str | None) -> list[str]:
+    """Split a ``recommended_action`` back into the steps ``action_text`` joined.
+
+    The **inverse of** ``Enrichment.action_text``, and written beside it so the pair cannot
+    drift. It exists because ``PrioritizedAlert.recommended_action`` is a single ``str``
+    while the thing it holds is a *checklist*: up to six steps unioned from every rule that
+    fired on the alert (ADR-0032 D5), which an analyst works through one at a time. Rendered
+    as one paragraph — which is what both dashboards did — six imperatives from four
+    different rules read as an undifferentiated wall, and the field stops being a next step.
+
+    Recovering the list rather than carrying it keeps this a *display* concern: the contract
+    is untouched, so no stored alert, API schema or generated client moves. The price is that
+    the split is a claim about our own generated text, which is why a test round-trips every
+    shipped rule and preset through the pair. That turns a guess into a checked property: an
+    action written with a mid-sentence ``". "`` fails the test rather than silently splitting
+    into two half-steps in front of an analyst.
+
+    Splits after a period followed by whitespace, so text with no such boundary — the
+    generated fallback, ``"Inspect pump-02 around ...; review flow_burst evidence."`` — comes
+    back as the single step it already is. A trailing step that did not end in a period keeps
+    not ending in one: nothing here invents punctuation.
+    """
+    if not text:
+        return []
+    parts = _STEP_BOUNDARY.split(text.strip())
+    # The period is the delimiter, so it belongs to the step it terminated — every part but
+    # the last had one consumed. The last kept whatever it had.
+    steps = [f"{part}." for part in parts[:-1]] + parts[-1:]
+    return [stripped for step in steps if (stripped := step.strip())]
 
 
 class EnrichmentFieldError(ValueError):
@@ -175,7 +209,11 @@ class Enrichment:
         return _PRECEDENCE[self.source]
 
     def action_text(self) -> str | None:
-        """The actions as one paragraph — ``PrioritizedAlert.recommended_action``'s shape."""
+        """The actions as one paragraph — ``PrioritizedAlert.recommended_action``'s shape.
+
+        ``action_steps`` (module level) is the inverse, and is what a UI should render:
+        the contract carries one string, but the thing is a checklist.
+        """
         return " ".join(self.suggested_actions) if self.suggested_actions else None
 
     def rationale_clause(self) -> str:
