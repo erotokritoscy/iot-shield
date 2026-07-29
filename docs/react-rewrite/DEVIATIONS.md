@@ -162,14 +162,19 @@ artifact loader and the harness alike. The proposed fix (coerce per item, reusin
 `sweepValues`) would have *introduced* a bug: `channels` is `tuple[str, ...]`, so a channel
 named `"1"` would have been sent as the integer `1` and refused. Nothing to fix.
 
-## Cannot be fixed here — H1 (read-only Python)
+## Was blocked by H1 (read-only Python) — since fixed
 
-`api/control.py: _literal_choices` does not unwrap `X | None` the way `_type_name` does, so
-the `meter` normalizer's `meter_type` is published as `type: "Literal", choices: null` and the
-UI renders a **free-text box for a closed two-value vocabulary**. `passthrough.lane`, declared
-without `| None`, works. This is the exact failure ADR-0023 D9 exists to prevent, and it is a
-one-line fix in the Pipeline API. Reported, not worked around: guessing the vocabulary
+`api/control.py: _literal_choices` did not unwrap `X | None` the way `_type_name` does, so
+the `meter` normalizer's `meter_type` was published as `type: "Literal", choices: null` and
+the UI rendered a **free-text box for a closed two-value vocabulary**. `passthrough.lane`,
+declared without `| None`, escaped it. This is the exact failure ADR-0023 D9 exists to
+prevent. It was reported rather than worked around, because guessing the vocabulary
 client-side would violate H3 and H6.
+
+Fixed on `main` once the rewrite's read-only constraint no longer applied: both describers
+now share one unwrapping, which returns a `Literal` untouched so the one-member
+`Literal["water"]` is not mangled into the string `"water"`. Pinned by
+`tests/api/test_control.py: test_an_optional_closed_vocabulary_still_reports_its_choices`.
 
 ## Decisions worth a second look
 
