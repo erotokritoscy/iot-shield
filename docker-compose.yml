@@ -1,11 +1,15 @@
-# Full-compose MVP: Postgres + a one-shot schema init + the read API + the
-# dashboard, plus the pipeline runner as an on-demand job (profile "jobs").
+# Full-compose MVP: Postgres + a one-shot schema init + the read API + both
+# dashboards, plus the pipeline runner as an on-demand job (profile "jobs").
 #
-#   docker compose up                 # postgres -> init -> api -> dashboard
+#   docker compose up                 # postgres -> init -> APIs -> dashboards
 #   docker compose run --rm runner    # populate the DB (uses config/demo.yaml)
 #
+# Two dashboards during the changeover (ADR-0031): the React SPA on :8080
+# (`dashboard-web`) and the Streamlit app on :8501 (`dashboard`), both pure
+# clients of the same two APIs.
+#
 # Services address each other by service name on the default network: the API
-# and runner reach Postgres at host `postgres`, the dashboard reaches the API at
+# and runner reach Postgres at host `postgres`, the dashboards reach the API at
 # host `api`. Credentials come from .env (see .env.example); the defaults below
 # make the stack run out of the box for local use.
 name: iotshield
@@ -114,11 +118,34 @@ services:
     environment:
       IOTSHIELD_API_URL: http://api:8000
       IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
-      # Shows the Evaluate mode. Paired with IOTSHIELD_EVAL_API above: this flag only
-      # surfaces the UI, the API flag is what actually serves benchmarks.
+      # Shows the Streamlit Evaluate mode. Paired with IOTSHIELD_EVAL_API above: this flag
+      # only surfaces the UI, the API flag is what actually serves benchmarks. The React
+      # dashboard below needs no equivalent — it *probes* /eval/corpora and hides the mode
+      # when the router is absent, so one flag decides the plane end to end (ADR-0031 D5).
       IOTSHIELD_EVAL_UI: "1"
     ports:
       - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+      pipeline-api:
+        condition: service_healthy
+
+  # The React dashboard (ADR-0031): the same three planes as `dashboard`, as a single-page
+  # app served by nginx, which also reverse-proxies /api and /pipeline so the browser makes
+  # only same-origin requests — which is what keeps both FastAPI apps free of CORS, the
+  # stance they deliberately take. Coexists with the Streamlit service during the changeover;
+  # retiring 8501 is a separate, deliberate change.
+  dashboard-web:
+    build:
+      context: ./web
+    image: iotshield-web
+    environment:
+      # Proxy targets, not frontend config: the bundle only ever calls relative paths.
+      IOTSHIELD_API_URL: http://api:8000
+      IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
+    ports:
+      - "8080:80"
     depends_on:
       api:
         condition: service_healthy

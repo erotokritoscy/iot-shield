@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — the single source (brief §7). Every colour in the app is one of these,
+ * consumed through the Tailwind config; a component never names a hex value. The ramp is
+ * the warm gray of `dashboard/charts.py` (paper #fcfcfb, grid #e1e0d9, muted #898781), the
+ * accent is its series blue #2a78d6 and the status red is its reserved critical #d03b3b —
+ * so a chart and the page around it cannot drift apart.
+ *
+ * Dark theme is the same ramp inverted, with the blue and red *re-chosen* rather than
+ * reused: #2a78d6 on a near-black paper falls under WCAG AA, and a legible chart in both
+ * themes is a completion requirement (X6). The chart palette follows the same split.
+ */
+:root,
+:root[data-theme="light"] {
+  --c-paper: 252 252 251;
+  --c-surface: 255 255 255;
+  --c-raised: 247 246 243;
+  --c-line: 225 224 217;
+  --c-grid: 225 224 217;
+  --c-muted: 137 135 129;
+  --c-dim: 106 104 98;
+  --c-ink: 26 25 22;
+
+  --c-accent: 42 120 214;
+  --c-accent-ink: 255 255 255;
+  --c-accent-soft: 232 240 251;
+
+  --c-critical: 208 59 59;
+  --c-warning: 166 100 12;
+  --c-success: 39 111 71;
+  --c-info: 59 110 168;
+
+  --c-sev-low: 93 112 133;
+  --c-sev-medium: 168 106 23;
+  --c-sev-high: 194 96 15;
+  --c-sev-critical: 208 59 59;
+  --c-sev-emergency: 122 20 23;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --c-paper: 22 21 19;
+  --c-surface: 29 28 25;
+  --c-raised: 38 36 32;
+  --c-line: 56 54 48;
+  --c-grid: 56 54 48;
+  --c-muted: 141 138 130;
+  --c-dim: 168 165 156;
+  --c-ink: 241 240 235;
+
+  --c-accent: 90 160 240;
+  --c-accent-ink: 10 18 28;
+  --c-accent-soft: 25 41 61;
+
+  --c-critical: 230 108 108;
+  --c-warning: 214 156 62;
+  --c-success: 91 176 126;
+  --c-info: 122 168 224;
+
+  --c-sev-low: 157 176 198;
+  --c-sev-medium: 224 174 90;
+  --c-sev-high: 239 148 87;
+  --c-sev-critical: 240 122 122;
+  --c-sev-emergency: 224 85 92;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: rgb(var(--c-line));
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-family:
+      Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Dense tables want tabular figures so columns of numbers line up (brief §7). */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-1 ring-offset-paper;
+  }
+}
+
+@layer components {
+  .field-label {
+    @apply mb-1 block text-xs font-medium text-dim;
+  }
+
+  /* Native controls, styled to the token ramp. Native rather than a JS-driven listbox so
+     keyboard, mobile and assistive behaviour come from the platform. */
+  .control {
+    @apply block w-full rounded border border-line bg-surface px-2.5 py-1.5 text-sm text-ink
+      shadow-none transition-colors placeholder:text-muted hover:border-muted
+      focus:border-accent disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .caption {
+    @apply text-xs leading-relaxed text-muted;
+  }
+}

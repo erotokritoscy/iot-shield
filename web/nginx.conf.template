@@ -1,0 +1,63 @@
+# The same-origin server (D1/X2).
+#
+# The Streamlit dashboard called both APIs server-to-server, so no browser cross-origin
+# request ever occurred and both FastAPI apps deliberately ship no CORS (`api/app.py`'s
+# docstring says so). A SPA moves those calls into the browser — so rather than weakening the
+# APIs, we put the SPA and the APIs behind ONE origin. The bundle then only ever asks for
+# relative paths, which is also what removes per-environment API URLs from the frontend: the
+# targets below are the same `IOTSHIELD_API_URL` / `IOTSHIELD_PIPELINE_API_URL` the old
+# dashboard read, now consumed here.
+#
+# `${VAR}` is substituted by the nginx image's entrypoint (envsubst over the *environment*),
+# so nginx's own `$uri` and `$host` pass through untouched.
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Run inputs travel inline as JSON, and an operator uploading a Zeek conn.log is an
+    # ordinary case — the default 1 MB would refuse it as a 413 with no useful message.
+    client_max_body_size 64m;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    location /api/ {
+        proxy_pass ${IOTSHIELD_API_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /pipeline/ {
+        proxy_pass ${IOTSHIELD_PIPELINE_API_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Model detectors and benchmarks take real time; the old ControlClient allowed 120 s
+        # and a benchmark over a fetched corpus can exceed it. A proxy that gives up sooner
+        # than the work takes turns a slow answer into a wrong one.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    # A single-page app: every other path is a client-side route, so serve the shell and let
+    # the router decide. Without this, a refresh on /compose is a 404.
+    #
+    # `absolute_redirect off` because nginx builds a directory redirect from its own
+    # `server_name` and listen port, which behind a published container port is an address
+    # the browser cannot reach — the failure reads as "connection refused" on a service that
+    # is plainly running.
+    absolute_redirect off;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

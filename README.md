@@ -12,17 +12,19 @@ graduate-student modules as swappable adapters behind frozen data contracts.
 The whole stack on real Postgres, reproducibly, in two commands:
 
 ```
-docker compose up -d           # postgres -> init -> read API + Pipeline API -> dashboard
+docker compose up -d           # postgres -> init -> read API + Pipeline API -> dashboards
 docker compose run --rm runner # run the demo pipeline to populate the database
 ```
 
-Then open the dashboard at http://localhost:8501, the read API at
+Then open the dashboard at http://localhost:8080, the read API at
 http://localhost:8000/docs, and the write-side **Pipeline API** at
 http://localhost:8100/docs (compose a pipeline and trigger runs — also driven from
-the dashboard's "Compose & run" page). Services find each other by name on the
-compose network (the APIs reach Postgres at `postgres`, the dashboard reaches them
-at `api` and `pipeline-api`); credentials come from `.env` (copy `.env.example`),
-with defaults that run out of the box. `docker compose down -v` tears it all down,
+the dashboard's "Compose & run" page). The original Streamlit dashboard is still
+served at http://localhost:8501 during the changeover (ADR-0031): both are pure
+clients of the same two APIs. Services find each other by name on the compose
+network (the APIs reach Postgres at `postgres`, the dashboards reach them at `api`
+and `pipeline-api`); credentials come from `.env` (copy `.env.example`), with
+defaults that run out of the box. `docker compose down -v` tears it all down,
 volume included.
 
 The `runner` is a job, not a long-lived service — it runs once and exits, so it
@@ -179,18 +181,35 @@ write-free and independently scalable.
 
 ## Open the dashboard
 
+The dashboard is a React single-page app in `web/`, served by nginx in compose (ADR-0031).
+For development, with both APIs already running on their default ports:
+
+```
+cd web
+npm install
+npm run dev      # http://localhost:5173, proxying /api and /pipeline to the two APIs
+npm run check    # typecheck + lint + test + build — run before considering a change done
+npm run gen:types  # regenerate the TS view of both APIs after changing either one
+```
+
+The dev server proxies the same two paths nginx does, so the app only ever calls relative
+URLs and there is no per-environment API base to configure. Point the proxy elsewhere with
+`IOTSHIELD_API_URL` / `IOTSHIELD_PIPELINE_API_URL`, the same variables compose feeds nginx.
+
+A left sidebar groups the views by plane. **Monitor** holds Triage (ranked alert queue +
+drill-down to each detection's evidence), Assets & telemetry (per-asset timeline plus an
+all-lane detections table), and Data health (counts + the malformed-input audit);
+**Operate** is Compose & run (pick modules, validate the chain, trigger a run against the
+Pipeline API — results then appear under Triage); **Evaluate** runs benchmarks and
+hyperparameter sweeps, and appears only when the deployment serves them (see below).
+
+The original Streamlit dashboard is unchanged and still runnable:
+
 ```
 $env:IOTSHIELD_API_URL = "http://127.0.0.1:8000"            # read API (default)
 $env:IOTSHIELD_PIPELINE_API_URL = "http://127.0.0.1:8100"   # Pipeline API (default)
 uv run streamlit run src/iotshield/dashboard/streamlit_app.py
 ```
-
-A sidebar **Mode** picks the plane — Monitor, Operate, and (when the deployment enables it)
-Evaluate. Monitor holds Triage (ranked alert queue + drill-down to each detection's
-evidence), Assets & telemetry (per-asset timeline plus an all-lane detections table), and
-Data health (counts + the malformed-input audit); Operate is **Compose & run** (pick
-modules, validate the chain, trigger a run against the Pipeline API — results then appear
-under Triage); Evaluate runs benchmarks and hyperparameter sweeps.
 
 ## Benchmark detectors against labelled data
 
@@ -298,12 +317,16 @@ aligned to the features its own hyperparameters produced.
 
 ### In the dashboard
 
-Set `IOTSHIELD_EVAL_API=1` on the Pipeline API and `IOTSHIELD_EVAL_UI=1` on the dashboard
-(compose sets both) and an **Evaluate** mode appears: pick a corpus and detectors, set each
-detector's hyperparameters (or sweep one), run a benchmark, and read it as charts — a
-head-to-head bar, or a **curve** when you swept a parameter, plus a per-case strip showing
-consistency and a timeline drawing truth against detections and alerts on one clock. Both
-flags are off by default; it is a research instrument, not a product feature.
+Set `IOTSHIELD_EVAL_API=1` on the Pipeline API (compose does) and an **Evaluate** mode
+appears: pick a corpus and either run a committed `config/bench/*.yaml` verbatim or compose
+your own entries, set each detector's hyperparameters (or sweep one), run a benchmark, and
+read it as charts — a head-to-head bar, or a **curve** when you swept a parameter, plus a
+per-case strip showing consistency and a timeline drawing truth against detections and
+alerts on one clock. It is off by default: a research instrument, not a product feature.
+
+One flag, not two. Without `IOTSHIELD_EVAL_API` the `/eval` router is never registered, so
+the React dashboard *probes* for it and hides the mode when it is absent (ADR-0031 D5); the
+Streamlit dashboard still needs its own `IOTSHIELD_EVAL_UI=1`, which compose also sets.
 
 See `CLAUDE.md` for the developer guide and `docs/adr/` for architecture decisions.
 Reference student modules live outside this repo in `../reference/` (read-only).
