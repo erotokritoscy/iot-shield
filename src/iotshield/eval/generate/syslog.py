@@ -160,6 +160,7 @@ class Rfc5424Renderer:
     """
 
     lane = Lane.LOG
+    payload = None
     source_format = SOURCE_FORMAT
 
     def header(self) -> tuple[str, ...]:

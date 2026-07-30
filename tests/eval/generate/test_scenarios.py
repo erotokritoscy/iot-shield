@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from iotshield.contracts import Lane
-from iotshield.eval import CaseReport, evaluate, load_bundle, write_bundle
+from iotshield.eval import CaseReport, FitProtocol, evaluate, load_bundle, write_bundle
 from iotshield.eval.corpus import DEFAULT_CORPUS_ROOT
 from iotshield.eval.generate import SCENARIOS
 from iotshield.eval.generate.scenarios import CAMERA, GATEWAY, SERVER
@@ -368,3 +368,72 @@ class TestCorroborationIsMeasurable:
     @pytest.mark.parametrize("path", TRIMODAL_ARMS)
     def test_both_arms_declare_no_assets(self, path: Path) -> None:
         assert not load_spec(path).assets
+
+
+METER_SPEC = Path("config/bench/meter.yaml")
+
+
+class TestMeterFleetDiscriminates:
+    """The behavioural half of ``generate.meter.CALIBRATION``, and why it may name no param.
+
+    Every other lane quotes its fault magnitudes against a detector's *registered default*, and
+    a meta-test pins the two together. ``meter_iforest`` has none: it fits its threshold to a
+    false-alarm budget on each meter's own history, so its boundary is quoted in units the
+    behaviour owns — multiples of what this hour of the week normally draws — and a number in
+    those units can only be validated by measuring it. This class is that measurement, and it is
+    what earns the ``param=None`` escape hatch rather than the escape hatch being free.
+    """
+
+    @staticmethod
+    @cache
+    def _cases() -> dict[str, CaseReport]:
+        """One `evaluate` for the whole class — this corpus is the suite's most expensive.
+
+        Cached as the reports rather than as a projection of them, the shape `_flow_cases` and
+        `_arms` already use: two separately-cached accessors over one run meant fitting eight
+        isolation forests twice for numbers the first report already held.
+        """
+        report = evaluate(
+            built("meter_fleet"),
+            [("meter", load_spec(METER_SPEC))],
+            protocol=FitProtocol.PREFIX,
+        )
+        return {case.case: case for case in report.specs[0].cases}
+
+    @classmethod
+    def _recall_by_case(cls) -> dict[str, float | None]:
+        return {name: case.event_recall for name, case in cls._cases().items()}
+
+    def test_every_meter_fits_from_its_own_reserved_prefix(self) -> None:
+        """Asserted before any number below is read, because the failure mode is silent.
+
+        ``meter_iforest`` refuses a meter with less than ``min_train_hours`` of clean history,
+        and ``prefix`` only reserves a fifth of the clock — so a corpus one row short produces a
+        whole table of zeros that reads exactly like a detector that cannot detect. That is what
+        ``generate.meter.fitting_hours`` computes the recording length to prevent, and this is
+        the assertion that keeps it honest if either side's arithmetic moves.
+        """
+        refused = [
+            note for case in self._cases().values() for note in case.notes if "fit refused" in note
+        ]
+        assert not refused, refused
+
+    def test_a_consumption_surge_is_caught(self) -> None:
+        # The floor shape. At 1.3x the declared boundary a detector that models normal must see
+        # it, so a miss here means the detector is broken or the boundary is quoted wrong — the
+        # two things the registry check would have caught on any other lane.
+        assert self._recall_by_case()["spike-04"] == 1.0
+
+    def test_a_frozen_register_is_caught_though_it_stays_in_range(self) -> None:
+        # The discriminating shape, and the reason this corpus exists rather than a threshold
+        # one: consumption reads exactly zero, which is a perfectly ordinary level for 3am, so
+        # no magnitude rule can separate it from a quiet night. Only a model that knows this
+        # meter draws 1.7x its daily mean at 7pm can.
+        assert self._recall_by_case()["stuck-04"] == 1.0
+
+    def test_both_utilities_are_scored(self) -> None:
+        # One detector serving water and electricity is what ADR-0030 built the adapter around,
+        # and one model per meter (D7) is what makes it possible. A corpus that faulted only the
+        # water meter would leave the second half of that claim unmeasured.
+        assert set(self._recall_by_case()) == {"spike-04", "drift-11", "stuck-04", "clean"}
+        assert self._recall_by_case()["clean"] is None  # a rate is undefined with no incident

@@ -41,7 +41,14 @@ def lanes_of(kind: str) -> frozenset[Lane]:
     """
     from iotshield.eval.generate.port import BEHAVIOURS
 
-    return frozenset(lane for lane, behaviour in BEHAVIOURS.items() if kind in behaviour.expresses)
+    # A *lane*, deliberately, though the registry is keyed on (lane, payload): a label is
+    # indexed by (asset, lane, instant) and carries no payload axis (ADR-0028 D1), so two
+    # shapes on one lane answer this question with the same lane. That is also why the set
+    # collapses rather than reporting metering separately — a consumption anomaly and a
+    # temperature spike on one device are two projections that correlate.
+    return frozenset(
+        lane for (lane, _payload), behaviour in BEHAVIOURS.items() if kind in behaviour.expresses
+    )
 
 
 FAULTS: dict[str, Fault] = {

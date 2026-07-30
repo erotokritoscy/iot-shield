@@ -54,6 +54,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from iotshield.normalize.flow import FLOW_CSV as _FLOW_CSV
 from iotshield.normalize.flow import ZEEK_CONN as _ZEEK_CONN
+from iotshield.normalize.meter import EOA_METER_CSV as _EOA_METER_CSV
+from iotshield.normalize.meter import SENSIPRO_HOURLY_CSV as _SENSIPRO_HOURLY_CSV
+from iotshield.normalize.passthrough import SOURCE_FORMAT as _PASSTHROUGH
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.normalize.syslog import SOURCE_FORMAT as SYSLOG
 
@@ -120,7 +123,30 @@ _EXTENSIONS = {
     SYSLOG: "log",
     _FLOW_CSV.name: "csv",
     _ZEEK_CONN.name: "log",
+    _SENSIPRO_HOURLY_CSV.name: "csv",
 }
+
+NOT_STORED: frozenset[str] = frozenset(
+    {
+        # A second meter dialect. The METERING shape is already storable through SensiPro, and
+        # EOA differs only in quirks — newest-first rows, naive Cyprus local time — so a
+        # renderer for it would buy coverage of a parsing hazard rather than of a modality, and
+        # would lose the two hours daylight saving breaks every year it crossed one.
+        _EOA_METER_CSV.name,
+        # Already-normalized events. A bundle of these would skip the normalization a benchmark
+        # exists to measure, so the *only* corpus it could express is one that tests nothing
+        # upstream of the detector (ADR-0025's adapter validates an envelope; it parses nothing).
+        _PASSTHROUGH,
+    }
+)
+"""Formats a normalizer consumes that a *bundle* deliberately does not hold.
+
+This exists because the meta-test guarding "benchmarkable but ungeneratable" intersects the
+consumable formats with ``_EXTENSIONS``, so anything absent from that table was invisible to it
+rather than reported by it — the same shape of hole as a filter that hides its own subject. Two
+formats sat in it unnoticed. Naming them here turns a silent gap into a declared one, and the
+test now requires every consumable format to be in exactly one of the two sets.
+"""
 
 
 class BundleError(ValueError):

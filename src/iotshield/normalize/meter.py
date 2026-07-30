@@ -94,6 +94,7 @@ from iotshield.meter import (
     UNIT_BY_TYPE,
     MeterReading,
     MeterType,
+    consumption_message,
     metric_for,
 )
 from iotshield.normalize._linewise import split_lines
@@ -610,6 +611,6 @@ def _consumption_event(
         "raw": reading.line,
         # The interval is in metadata, so it is not repeated here: this string is formatted
         # once per event and a fleet run holds millions of them.
-        "message": f"{consumption:.4f} {unit} (counter {reading.counter:g})",
+        "message": consumption_message(consumption, unit, reading.counter),
         "metadata": {METADATA_KEY: record.to_metadata()},
     }
