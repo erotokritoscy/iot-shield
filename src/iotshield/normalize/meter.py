@@ -20,9 +20,9 @@ Two dialects ship:
 
 SensiPro is a PostgreSQL database, not a file. Reading it directly is not a normalizer's
 job — the port takes text, and our ingestion is files and streams (ADR-0019) — so it
-arrives as an export of that one table. That was always the plan for it
-(``docs/integration/ml-detector-and-eoa-metering-plan.md`` §6); adding a database *reader*
-would be a new port, not a new adapter.
+arrives as an export of that one table. That was always the plan for it (the integration
+agreement ADR-0030 records); adding a database *reader* would be a new port, not a new
+adapter.
 
 Differencing, and what "nothing is silently dropped" means here
 --------------------------------------------------------------
@@ -441,7 +441,7 @@ class MeterNormalizer:
 
         The row wins because the unit is the physical truth about the device — the rule
         the upstream project arrived at after finding SensiPro's ``category_id``
-        unreliable and ``devices.unit`` authoritative (``docs/sensipro_data.md``).
+        unreliable and ``devices.unit`` authoritative.
         """
         if layout.unit_at is None:
             return layout.fallback_type
