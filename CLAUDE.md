@@ -93,7 +93,7 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 # In a spec with several detectors a bare name may not identify one knob — qualify it.
 uv run python -m iotshield.eval --corpus device_trimodal \
     --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
-# The metering corpus, fitted per meter from each meter's own reserved prefix (ADR-0037).
+# The metering corpus, fitted per meter from each meter's own reserved prefix (ADR-0038).
 # One spec only: this corpus has NO baseline arm. `stub_threshold` is the project's floor
 # everywhere else, and it compares an absolute value in the channel's own units — 80.0, chosen
 # for a rig's pressure. A meter draws 0.045 m3 or 0.62 kWh an hour, so it scores zero on every
@@ -173,7 +173,7 @@ cannot disagree.
 Four corpora are generated and committed: `synthetic` (telemetry, 3 fault shapes),
 `fleet_scan` (multi-device flow captures with the volume/direction/cardinality controls),
 `device_trimodal` (one device on all three lanes, for the corroboration A/B), and `meter_fleet`
-(hourly metering on a water and an electricity meter — ADR-0037). SKAB is
+(hourly metering on a water and an electricity meter — ADR-0038). SKAB is
 **GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
 bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
 clone — but an **unknown** corpus name is exit 2, because a typo in a CI job must not pass green
@@ -194,7 +194,7 @@ formats) rendered through two ports: a `Behaviour` per **(lane, payload)** (what
 like, and what a fault does to it) and a `Renderer` per wire format (events → text). Keyed on
 both axes because a lane is not the whole shape (ADR-0035) and metering proved it inside the
 generator too: a meter behaviour is a *second* telemetry-lane behaviour, so keyed by lane alone it
-collided with the sensor rig and a meter dialect was handed plain numeric readings (ADR-0037 D2).
+collided with the sensor rig and a meter dialect was handed plain numeric readings (ADR-0038 D2).
 **A label is made of the
 instants a behaviour actually perturbed** (`Observed.expressed`), never of the declared fault
 window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1) — and
@@ -214,14 +214,14 @@ renderer is the **inverse of a normalizer**, and the meta-test that composes the
 parse → compare, every field) is what caught an RFC 3164 corpus silently scoring zero after New
 Year; a companion test now requires every consumable format to be either bundle-storable *or*
 listed in `NOT_STORED` with a reason, because intersecting with `_EXTENSIONS` made a format
-missing from that table invisible rather than reported (ADR-0037 D6). It is **not** one line per
+missing from that table invisible rather than reported (ADR-0038 D6). It is **not** one line per
 event: the meter normalizer differences a cumulative counter, so N events are the differences of
 N+1 readings and its inverse writes the extra opening row — which is why the ordering law is now
 "the output depends on input order and loses nothing", the mirror form having been one-line-per-
 event in disguise (D3). Streams are seeded by
 *name*, so adding a device leaves every other device's bytes untouched.
 
-**A cumulative lane labels the observation, not the bytes (ADR-0037 D4).** Perturb one hour of a
+**A cumulative lane labels the observation, not the bytes (ADR-0038 D4).** Perturb one hour of a
 meter's counter and every later row differs forever, so comparing rendered lines would demand a
 label over the whole remainder of the recording — thousands of hours at which nothing was observed
 differently. A running total is a statement about the past; what a detector reads at an instant is
@@ -250,7 +250,7 @@ alarm lines on one lane), and two meta-tests hold it: every expressible fault ha
 matching the registry, and a scenario can assert its own **difficulty** — the test whose absence
 let the 316.7 ship.
 
-A boundary may name **no** registry param, and only then (ADR-0037 D5): `meter_iforest` fits its
+A boundary may name **no** registry param, and only then (ADR-0038 D5): `meter_iforest` fits its
 threshold to a false-alarm budget on each meter's own history, so there is no default to match and
 `fp_budget` cannot stand in for one (a rate is not a magnitude). Its boundary is quoted in units the
 behaviour owns — 3x what this hour of the week normally draws — and the hatch is narrowed twice: a
@@ -313,7 +313,7 @@ corpus can actually feed: **any** of the lanes, **all** of the payloads — `api
 modality and can read none of the events since none carries a `MeterReading`, and — sorting first —
 made it the default entry.
 
-**That predicate now decides the default, not the offer (ADR-0037 D1).** Every registered detector
+**That predicate now decides the default, not the offer (ADR-0038 D1).** Every registered detector
 stays in the list; an ineligible one is greyed with its reason (*needs payload `meter`, this corpus
 carries none*) and is still selectable. Filtering it out was the wrong half of the fix: since no
 corpus carried a meter payload, it removed `meter_iforest` from **every** corpus at once, so the

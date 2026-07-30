@@ -73,7 +73,7 @@ class Calibration:
     the port scan's 15 ports are different alarm lines on one lane, and a fault expressed against
     the wrong one is a magnitude nobody chose.
 
-    ## When ``param`` is None (ADR-0037 D5)
+    ## When ``param`` is None (ADR-0038 D5)
 
     ``param`` names the registry default this boundary must equal, and a meta-test pins the two
     together — the right law while a detector's threshold is a hyperparameter someone typed.

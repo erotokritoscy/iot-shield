@@ -110,7 +110,7 @@ CUMULATIVE_FIELDS: frozenset[str] = frozenset({"counter"})
 Published because a *counter* is not an observation at the instant carrying it: perturb one hour
 and every later reading differs forever, so anything comparing readings across a faulted and a
 clean world has to subtract these first or it will report the whole remainder as changed
-(ADR-0037 D4). The evaluation harness's label law is the caller that needs it. ``message`` quotes
+(ADR-0038 D4). The evaluation harness's label law is the caller that needs it. ``message`` quotes
 the counter and therefore travels with them, which is a fact about *this* record rather than a
 general one, so it is documented at that call site instead of listed here.
 """

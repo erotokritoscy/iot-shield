@@ -1,4 +1,4 @@
-# ADR-0037: A detector nothing can measure
+# ADR-0038: A detector nothing can measure
 
 - **Status:** accepted
 - **Date:** 2026-07-30
