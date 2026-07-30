@@ -398,13 +398,20 @@ invent. Differencing lives in the normalizer; the commissioning/service-start tr
 usability verdict are modelling judgments and live in the detector, because a normalizer that
 silently dropped a meter's first months could not be inverted (ADR-0030 D3/D4).
 
-**There are no demo configs. The demo is the dashboard** (2026-07-30). Thirteen
+**There is one demo config, and the demo is the dashboard** (2026-07-30). Thirteen
 `config/demo*.yaml` files used to exercise the adapters one ADR at a time — a config per
 feature shipped, which is an *index of the codebase*, not a demo suite, and by the end no
 one could hold it in their head. They were deleted rather than pruned, because the Compose
 page composes a `PipelineSpec` in the browser and posts the input as an uploaded payload
 (`SourceInput.content`, never a server-side path): a run driven by clicking needs no YAML,
 and a config nobody runs is a config nobody maintains.
+
+`config/demo.yaml` is the one that survived, rewritten as the *walkthrough* rather than as an
+adapter index: the same three inputs and the same chain the Compose page is clicked through,
+so the CLI and the compose `runner` stay exercised and print the queue the dashboard prints.
+It registers no `assets:` for that reason: the Compose page cannot register any, and two
+demos of one scenario that disagree about the numbers are worse than one. `test_compat.py`
+checks both halves it can rot on, the chain and the existence of the files it names.
 
 What replaced them is **one scenario, generated** by `scripts/make_demo_data.py`
 (`uv run python scripts/make_demo_data.py`). Every file under `data/demo/` was previously

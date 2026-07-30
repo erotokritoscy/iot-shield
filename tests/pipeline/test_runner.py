@@ -170,10 +170,12 @@ class TestEndToEnd:
 class TestWalkthroughDemo:
     """The dashboard walkthrough, pinned by exact counts: the demo cannot rot.
 
-    These build the spec inline rather than loading a YAML file, because the walkthrough is
-    driven from the Compose page and there is no config behind it. Pinning a config nobody
-    runs would guard the wrong thing; what must not rot is the two runs a presenter actually
-    performs, so that is what these are.
+    These build the spec inline rather than loading a YAML file, because what must not rot is
+    the two runs a presenter actually performs from the Compose page. `config/demo.yaml` is
+    arm B of the same walkthrough for the CLI and the compose `runner`, and it is checked
+    where its own failure mode lives (`test_compat.py`: a chain can be perfectly compatible
+    while naming an input that was deleted). Arm A, the flow lane alone, exists only as a
+    click, so pinning it here rather than in a file is not a shortcut.
 
     ``scripts/make_demo_data.py`` writes the three inputs. Every number below is arithmetic
     a presenter says out loud in front of an audience — the detection counts add up by lane,

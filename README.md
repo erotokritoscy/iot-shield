@@ -179,6 +179,16 @@ one or more of the files in `data/demo/`, pick the modules to run, and the resul
 **Monitor → Triage**. Inputs are uploaded from the browser rather than read from a path on the
 server, so nothing about this flow requires a shell.
 
+The same run without a browser, for a shell or a scheduler:
+
+```
+docker compose run --rm runner                                    # into Postgres
+uv run python -m iotshield.pipeline --config config/demo.yaml     # into local SQLite
+```
+
+`config/demo.yaml` is the walkthrough as a pipeline config. It reads the same three files and
+produces the same queue, which is what keeps the CLI path honest about what the dashboard does.
+
 Start with `camera_flow.log` and the `rules` detector on the flow lane, then run it again with
 `camera_syslog.log` and `camera_telemetry.csv` added — the second run is where cross-lane
 corroboration is visible. **Evaluate** runs the benchmarks in `config/bench/` against the

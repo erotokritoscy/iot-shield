@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from iotshield.pipeline import PipelineConfig, load_spec
+from iotshield.pipeline import PipelineConfig, load_config, load_spec
 from iotshield.pipeline.compat import CompatLevel, check_compatibility
 
 CONFIG_DIR = Path(__file__).parents[2] / "config"
@@ -164,6 +164,34 @@ def test_bad_detector_param_value_is_an_error() -> None:
 def test_unknown_alert_engine_is_an_error() -> None:
     issues = check_compatibility(cfg(alert_engine={"name": "nope"}))
     assert any(i.level is CompatLevel.ERROR and "nope" in i.message for i in issues)
+
+
+def test_the_shipped_demo_config_runs_and_its_inputs_exist() -> None:
+    """`config/demo.yaml` is the CLI and compose-runner half of the walkthrough.
+
+    Both halves must be checked, because they rot independently and neither failure is
+    visible from the other. A chain can be perfectly compatible while pointing at a file
+    that was deleted, which is exactly what happened when the thirteen demo configs went:
+    the compose `runner` kept a baked-in `--input`/`--config` naming files that no longer
+    existed, and nothing failed until somebody ran it.
+
+    `load_config`, not `load_spec`: this one *does* carry a `database_url`, since unlike a
+    bench spec it is allowed to write to a store.
+    """
+    config = load_config(CONFIG_DIR / "demo.yaml")
+
+    # Resolved against the repo root rather than the cwd: the paths in the file are relative
+    # because that is what a committed config should carry, but a test that only passes when
+    # pytest happens to be invoked from the root is a test that fails for the wrong reason.
+    root = CONFIG_DIR.parent
+    missing = [s.path for s in config.sources if s.path and not (root / s.path).exists()]
+    assert missing == [], (
+        f"config/demo.yaml names inputs that do not exist: {missing}. "
+        "Regenerate them with `uv run python scripts/make_demo_data.py`."
+    )
+
+    errors = [i for i in check_compatibility(config) if i.level is CompatLevel.ERROR]
+    assert errors == [], f"config/demo.yaml has compatibility errors: {errors}"
 
 
 BENCH_SPECS = sorted((CONFIG_DIR / "bench").glob("*.yaml"))

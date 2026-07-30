@@ -1,0 +1,55 @@
+# The walkthrough, as a pipeline config: the module-selection surface (ADR-0006).
+# Swapping a module is changing a name here; the runner never changes.
+#
+#   uv run python -m iotshield.pipeline --config config/demo.yaml
+#   docker compose run --rm runner            # the same run, against Postgres
+#
+# The demo itself is the dashboard: `scripts/make_demo_data.py` writes the three inputs and
+# a presenter uploads them on the Compose page. This file is the same run without a browser,
+# which is what keeps the CLI path and the compose `runner` service exercised. Both read the
+# same bytes and produce the same queue.
+#
+# One compromised IP camera (10.0.0.24) seen on all three lanes at once, plus a gateway being
+# administered from outside and a sensor that behaves. The point is the contrast: the camera
+# has independent agreement across three lanes and the gateway has one lane, so corroboration
+# moves one and not the other.
+#
+# Every source carries its own `path`, so no --input is needed. Pass one to point the same
+# chain at other data.
+
+database_url: "sqlite:///demo.db"
+
+sources:
+  - normalizer: flow
+    source_format: zeek-conn
+    path: data/demo/camera_flow.log
+  - normalizer: syslog
+    source_format: syslog
+    path: data/demo/camera_syslog.log
+  - normalizer: stub
+    source_format: stub-csv
+    path: data/demo/camera_telemetry.csv
+
+# Two rule instances, one per lane: the port hands a detector one lane, so a rule set
+# spanning network and logs is two configured entries (ADR-0032 D3). `stub_threshold`
+# takes the telemetry lane by default.
+detectors:
+  - name: rules
+    params:
+      lane: flow
+  - name: rules
+    params:
+      lane: log
+  - name: stub_threshold
+
+alert_engine:
+  name: weighted
+  params:
+    bucket_minutes: 5
+
+# No `assets:`, deliberately. The Compose page has no asset-registration section, so a run
+# driven by clicking discovers every device at MEDIUM, and this file has to agree with the
+# dashboard about the same bytes, or the two demos of one scenario print different numbers.
+# Registering the camera at HIGH is legal here and does move it (52.7 -> 55.7 on the flow
+# lane alone); that is a real feature, pinned in tests/pipeline/test_runner.py rather than
+# exercised here.

@@ -2,7 +2,7 @@
 # dashboard, plus the pipeline runner as an on-demand job (profile "jobs").
 #
 #   docker compose up                 # postgres -> init -> APIs -> dashboard
-#   docker compose run --rm runner    # populate the DB (uses config/demo.yaml)
+#   docker compose run --rm runner    # populate the DB with the walkthrough (config/demo.yaml)
 #
 # The dashboard is the React SPA on :8080 (`dashboard-web`), a pure client of
 # the same two APIs. The Streamlit app it replaced (ADR-0031) has been removed.
@@ -152,7 +152,8 @@ services:
       - python
       - -m
       - iotshield.pipeline
-      - --input=data/demo/demo.csv
+      # config/demo.yaml carries its own source paths, so no --input. Override the whole
+      # command to point the runner at other data (the service has no entrypoint).
       - --config=config/demo.yaml
     environment:
       <<: *db-env
