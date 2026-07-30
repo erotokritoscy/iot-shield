@@ -188,12 +188,13 @@ page load.
 
 ### D6 — One definition of the repository root, and one way to override it
 
-Six places derived the repository root from `__file__`, at **three different depths**:
+Five places derived the repository root from `__file__`, in **three spellings**:
 `eval/corpus.py` and `eval/bench.py` at `parents[3]`, `detect/meter/train.py` and
-`detect/team3/train.py` at `parents[4]`, `eval/fetch.py` at `parents[3].parent`, and the rules
-loader would have added a seventh. An index off by one yields a directory that does not exist
-rather than an error, so every listing comes back empty and the subsystem blames its missing
-data. `iotshield/_paths.REPO_ROOT` is counted once and all six read it; `src/` now contains
+`detect/team3/train.py` two packages deeper at `parents[4]`, and `eval/fetch.py` at
+`parents[3].parent`, which wants the workspace *above* the repo. The rules loader would have
+been the sixth. An index off by one yields a directory that does not exist rather than an error,
+so every listing comes back empty and the subsystem blames its missing data.
+`iotshield/_paths.REPO_ROOT` is counted once and all six modules read it; `src/` now contains
 exactly one `Path(__file__).resolve().parents[...]`. Verified path-for-path identical before and
 after, and every public `DEFAULT_*_ROOT` name and env override is unchanged.
 
@@ -259,3 +260,57 @@ import `os` at all.
   open item this one is *cheap to leave*: the refusal no longer reads anything, so a late
   failure costs an ingest and reveals nothing. Worth folding into the same detector-loop ERROR
   issue if that gets written.
+
+## Amendment (2026-07-30) — what an adversarial pass found that reading did not
+
+Three passes had run over this change: one on *meaning*, one on *code quality*, and neither
+built anything hostile to point at it. A pass that did — a directory at mode 644, a rule set
+named with a leading space, a file saved as `.YML` — found four more. They are recorded together
+because they share a cause worth naming: **each is a place where a docstring asserted a guarantee
+the code did not provide**, and prose is the one artifact here that nothing checks. A comment is
+written at the moment its author is most confident, and it then reads as verified.
+
+**A1 — `_shelved` caught `OSError` around one of its three syscall groups.** The `try` wrapped
+the `iterdir()` and not the `is_dir()` or the walk beneath it, while the docstring claimed "a
+permission failure and a mid-walk error are covered too". POSIX needs `r` on a directory to list
+it and `x` to enter it, so **mode 644 is a reachable state** — one `chmod -R` over a bind mount,
+or a non-root container against a root-owned volume, which is how D5 mounts the shelf. Verified
+on Linux: `iterdir` succeeds, `is_dir` and `rglob` both raise `PermissionError`. It escaped into
+`/modules`, whose contract (stated in the same docstring) is that it answers for **every**
+registered adapter — so a permissions slip on the rules mount returned a 500 and blanked the
+whole Compose page rather than emptying one dropdown. The `try` now covers the comprehension.
+The test carries a `skipif`, because the case needs POSIX bits and a non-root user.
+
+**A2 — the `strip()` reopened the disagreement D2 closed.** D2 made listing and resolving read
+one mapping so they cannot disagree about a name; resolution then trimmed its argument before
+looking it up. A shelf holding `site-rules` and `" site-rules"` (legal on both platforms) offered
+both and ran the first for either. The mechanism is worth the sentence: **collapsing two readers
+onto one source is not enough if one of them still transforms the value on the way in.** Trimming
+now decides one thing only — whether the caller said anything at all — and membership is tested
+on the name exactly as given, so whitespace-only still means the library and a name that merely
+*has* whitespace is refused like any other name that is not on the shelf. The regression test
+asserts the property over the whole offer (every listed name resolves to the rule set of that
+name), rather than the one door.
+
+**A3 — a `.YML` rule set was invisible, and the message said "typo".** Suffix matching was
+case-sensitive, which predates this ADR and was harmless while a rule set was a path: pathing
+that directory said `contains no .yml/.yaml rule files`, which is the answer. On a shelf the same
+directory simply does not appear, so naming it gets `unknown rule set` — the message for a name
+that does not exist, about one that does. This ADR made a loud failure quiet, on the deployment's
+own extension point, where "I made a directory and it didn't show up" is the likeliest first
+failure and (per the bullet above) nothing publishes where the shelf is to check. `_is_rule_file`
+is now case-insensitive and is the **single** definition: the two spellings that had grown up in
+this module, `name.endswith(_SUFFIXES)` for the packaged library and `path.suffix in _SUFFIXES`
+for the shelf, disagreed about a file named exactly `.yml`. Ordering is unaffected and still
+measured: the name test before the stat is 6.8 ms against 41.3 ms over a 2,000-file directory.
+
+**A4 — D6 above miscounted, and `_paths.py` kept the claim D6 had already corrected.** There were
+**five** derivations, not six, in three spellings, and `eval/fetch.py`'s wants the workspace
+*above* the repo rather than the repo. The module docstring — edited in the same commit that
+corrected D6 — still said three subsystems and "the third would have been the first at a
+different depth", which was the original false claim. An off-by-one in the paragraph about
+off-by-ones is funny once; the general form is that a correction has to be applied everywhere the
+claim was made, and the ADR is not the only place.
+
+None of this reached detection: the pipeline, the detectors and every eval number are unchanged
+and re-verified identical. All four defects are in the configuration surface this ADR added.

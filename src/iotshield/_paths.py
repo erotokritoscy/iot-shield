@@ -1,13 +1,17 @@
 """Where the repository is, for the defaults that ship inside it.
 
-Three subsystems default a directory to one that ships in the repo: labelled corpora
-(``eval/corpus.py``), bench specs (``eval/bench.py``) and rule sets
-(``detect/rules/loader.py``). Each needs the repository root, and each derived it by counting
-``__file__``'s parents — which is correct only for the file doing the counting. A module one
-package deeper needs a different index, and an index that is off by one yields a directory
-that does not exist rather than an error: every listing comes back empty and the subsystem
-blames its missing data. Two copies already existed at the same depth; the third would have
-been the first at a different one.
+Six modules need the repository root: three that default a *directory* to one shipping in the
+repo — labelled corpora (``eval/corpus.py``), bench specs (``eval/bench.py``) and rule sets
+(``detect/rules/loader.py``) — and three that default a training or conversion *input*
+(``detect/meter/train.py``, ``detect/team3/train.py``, ``eval/fetch.py``).
+
+Five of them counted ``__file__``'s parents for themselves, in **three spellings**:
+``parents[3]`` in ``eval/``, ``parents[4]`` two packages deeper in ``detect/``, and
+``parents[3].parent`` in ``eval/fetch.py``, which wants the workspace *above* the repo. That is
+the whole problem: the index is a fact about where a module happens to sit, so it is right for
+one file and wrong for its neighbour, and moving a file one package deeper silently changes what
+it means. An index off by one yields a directory that does not exist rather than an error, so
+every listing comes back empty and the subsystem blames its missing data.
 
 So: counted once, at a fixed and stated depth. Every default built on it stays overridable by
 environment variable, because *where files live* is a deployment property (the same

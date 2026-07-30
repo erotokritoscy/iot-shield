@@ -7,6 +7,7 @@ instead.
 """
 
 import dataclasses
+import os
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -427,6 +428,32 @@ def test_a_missing_shelf_lists_the_library_rather_than_raising(tmp_path: Path) -
     assert available_rulesets(tmp_path / "no-such-shelf") == (PACKAGED,)
 
 
+# Root bypasses the permission bits entirely, so the case cannot be staged as root; Windows
+# expresses this through ACLs, which deny differently and swallow it inside `rglob`.
+_PERMISSIONS_ARE_TESTABLE = os.name != "nt" and getattr(os, "geteuid", lambda: 0)() != 0
+
+
+@pytest.mark.skipif(not _PERMISSIONS_ARE_TESTABLE, reason="POSIX permission bits, and not root")
+def test_a_shelf_that_can_be_listed_but_not_entered_lists_the_library(tmp_path: Path) -> None:
+    """The failure the missing-shelf case *looks* like it already covers, and did not.
+
+    POSIX needs ``r`` on a directory to list it and ``x`` to look inside, so mode 644 is a real
+    and reachable state: one ``chmod -R`` over a bind mount, or a non-root container reading a
+    root-owned volume — which is exactly how ``docker-compose.yml`` mounts the shelf. Then
+    ``iterdir`` succeeds and every step after it raises, and only the first was inside the
+    ``try``. The blast radius is what makes it worth a test with a ``skipif`` on it: this
+    resolves inside ``/modules``, so a permissions slip on the rules mount answered a request
+    about **every** adapter with a 500 and blanked the whole Compose page.
+    """
+    shelf = tmp_path / "shelf"
+    put_ruleset(shelf, "site-rules")
+    shelf.chmod(0o644)  # readable, NOT searchable
+    try:
+        assert available_rulesets(shelf) == (PACKAGED,)
+    finally:
+        shelf.chmod(0o755)
+
+
 def test_the_shelf_is_read_per_call_not_snapshotted(tmp_path: Path) -> None:
     """The reason this vocabulary is a callable and the artifact one was a tuple (ADR-0037):
     an operator dropping a rule set onto a running server's shelf must see it."""
@@ -455,6 +482,59 @@ def test_a_shelved_name_resolves_to_its_directory(tmp_path: Path) -> None:
     resolved = resolve_ruleset("site-rules", tmp_path)
     assert resolved is not None
     assert Path(resolved) == directory.resolve()
+    assert [rule.id for rule in load_ruleset(resolved)] == ["test-rule"]
+
+
+def test_every_offered_name_resolves_to_the_rule_set_of_that_name(tmp_path: Path) -> None:
+    """The invariant the one-mapping design exists to give, stated over the whole offer.
+
+    Listing and resolving read ``_shelved`` together so they cannot disagree about *which names
+    exist* — but that is only half of it, and the half that was true. Resolution also has to land
+    on the entry the operator picked, and a ``strip()`` ahead of the lookup quietly broke it: two
+    genuinely distinct rule sets whose names differ only in whitespace were both offered, and
+    either choice ran the first. A dropdown whose entries are not the things it runs is the exact
+    failure the symlink fix was written for, arriving through a different door — so this asserts
+    the property rather than that one door.
+    """
+    put_ruleset(tmp_path, "site-rules")
+    put_ruleset(tmp_path, " site-rules")  # legal on both platforms, and a different rule set
+    offered = available_rulesets(tmp_path)
+    assert offered == (PACKAGED, " site-rules", "site-rules")
+    for name in offered:
+        resolved = resolve_ruleset(name, tmp_path)
+        if name == PACKAGED:
+            assert resolved is None
+        else:
+            assert resolved is not None and Path(resolved).name == name
+
+
+def test_a_name_that_only_differs_by_whitespace_is_not_that_rule_set(tmp_path: Path) -> None:
+    """Refused like any other name that is not on the shelf. Trimming it to one that *is* would
+    be the sanitizing this boundary refuses everywhere else — the wrong value quietly becoming a
+    plausible one — and here it would silently judge a run with rules nobody selected."""
+    put_ruleset(tmp_path, "site-rules")
+    with pytest.raises(ValueError, match="unknown rule set"):
+        resolve_ruleset(" site-rules", tmp_path)
+
+
+def test_a_rule_set_is_found_whatever_the_case_of_its_file_extension(tmp_path: Path) -> None:
+    """``rule.YML`` is an ordinary thing to save, and made its whole rule set vanish.
+
+    A directory holding only uppercase-suffixed files was not on the shelf at all, so naming it
+    got "unknown rule set" — the *typo* message, which tells an operator the thing does not exist
+    when it does. Before the shelf, pathing that same directory said "contains no .yml/.yaml rule
+    files", which is the answer. This is the deployment's own extension point and nothing
+    publishes where it is, so the silent version leaves nowhere to look.
+    """
+    directory = tmp_path / "site-rules"
+    directory.mkdir()
+    write_ruleset(directory, rule_document())
+    for path in list(directory.glob("*.yml")):
+        path.rename(path.with_suffix(".YML"))
+
+    assert available_rulesets(tmp_path) == (PACKAGED, "site-rules")
+    resolved = resolve_ruleset("site-rules", tmp_path)
+    assert resolved is not None
     assert [rule.id for rule in load_ruleset(resolved)] == ["test-rule"]
 
 

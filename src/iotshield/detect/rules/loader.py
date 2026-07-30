@@ -72,6 +72,26 @@ rule sets with no setup. Overridable, because in an image the shelf is a mount p
 _SUFFIXES = (".yml", ".yaml")
 
 
+def _is_rule_file(name: str) -> bool:
+    """Whether a file of this *name* holds rules. One answer, for both homes.
+
+    **Case-insensitive**, because an extension's case is not a fact about a file's contents and
+    the two operating systems this runs on do not even agree that it is distinguishable. A
+    ``rule.YML`` saved on Windows made its whole directory invisible on the shelf, and an
+    invisible rule set is reported with the *typo* message — "unknown rule set", which tells an
+    operator the directory does not exist when it does and they are one keystroke away. Every
+    other silent failure in this file was deliberately made loud; this one was neither loud nor
+    deliberate.
+
+    A test on the *name* rather than ``Path.suffix``, because the packaged library is read
+    through ``importlib.resources`` and its entries are not ``Path`` objects. Both callers ask
+    it here, since two spellings of "is this a rule file" in one module is exactly the pair that
+    drifts (these two already had: ``suffix`` and ``endswith`` disagree about a file named
+    ``.yml``).
+    """
+    return name.lower().endswith(_SUFFIXES)
+
+
 def _parse(text: str, *, source: str) -> Any:
     try:
         return yaml.safe_load(text)
@@ -85,7 +105,7 @@ def _packaged_documents() -> Iterator[tuple[str, Any]]:
     # every run. (The rules themselves are sorted by id at the end, so this ordering is not
     # otherwise observable.)
     for entry in sorted(resources.iterdir(), key=lambda item: item.name):
-        if entry.name.endswith(_SUFFIXES) and entry.is_file():
+        if _is_rule_file(entry.name) and entry.is_file():
             yield entry.name, _parse(entry.read_text(encoding="utf-8"), source=entry.name)
 
 
@@ -97,13 +117,14 @@ def _rule_files(root: Path) -> Iterator[Path]:
     know whether there is one — and stops at the first, rather than walking a directory that
     is not a rule set at all.
 
-    Suffix **before** ``is_file()``: the suffix is a string slice and ``is_file()`` is a
+    The name test comes **before** ``is_file()``: it is string work and ``is_file()`` is a
     syscall, and the one case that cannot short-circuit is a directory with no rule files at
-    all — which is exactly what listing the shelf walks. Ordering them the other way cost a
-    stat per file in such a tree (measured 8x on 5,000 files, and 47 ms -> 15 ms on a
-    ``/modules`` request with a 2,000-file directory on the shelf).
+    all — which is exactly what listing the shelf walks. Ordering them the other way costs a
+    stat per file in such a tree: measured over a 2,000-file directory on the shelf, 6.8 ms
+    this way against 41.3 ms the other, inside a ``/modules`` request that takes 11.9 ms in
+    total.
     """
-    return (path for path in root.rglob("*") if path.suffix in _SUFFIXES and path.is_file())
+    return (path for path in root.rglob("*") if _is_rule_file(path.name) and path.is_file())
 
 
 def _directory_documents(root: Path) -> Iterator[tuple[str, Any]]:
@@ -144,23 +165,28 @@ def _shelved(root: Path | None = None) -> dict[str, Path]:
     next page load rather than after a restart. One directory listing per catalogue call, plus a
     short-circuiting walk per candidate (see ``_rule_files``).
 
-    A missing or unreadable shelf yields nothing rather than raising: ``/modules`` is a
-    catalogue call that must answer for every registered adapter, and the default root does not
-    exist in every install (the same decision ``packaged_artifact_ids`` makes for a package
-    shipped without its artifacts). ``except OSError`` rather than an ``is_dir()`` pre-check, so
-    a permission failure and a mid-walk error are covered too.
+    An unreadable shelf yields nothing rather than raising: ``/modules`` is a catalogue call that
+    must answer for **every** registered adapter, and the default root does not exist in every
+    install (the same decision ``packaged_artifact_ids`` makes for a package shipped without its
+    artifacts). The ``try`` covers the whole comprehension rather than the listing alone, because
+    reading a shelf is three separate syscall groups and any of them can fail independently:
+    listing the root, stat-ing each entry, and walking it. Measured, not imagined — POSIX needs
+    ``r`` to list a directory and ``x`` to look inside it, so a shelf at mode 644 (one
+    ``chmod -R`` on a bind mount, or a non-root container against a root-owned volume) makes the
+    listing succeed and both later steps raise ``PermissionError``. Escaping here took
+    ``/modules`` to a 500 and blanked the entire adapter catalogue, so a permissions slip on the
+    rules mount cost the whole Compose page and not merely this dropdown.
     """
     try:
-        entries = sorted(rules_root(root).iterdir())
+        return {
+            entry.name: entry
+            for entry in sorted(rules_root(root).iterdir())
+            # PACKAGED is reserved, so a shelf directory of that name is unreachable rather than
+            # a second dropdown option meaning something else.
+            if entry.name != PACKAGED and entry.is_dir() and next(_rule_files(entry), None)
+        }
     except OSError:
         return {}
-    return {
-        entry.name: entry
-        for entry in entries
-        # PACKAGED is reserved, so a shelf directory of that name is unreachable rather than a
-        # second dropdown option meaning something else.
-        if entry.name != PACKAGED and entry.is_dir() and next(_rule_files(entry), None)
-    }
 
 
 def available_rulesets(root: Path | None = None) -> tuple[str, ...]:
@@ -185,9 +211,17 @@ def resolve_ruleset(name: str | None = None, root: Path | None = None) -> str | 
     one turns a wrong path into a *different* wrong path. So ``../secrets``, an absolute path
     and an honest typo all fail the same way, with the list of what exists and no hint about
     whether the thing they named is there — nor where the shelf itself is.
+
+    Membership is tested on the name **exactly as given**, and the ``strip()`` below decides one
+    thing only: whether the caller said anything at all. Trimming before the lookup was that
+    same reduction, arriving through the back door — a shelf holding ``site-rules`` and
+    ``" site-rules"`` (legal on both platforms) offered both and ran the first for either, so
+    listing and resolving disagreed about a name again, silently and in the one direction a
+    dropdown exists to prevent. Whitespace-only is still the library, because a blank field and
+    an absent one mean the same thing everywhere else in a spec; a name that merely *has*
+    whitespace is refused, loudly, like any other name that is not on the shelf.
     """
-    name = (name or "").strip()
-    if not name or name == PACKAGED:
+    if name is None or not name.strip() or name == PACKAGED:
         return None
     shelved = _shelved(root)
     if name not in shelved:
