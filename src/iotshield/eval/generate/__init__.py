@@ -44,6 +44,7 @@ from iotshield.eval.corpus import write_bundle as _write_bundle
 from iotshield.eval.generate.build import build
 from iotshield.eval.generate.faults import FAULTS, lanes_of
 from iotshield.eval.generate.flow import FlowCsvRenderer, NetworkHost, ZeekConnRenderer
+from iotshield.eval.generate.meter import MeterFleet, SensiproHourlyRenderer
 from iotshield.eval.generate.port import BEHAVIOURS, RENDERERS, Renderer
 from iotshield.eval.generate.rng import stream
 from iotshield.eval.generate.scenarios import SCENARIOS
@@ -65,9 +66,15 @@ from iotshield.pipeline.registry import lookup
 #
 # Both keys are read off the component itself, so adding a lane really is the one line the
 # package docstring promises — restating the lane here would be a second place to get it wrong.
-for _behaviour in (SensorRig(), LogSource(), NetworkHost()):
-    BEHAVIOURS[_behaviour.lane] = _behaviour
-for _renderer in (StubCsvRenderer(), Rfc5424Renderer(), FlowCsvRenderer(), ZeekConnRenderer()):
+for _behaviour in (SensorRig(), LogSource(), NetworkHost(), MeterFleet()):
+    BEHAVIOURS[(_behaviour.lane, _behaviour.payload)] = _behaviour
+for _renderer in (
+    StubCsvRenderer(),
+    Rfc5424Renderer(),
+    FlowCsvRenderer(),
+    ZeekConnRenderer(),
+    SensiproHourlyRenderer(),
+):
     RENDERERS[_renderer.source_format] = _renderer
 
 

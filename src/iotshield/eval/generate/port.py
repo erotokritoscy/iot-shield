@@ -72,12 +72,38 @@ class Calibration:
     A boundary is therefore declared per *fault kind*, not per behaviour: fan-out's 20 peers and
     the port scan's 15 ports are different alarm lines on one lane, and a fault expressed against
     the wrong one is a magnitude nobody chose.
+
+    ## When ``param`` is None (ADR-0038 D5)
+
+    ``param`` names the registry default this boundary must equal, and a meta-test pins the two
+    together — the right law while a detector's threshold is a hyperparameter someone typed.
+    ``meter_iforest`` has none: its threshold is an isolation-forest score fitted to a
+    false-alarm budget on each meter's own history, so there is no number in the registry for
+    ``intensity=1.0`` to equal, and pointing at ``fp_budget`` would be worse than nothing since
+    a rate is not a magnitude. So ``param=None`` says "learned, not configured", and ``value``
+    is then in units the behaviour itself owns.
+
+    The hatch is narrow on purpose. A meta-test allows ``None`` only for a **Fittable**
+    detector, which is exactly the class that learns its own line; and what replaces the
+    registry check is a *behavioural* one — the corpus asserts a fault at the declared intensity
+    is actually caught — because a boundary in a behaviour's own units can only be validated by
+    measuring it, never by comparing it to a constant.
     """
 
     detector: str
-    param: str
+    param: str | None
     value: float
     preset: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.preset is not None and self.param is None:
+            # A preset names *where* to read the param from, so a preset with no param to read
+            # is a boundary pointing at nothing. Refused here rather than left constructable,
+            # since the meta-test's `param is None` branch would skip it silently.
+            raise ValueError(
+                f"{self.detector} declares preset {self.preset!r} with no param: a preset says "
+                "which table holds the registered default, so there has to be one to hold"
+            )
 
     def scaled(self, intensity: float) -> float:
         """The magnitude ``intensity`` multiples of this boundary comes to, in its own units.
@@ -157,10 +183,19 @@ the device-and-lane stream itself.
 
 
 class Behaviour(Protocol):
-    """Models one lane: what normal looks like, and what a fault does to it."""
+    """Models one (lane, payload): what normal looks like, and what a fault does to it."""
 
     @property
     def lane(self) -> Lane: ...
+
+    @property
+    def payload(self) -> str | None:
+        """The typed vocabulary this behaviour's events carry in ``metadata``, or ``None``.
+
+        ``None`` means the events fit the contract's own fields. With ``lane`` this is the
+        behaviour's ``Shape``, and therefore the key it registers under.
+        """
+        ...
 
     @property
     def expresses(self) -> frozenset[str]:
@@ -218,6 +253,16 @@ class Renderer(Protocol):
     def lane(self) -> Lane: ...
 
     @property
+    def payload(self) -> str | None:
+        """Which behaviour's events this dialect writes — see ``Behaviour.payload``.
+
+        A renderer and its behaviour must agree, because ``build._resolve`` looks the behaviour
+        up by the renderer's shape. Two dialects of one shape still coexist; what this
+        separates is two *shapes* on one lane, which is what metering introduced.
+        """
+        ...
+
+    @property
     def source_format(self) -> str:
         """Must be a format some registered normalizer accepts; a meta-test enforces it."""
         ...
@@ -232,12 +277,23 @@ class Renderer(Protocol):
         ...
 
     def render(self, events: Sequence[NormalizedEvent]) -> tuple[str, ...]:
-        """One line per event, **order-preserving**.
+        """The lines these events were parsed from, **in their order**.
 
-        Ordering belongs to the builder, which pools every device's events for a lane and
-        sorts them by ``(timestamp, asset_id)`` before rendering — so a multi-host capture is
-        one time-ordered file, the way a real one is, and the normalizer's per-line
-        statelessness is exercised. A renderer that sorted internally would fight that.
+        Usually one line per event, and for three of the four shipped dialects exactly that —
+        but it cannot be a law, because a normalizer need not be a per-record function. The
+        meter normalizer *differences* a cumulative counter, so N consumption events are the
+        differences of N+1 counter readings and the file legitimately holds one row more than
+        there are events. A renderer inverting one must write that opening row, once per
+        contiguous run.
+
+        What remains a law is the ordering. It belongs to the builder, which pools every
+        device's events for a lane and sorts them by ``(timestamp, asset_id)`` before rendering
+        — so a multi-host capture is one time-ordered file, the way a real one is, and the
+        normalizer's per-line statelessness is exercised. A renderer that sorted internally
+        would fight that and, worse, would hide a builder that stopped sorting. The meta-test
+        therefore asks that the output *depend* on input order and lose nothing in either
+        direction, rather than that reversing the input reverse the file line for line — a
+        property only a one-line-per-event renderer can have.
         """
         ...
 
@@ -263,6 +319,10 @@ class LaneBehaviour:
     a fault with a handler and no boundary would silently fall back to whatever magnitude its
     handler hard-coded, and that is the state ADR-0028 D6 exists to remove.
     """
+
+    payload: str | None = None
+    """Most lanes carry no typed vocabulary, so this is the default half of a ``Shape``; only a
+    behaviour whose events ride behind a record (metering) overrides it."""
 
     def __init__(self, handlers: Iterable[str], boundaries: Mapping[str, Calibration]) -> None:
         kinds = frozenset(handlers)
@@ -299,9 +359,47 @@ def one_boundary(handlers: Iterable[str], calibration: Calibration) -> dict[str,
     return dict.fromkeys(handlers, calibration)
 
 
-BEHAVIOURS: dict[Lane, Behaviour] = {}
-"""One behaviour per lane. Device *kinds* select profiles inside it, so a fleet of cameras and
-gateways needs one network behaviour rather than one per device type."""
+Shape: TypeAlias = tuple[Lane, str | None]
+"""A behaviour's slot: which modality, and which typed vocabulary within it (ADR-0035).
+
+The generator was written when a lane *was* the whole shape, and encoded that in this key. It
+is the same conflation ADR-0035 removed from the product, surviving in the one place that ADR
+did not reach — and a metering corpus is where it stops being harmless: a meter behaviour is a
+**second telemetry-lane behaviour**, so keyed by lane alone it would collide with the sensor
+rig, and ``_resolve`` would hand a meter renderer the rig's plain numeric readings. The
+round-trip law would then fail with a mismatch that looks like a bad renderer.
+"""
+
+
+def ramp(samples: int, rise: float) -> np.ndarray:
+    """A ramp **ending** at ``rise``, well-defined for every ``samples >= 1``.
+
+    Shared rather than per behaviour: the telemetry drift and the metering leak are the same
+    shape in different units, and the subtlety is not obvious enough to re-derive. The obvious
+    ``linspace(0, rise, n)`` is wrong at the narrow end — it spends its first endpoint on zero,
+    so a ramp covering one sample ended where it started and silently perturbed nothing (the
+    ADR-0028 defect that also bit ``_bump``). Dropping the leading zero makes it end at ``rise``
+    whatever its width, which is what "a slow ramp ending past the threshold" always claimed,
+    and costs nothing at the wide end where the first step is ``rise/n``.
+    """
+    return np.linspace(0.0, rise, samples + 1)[1:]
+
+
+def shape_id(shape: Shape) -> str:
+    """A shape as one readable token — ``telemetry/meter``, ``flow/plain``.
+
+    Named once because it is also the **sort key** for a registry keyed on these tuples: the raw
+    keys hold ``None`` beside a payload name on the telemetry lane, and comparing those raises
+    rather than ordering them. Two copies of that workaround (a generator error message and a
+    suite's pytest ids) would be two chances to disagree about what a shape is called.
+    """
+    lane, payload = shape
+    return f"{lane.value}/{payload or 'plain'}"
+
+
+BEHAVIOURS: dict[Shape, Behaviour] = {}
+"""One behaviour per (lane, payload). Device *kinds* select profiles inside it, so a fleet of
+cameras and gateways needs one network behaviour rather than one per device type."""
 
 RENDERERS: dict[str, Renderer] = {}
 """Keyed by ``source_format``, so several dialects of one lane coexist."""

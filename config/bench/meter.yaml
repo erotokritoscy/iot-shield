@@ -1,0 +1,50 @@
+# Benchmark spec: the meter isolation forest, fitted per meter from each meter's own history.
+#
+# The first spec for a detector whose input carries a typed PAYLOAD rather than a bare number,
+# and therefore the first that only one corpus shape can feed: `meter_iforest` consumes lane
+# `telemetry` AND payload `meter`, so a stub-csv telemetry bundle satisfies the lane, hands it
+# events carrying no MeterReading, and scores a row of zeros it never had a chance to earn
+# (ADR-0035 D2). `eval list` derives which corpora fit this spec from both sides' declarations.
+#
+# No `artifact:`, so this is an *untrained* model and needs a fit protocol — the ADR-0022
+# distinction bench/team3_scratch.yaml documents. It requires `--fit-protocol prefix`:
+#
+#   uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
+#       --spec config/bench/meter.yaml
+#
+# It runs alone, and that is a real gap rather than an oversight. Every other corpus is read
+# against `bench/stub.yaml` as a floor, and that detector compares an absolute value in the
+# channel's own units: 80.0, which straddles a rig's pressure and is three orders of magnitude
+# above a meter's hourly draw. Paired here it would score zero on every case because of the
+# units, not because a fixed threshold is blind to anything — and a meter-scaled threshold would
+# be a number we chose, indistinguishable from a real result (ADR-0021 D7). A `stub.yaml` cannot
+# be reused directly either: a spec declares one source per input position in the corpus's own
+# formats, so a floor arm here would need its own file naming `sensipro-hourly-csv`.
+#
+# The shipped `demo_meter` artifact is deliberately NOT named here. A baseline describes ONE
+# meter (ADR-0030 D7): that artifact was fitted on the demo meter's own clean months, so
+# pointing it at a generated meter is a skip, not a judgment. Fitting from the corpus is the
+# only honest way to benchmark this adapter, which is also why `meter_fleet`'s recordings are
+# long enough for the reserved prefix to satisfy `min_train_hours`.
+#
+# Every hyperparameter is left at its default on purpose. `fp_budget` is the operating point
+# the product ships (~1 alarm per meter-month) and `min_train_hours` is derived from it, so
+# relaxing either to shorten the corpus would benchmark a detector nobody deploys.
+
+source_format: sensipro-hourly-csv
+normalizer: meter
+
+detectors:
+  - name: meter_iforest
+
+alert_engine:
+  name: weighted
+  params:
+    # An hour, not the usual five minutes: this lane's events ARE hourly, so a 5-minute bucket
+    # can hold at most one of them and every alert would cite a single detection. Corroboration
+    # and volume only mean anything at the resolution the data actually arrives in.
+    bucket_minutes: 60
+
+# No `assets:`, for the reason the flow and trimodal specs give: `asset_weight` is a number we
+# would be typing in, and a ranking improvement it produced would be indistinguishable from a
+# real one (ADR-0021 D7).

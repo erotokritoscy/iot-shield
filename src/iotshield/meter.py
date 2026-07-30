@@ -91,6 +91,31 @@ def metric_for(unit: str) -> str:
     return METRIC_BY_UNIT[unit]
 
 
+def consumption_message(consumption: float, unit: str, counter: float) -> str:
+    """The analyst-readable line one closed interval carries.
+
+    Here rather than in the normalizer because **two packages write it**: the normalizer builds
+    it from a parsed reading, and the corpus generator must claim the identical string for the
+    round-trip law to compare equal. Left as two f-strings, a formatting tweak on either side
+    would surface as a *renderer* test failing on a `message` mismatch rather than at the edit.
+    ``telemetry.line`` settled the same question the same way — one function is cheaper than the
+    test that would otherwise be holding two spellings together.
+    """
+    return f"{consumption:.4f} {unit} (counter {counter:g})"
+
+
+CUMULATIVE_FIELDS: frozenset[str] = frozenset({"counter"})
+"""Fields of a ``MeterReading`` that are running totals of everything before them.
+
+Published because a *counter* is not an observation at the instant carrying it: perturb one hour
+and every later reading differs forever, so anything comparing readings across a faulted and a
+clean world has to subtract these first or it will report the whole remainder as changed
+(ADR-0038 D4). The evaluation harness's label law is the caller that needs it. ``message`` quotes
+the counter and therefore travels with them, which is a fact about *this* record rather than a
+general one, so it is documented at that call site instead of listed here.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class MeterReading:
     """One meter's consumption over one closed interval.

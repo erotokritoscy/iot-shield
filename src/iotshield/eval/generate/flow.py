@@ -442,6 +442,7 @@ class FlowCsvRenderer:
     """
 
     lane = Lane.FLOW
+    payload = None
     source_format = SOURCE_FORMAT
 
     def header(self) -> tuple[str, ...]:
@@ -470,6 +471,7 @@ class ZeekConnRenderer:
     """
 
     lane = Lane.FLOW
+    payload = None
     source_format = ZEEK_CONN.name
 
     def header(self) -> tuple[str, ...]:

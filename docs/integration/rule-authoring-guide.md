@@ -16,7 +16,7 @@ Adding a detection from here is writing one file. No Python, no rebuild.
 ```yaml
 id: high-upload-volume # stable; appears in the alert as "per rule:high-upload-volume"
 title: High Outbound Upload Volume
-lane: flow # which kind of data: flow, log, or telemetry
+lane: flow # which kind of data: flow, log, or telemetry (§2 — telemetry needs your own set)
 description: >-
   A single network conversation in which the device sent more than 10 KB outbound.
 one_line: Outbound bytes on one flow exceed 10000. # the analyst-facing headline
@@ -135,6 +135,17 @@ log.message:
 | --- | --- | --- |
 | `telemetry.metric` | text | Channel name, e.g. `Pressure` |
 | `telemetry.value` | number | The reading itself |
+
+No rule in the packaged library uses this lane, and that is a decision rather than a gap
+waiting to be filled. A flow or log signature is portable: port 23 is telnet on every estate,
+and `POSSIBLE BREAK-IN ATTEMPT` is a string OpenSSH itself writes, so shipping one is safe. A
+telemetry signature names a channel and a limit that belong to one site's equipment —
+`Pressure > 1.1` is one vessel's rated maximum, and on the next estate it is either wrong or
+meaningless. So telemetry rules are yours to author, in your own rule set on the shelf (§1).
+
+That is also why the compose form's lane dropdown offers only `flow` and `log`: what a form
+renders is what the shipped library can actually judge with. The grammar is unchanged, so a
+config naming `lane: telemetry` beside your own `ruleset:` works exactly as written above.
 
 ---
 

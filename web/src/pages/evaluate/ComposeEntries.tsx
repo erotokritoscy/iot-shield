@@ -159,31 +159,59 @@ export function useComposeEntries({
   readonly detectors: readonly DetectorSummary[];
   readonly normalizers: readonly ModuleInfo[];
 }): ComposeResult {
-  // Which detectors this corpus can actually feed, from the shape the API says it yields.
-  // Both sides of this intersection arrive decoded from /eval, so the page never parses a
-  // `lane:`/`payload:` prefix (H6).
+  // Ineligible detectors are **marked, not removed** (ADR-0035 D2 amendment): `offeredNames` is
+  // every registered detector, and eligibility now decides only what may be *defaulted* to.
   //
-  // TWO axes, and the second is why this list used to lie (ADR-0035 D2). A lane is satisfied
-  // by any source of that modality; a payload is satisfied only by a source that carries the
-  // typed vocabulary. `meter_iforest` needs both, so on every `stub-csv` corpus it matched on
-  // lane, sorted alphabetically first, and became entry 1's default — a detector that could
-  // not read a single event of the corpus it was offered for.
+  // Filtering was the wrong half of D2's fix. `meter_iforest` requires a meter payload and no
+  // corpus in this product carries one, so the filter did not hide a bad *combination* — it
+  // removed that detector from every corpus at once, which is a deletion. The page then reported
+  // five detectors where the registry has six, and the reason (there is no meter corpus) was
+  // hidden along with it. The bug D2 actually fixed was that `meter_iforest` sorted first and
+  // became entry 1's *default*, so a meaningless benchmark ran without anyone choosing it;
+  // defaulting from the eligible subset alone is the narrow fix for that.
   //
-  // The lane test is `some` and the payload test is `every`, which is not an inconsistency:
-  // a detector fires if ANY of its lanes is present, but it needs ALL of the vocabularies it
-  // reads through.
-  const corpusLanes = React.useMemo(() => new Set(corpus?.lanes ?? []), [corpus]);
-  const corpusPayloads = React.useMemo(() => new Set(corpus?.payloads ?? []), [corpus]);
+  // Running one anyway is a measurement rather than a mistake, which is why nothing here refuses
+  // it: `evaluate` carries both the guard's declaration-level warning and the detector's own
+  // `why_silent` into the case notes, so the row of zeros arrives with two explanations
+  // ("reported, not refused" — ADR-0026 amendment, ADR-0027 D8).
+  //
+  // The REASON is the primitive and eligibility is derived from it, rather than the rule being
+  // written twice — once positively to filter and once negated to annotate. `can_judge`'s own
+  // docstring is about exactly that hazard ("a rule written twice is a rule that can differ
+  // twice"), and two spellings inside one component could mark a detector while still
+  // preselecting it.
+  const notes = React.useMemo(() => {
+    // Both sides of this comparison arrive decoded from /eval, so the page never parses a
+    // `lane:`/`payload:` prefix (H6). TWO axes, and the second is why this list used to lie
+    // (ADR-0035 D2): a lane is satisfied by any source of that modality, a payload only by a
+    // source carrying the typed vocabulary. The lane test is `some` and the payload test is
+    // `every`, which is not an inconsistency — a detector fires if ANY of its lanes is present,
+    // but it needs ALL of the vocabularies it reads through.
+    const lanes = new Set(corpus?.lanes ?? []);
+    const payloads = new Set(corpus?.payloads ?? []);
+    const feeds = [...lanes].join(", ") || "none";
+    const carries = [...payloads].join(", ") || "none";
+    const reasons: Record<string, string> = {};
+    for (const item of detectors) {
+      // Lane first, then payload: first-unmet-wins, the rule the guard already applies. A
+      // detector on a foreign lane is *also* missing that lane's payload, and naming both
+      // faults would ask someone to fix two things to repair one.
+      if (!item.lanes.some((lane) => lanes.has(lane))) {
+        reasons[item.name] = `reads lane ${item.lanes.join("/")}, this corpus feeds ${feeds}`;
+        continue;
+      }
+      const missing = item.payloads.filter((payload) => !payloads.has(payload));
+      if (missing.length > 0) {
+        reasons[item.name] = `needs payload ${missing.join(", ")}, this corpus carries ${carries}`;
+      }
+    }
+    return reasons;
+  }, [detectors, corpus]);
+
+  const offeredNames = React.useMemo(() => detectors.map((item) => item.name), [detectors]);
   const eligible = React.useMemo(
-    () =>
-      detectors
-        .filter(
-          (item) =>
-            item.lanes.some((lane) => corpusLanes.has(lane)) &&
-            item.payloads.every((payload) => corpusPayloads.has(payload)),
-        )
-        .map((item) => item.name),
-    [detectors, corpusLanes, corpusPayloads],
+    () => offeredNames.filter((name) => notes[name] === undefined),
+    [offeredNames, notes],
   );
   const eligibleKey = eligible.join(" ");
 
@@ -191,34 +219,46 @@ export function useComposeEntries({
   const [count, setCount] = React.useState<number | null>(null);
   const [entries, setEntries] = React.useState<EntryState[]>([]);
 
-  // Reconcile the entry list with the corpus and the count. Selections are **pruned, not
-  // reset**, when the corpus changes: a flow detector picked on `fleet_scan` is not an option
-  // on `synthetic`, but whatever else the entry held is still what the operator wanted.
+  // Reconcile the entry list with the catalogue and the count. Selections are **pruned, not
+  // reset**: a detector the registry no longer offers cannot be built, so it cannot stay.
+  //
+  // Pruned against what is *constructible*, not against what is eligible. Eligibility is a
+  // statement about this corpus, and an ineligible pick is now a legal, explained choice — so
+  // pruning on it would let the list say "selectable" while this said no. It also fired on every
+  // re-run of this effect, not only on a corpus switch: bumping the entry count silently dropped
+  // a deliberate pick, with none of the "here is what I cleared" courtesy the sweep path gives.
   React.useEffect(() => {
-    // Nothing to default *to* until the detector catalogue has arrived: creating entries
-    // against an empty eligible list would fix the count at 1 and leave entry 1 blank, which
-    // is the opposite of "one detector per entry, walking down the list".
-    if (eligible.length === 0) return;
+    // Nothing to default *to* until the detector catalogue has arrived: creating entries against
+    // an empty list would fix the count at 1 and leave entry 1 blank, which is the opposite of
+    // "one detector per entry, walking down the list". The test is the catalogue rather than
+    // eligibility, so a corpus no detector can feed still gets its entry rows and therefore
+    // still shows the marked list, instead of the page going blank.
+    if (detectors.length === 0) return;
     const wanted = count ?? Math.min(2, Math.max(1, eligible.length));
     if (count === null) setCount(wanted);
     setEntries((previous) => {
       const next: EntryState[] = [];
       for (let index = 0; index < wanted; index += 1) {
         const existing = previous[index];
-        // Default to one detector per entry, walking down the eligible list, so a fresh page
-        // is the head-to-head everyone expects and multi-detector entries are opt-in.
+        // Default to one detector per entry, walking down the ELIGIBLE list, so a fresh page is
+        // the head-to-head everyone expects and multi-detector entries are opt-in. This is the
+        // line that keeps ADR-0035 D2's bug fixed.
         if (existing === undefined) {
           next.push(emptyEntry(eligible[index]));
           continue;
         }
-        const pruned = existing.selected.filter((name) => eligible.includes(name));
-        next.push(pruned.length === existing.selected.length ? existing : { ...existing, selected: pruned });
+        const pruned = existing.selected.filter((name) => offeredNames.includes(name));
+        next.push(
+          pruned.length === existing.selected.length
+            ? existing
+            : { ...existing, selected: pruned },
+        );
       }
       const same =
         next.length === previous.length && next.every((entry, index) => entry === previous[index]);
       return same ? previous : next;
     });
-  }, [count, eligibleKey, eligible]);
+  }, [count, eligibleKey, eligible, detectors, offeredNames]);
 
   const summaries = React.useMemo(
     () => new Map(detectors.map((item) => [item.name, item])),
@@ -318,181 +358,197 @@ export function useComposeEntries({
   const noneFittable =
     protocol !== "none" && picked.size > 0 && [...picked].every((name) => !fittable.has(name));
 
-  const element =
-    eligible.length === 0 ? (
-      <Notice tone="info">
-        No registered detector can read this corpus. It feeds lane(s){" "}
-        <b>{(corpus?.lanes ?? []).join(", ") || "none"}</b> carrying payload(s){" "}
-        <b>{(corpus?.payloads ?? []).join(", ") || "none"}</b>, and a detector needs one of
-        those lanes and all of the payloads it reads through.
-      </Notice>
-    ) : (
-      <div className="space-y-6">
-        <Field label="Alert engine" htmlFor="eval_engine" className="max-w-xs">
-          <Select
-            id="eval_engine"
-            data-testid="eval_engine"
-            options={["weighted", "stub"]}
-            value={engine}
-            onChange={(event) => setEngine(event.target.value)}
-          />
-        </Field>
+  const element = (
+    <div className="space-y-6">
+      {/* A banner above a populated list, not a replacement for it. Nothing is chosen for
+          the operator here, but every detector stays visible and says why it will not fire
+          — which is also what would have made "no corpus carries a meter payload" legible
+          instead of leaving the page looking like the registry is smaller than it is. */}
+      {eligible.length === 0 ? (
+        <Notice tone="info">
+          No registered detector can read this corpus. It feeds lane(s){" "}
+          <b>{(corpus?.lanes ?? []).join(", ") || "none"}</b> carrying payload(s){" "}
+          <b>{(corpus?.payloads ?? []).join(", ") || "none"}</b>, and a detector needs one of
+          those lanes and all of the payloads it reads through.
+        </Notice>
+      ) : null}
 
-        <Section
-          title="Entries"
-          description="One entry is one row of the comparison. Put a single detector in each to compare them head to head; put several in one to run them together in a single pipeline, which is how alerts come to cite more than one lane."
-        >
-          <RowCount
-            label="entry"
-            count={count ?? 1}
-            max={MAX_ENTRIES}
-            testId="eval_entry_n"
-            onChange={setCount}
-          />
+      <Field label="Alert engine" htmlFor="eval_engine" className="max-w-xs">
+        <Select
+          id="eval_engine"
+          data-testid="eval_engine"
+          options={["weighted", "stub"]}
+          value={engine}
+          onChange={(event) => setEngine(event.target.value)}
+        />
+      </Field>
 
-          <div className="space-y-4">
-            {derived.map((item, index) => (
-              <div
-                key={index}
-                data-testid={`eval_entry_${index}`}
-                className="space-y-3 rounded-lg border border-line bg-surface p-4"
-              >
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Entry {index + 1}
-                </p>
-                <MultiSelect
-                  label={`Detectors in entry ${index + 1}`}
-                  options={eligible}
-                  value={item.entry.selected}
-                  onValueChange={(selected) => updateEntry(index, { selected })}
-                  hint="Two or more run together in one pipeline, so their alerts can corroborate."
-                />
+      <Section
+        title="Entries"
+        description="One entry is one row of the comparison. Put a single detector in each to compare them head to head; put several in one to run them together in a single pipeline, which is how alerts come to cite more than one lane."
+      >
+        <RowCount
+          label="entry"
+          count={count ?? 1}
+          max={MAX_ENTRIES}
+          testId="eval_entry_n"
+          onChange={setCount}
+        />
 
-                {item.plans.map(({ name, summary, state }) => (
-                  <Collapsible key={name} label={`${name} — hyperparameters`}>
-                    {summary.artifact_param ? (
-                      <div className="space-y-3">
-                        <RadioGroup
-                          name={`eval_e${index}_${name}_mode`}
-                          label={`${name}: trained artifact or from scratch`}
-                          options={[
-                            { value: TRAINED, label: TRAINED },
-                            { value: SCRATCH, label: SCRATCH },
-                          ]}
-                          value={state.mode}
-                          onValueChange={(mode) => updatePlan(index, name, { mode })}
-                        />
-                        {state.mode === TRAINED ? (
-                          <>
-                            <ArtifactField
-                              summary={summary}
-                              label={summary.artifact_param}
-                              id={`eval_e${index}_${name}_art`}
-                              value={state.artifact}
-                              onChange={(artifact) => updatePlan(index, name, { artifact })}
-                            />
-                            {/* Why this detector contributes nothing to the entry's sweep
-                                menu. Without it the menu silently gains options when this
-                                radio moves, and the radio lives inside a collapsed panel. */}
-                            <p className="caption">
-                              So there is nothing here to edit or sweep. Switch to <i>{SCRATCH}</i>{" "}
-                              to choose <b>{name}</b>&apos;s hyperparameters yourself.
-                            </p>
-                          </>
-                        ) : (
-                          <ParamFields
-                            params={tunablesOf(summary)}
-                            values={state.params}
-                            idPrefix={`eval_e${index}_${name}`}
-                            onChange={(param, value: ParamValue) =>
-                              updatePlan(index, name, { params: { ...state.params, [param]: value } })
-                            }
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <ParamFields
-                        params={summary.params}
-                        values={state.params}
-                        idPrefix={`eval_e${index}_${name}`}
-                        onChange={(param, value: ParamValue) =>
-                          updatePlan(index, name, { params: { ...state.params, [param]: value } })
-                        }
+        <div className="space-y-4">
+          {derived.map((item, index) => (
+            <div
+              key={index}
+              data-testid={`eval_entry_${index}`}
+              className="space-y-3 rounded-lg border border-line bg-surface p-4"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                Entry {index + 1}
+              </p>
+              <MultiSelect
+                label={`Detectors in entry ${index + 1}`}
+                options={offeredNames}
+                notes={notes}
+                value={item.entry.selected}
+                onValueChange={(selected) => updateEntry(index, { selected })}
+                hint="Two or more run together in one pipeline, so their alerts can corroborate. An annotated detector can still be run; it will score zeros and the report will say why."
+              />
+
+              {item.plans.map(({ name, summary, state }) => (
+                <Collapsible key={name} label={`${name} — hyperparameters`}>
+                  {summary.artifact_param ? (
+                    <div className="space-y-3">
+                      <RadioGroup
+                        name={`eval_e${index}_${name}_mode`}
+                        label={`${name}: trained artifact or from scratch`}
+                        options={[
+                          { value: TRAINED, label: TRAINED },
+                          { value: SCRATCH, label: SCRATCH },
+                        ]}
+                        value={state.mode}
+                        onValueChange={(mode) => updatePlan(index, name, { mode })}
                       />
-                    )}
-                  </Collapsible>
-                ))}
+                      {state.mode === TRAINED ? (
+                        <>
+                          <ArtifactField
+                            summary={summary}
+                            label={summary.artifact_param}
+                            id={`eval_e${index}_${name}_art`}
+                            value={state.artifact}
+                            onChange={(artifact) => updatePlan(index, name, { artifact })}
+                          />
+                          {/* Why this detector contributes nothing to the entry's sweep
+                              menu. Without it the menu silently gains options when this
+                              radio moves, and the radio lives inside a collapsed panel. */}
+                          <p className="caption">
+                            So there is nothing here to edit or sweep. Switch to <i>{SCRATCH}</i>{" "}
+                            to choose <b>{name}</b>&apos;s hyperparameters yourself.
+                          </p>
+                        </>
+                      ) : (
+                        <ParamFields
+                          params={tunablesOf(summary)}
+                          values={state.params}
+                          idPrefix={`eval_e${index}_${name}`}
+                          onChange={(param, value: ParamValue) =>
+                            updatePlan(index, name, { params: { ...state.params, [param]: value } })
+                          }
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <ParamFields
+                      params={summary.params}
+                      values={state.params}
+                      idPrefix={`eval_e${index}_${name}`}
+                      onChange={(param, value: ParamValue) =>
+                        updatePlan(index, name, { params: { ...state.params, [param]: value } })
+                      }
+                    />
+                  )}
+                </Collapsible>
+              ))}
 
-                {item.plans.length > 0 ? (
-                  <div className="space-y-2">
-                    {item.entry.clearedSweep ? (
-                      <Notice tone="warning">
-                        The <b>{item.entry.clearedSweep}</b> sweep no longer applies to this
-                        entry&apos;s detectors and has been cleared. Pick one below if you still want
-                        a sweep.
-                      </Notice>
-                    ) : null}
-                    {Object.keys(item.offered).length > 0 ? (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Field label="Sweep a hyperparameter" htmlFor={`eval_e${index}_sw`}>
-                          <Select
-                            id={`eval_e${index}_sw`}
-                            data-testid={`eval_e${index}_sw`}
-                            options={item.options}
-                            value={item.entry.sweepKey}
-                            onChange={(event) => {
-                              const sweepKey = event.target.value;
-                              const knob = item.offered[sweepKey];
-                              updateEntry(index, {
-                                sweepKey,
-                                clearedSweep: null,
-                                sweepText:
-                                  sweepKey === NO_SWEEP
+              {item.plans.length > 0 ? (
+                <div className="space-y-2">
+                  {item.entry.clearedSweep ? (
+                    <Notice tone="warning">
+                      The <b>{item.entry.clearedSweep}</b> sweep no longer applies to this
+                      entry&apos;s detectors and has been cleared. Pick one below if you still want
+                      a sweep.
+                    </Notice>
+                  ) : null}
+                  {Object.keys(item.offered).length > 0 ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Sweep a hyperparameter" htmlFor={`eval_e${index}_sw`}>
+                        <Select
+                          id={`eval_e${index}_sw`}
+                          data-testid={`eval_e${index}_sw`}
+                          options={item.options}
+                          value={item.entry.sweepKey}
+                          onChange={(event) => {
+                            const sweepKey = event.target.value;
+                            const knob = item.offered[sweepKey];
+                            updateEntry(index, {
+                              sweepKey,
+                              clearedSweep: null,
+                              sweepText:
+                                sweepKey === NO_SWEEP
+                                  ? ""
+                                  : knob?.default === null || knob?.default === undefined
                                     ? ""
-                                    : knob?.default === null || knob?.default === undefined
-                                      ? ""
-                                      : String(knob.default),
-                              });
-                            }}
+                                    : String(knob.default),
+                            });
+                          }}
+                        />
+                      </Field>
+                      {item.entry.sweepKey !== NO_SWEEP ? (
+                        <Field
+                          label={`${item.entry.sweepKey} values (comma-separated)`}
+                          htmlFor={`eval_e${index}_swv`}
+                        >
+                          <TextInput
+                            id={`eval_e${index}_swv`}
+                            data-testid={`eval_e${index}_swv`}
+                            value={item.entry.sweepText}
+                            onChange={(event) => updateEntry(index, { sweepText: event.target.value })}
                           />
                         </Field>
-                        {item.entry.sweepKey !== NO_SWEEP ? (
-                          <Field
-                            label={`${item.entry.sweepKey} values (comma-separated)`}
-                            htmlFor={`eval_e${index}_swv`}
-                          >
-                            <TextInput
-                              id={`eval_e${index}_swv`}
-                              data-testid={`eval_e${index}_swv`}
-                              value={item.entry.sweepText}
-                              onChange={(event) => updateEntry(index, { sweepText: event.target.value })}
-                            />
-                          </Field>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {item.entry.sweepKey !== NO_SWEEP ? (
-                      <p className="caption">
-                        {item.parsed.length === 0
-                          ? `Enter comma-separated values to sweep ${item.entry.sweepKey}.`
-                          : `-> ${item.parsed.length} run(s), one per value, compared head to head`}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </Section>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {item.entry.sweepKey !== NO_SWEEP ? (
+                    <p className="caption">
+                      {item.parsed.length === 0
+                        ? `Enter comma-separated values to sweep ${item.entry.sweepKey}.`
+                        : `-> ${item.parsed.length} run(s), one per value, compared head to head`}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </Section>
 
-        {noneFittable ? (
-          <Notice tone="info">
-            None of the selected detectors can be trained; they will be evaluated as configured
-            and the report will say so.
-          </Notice>
-        ) : null}
-      </div>
-    );
+      {noneFittable ? (
+        <Notice tone="info">
+          None of the selected detectors can be trained; they will be evaluated as configured
+          and the report will say so.
+        </Notice>
+      ) : null}
+    </div>
+  );
 
-  return { element, entries: eligible.length === 0 ? [] : built, problems: eligible.length === 0 ? [] : problems };
+  // Gated on the catalogue rather than on eligibility: a deliberately selected detector this
+  // corpus cannot feed is a legal run that reports why it found nothing, so withholding its
+  // spec here would re-impose the refusal this component just stopped making.
+  return {
+    element,
+    entries: built,
+    // Only `problems` needs the gate: with no catalogue there are no entries, so `built` is
+    // already empty, but the "no normalizer reads this format" message would fire on a corpus
+    // whose formats simply have not loaded yet.
+    problems: detectors.length === 0 ? [] : problems,
+  };
 }

@@ -249,27 +249,52 @@ describe("composing entries (E5, E6, E7)", () => {
     captured.evalBody = null;
   });
 
-  it("offers only detectors the corpus's lane AND payload can feed, and prunes on a switch", async () => {
+  it("marks detectors the corpus cannot feed rather than hiding them, and prunes on a switch", async () => {
     await openCompose();
-    // synthetic is telemetry-only. Scoped to entry 0, since every entry offers the same list.
+    // synthetic is telemetry carrying no typed payload. Scoped to entry 0, since every entry
+    // offers the same list. The queries below lean on one property: an *eligible* option's
+    // accessible name is exactly its detector name, while a marked one has the reason folded
+    // into it — so an exact-name match tests eligibility and a regex tests the marking.
     const entry = () => within(screen.getByTestId("eval_entry_0"));
     expect(entry().getByRole("checkbox", { name: "stub_threshold" })).toBeChecked();
-    expect(entry().queryByRole("checkbox", { name: "flow_burst" })).not.toBeInTheDocument();
-    // The second axis (ADR-0035 D2). `meter_iforest` matches this corpus's lane, sorts first
-    // in the catalogue, and was therefore entry 0's *default* — a detector that cannot read a
-    // single event of a `stub-csv` bundle, because none carries a `MeterReading`.
-    expect(entry().queryByRole("checkbox", { name: "meter_iforest" })).not.toBeInTheDocument();
 
+    // The regression this test exists for. `meter_iforest` needs a meter payload and no corpus
+    // in the product carries one, so filtering did not hide a bad pairing — it removed the
+    // detector from every corpus at once, and the page read as though the registry held one
+    // fewer. Offered, reasoned, and NOT preselected: that last part is the bug ADR-0035 D2
+    // actually fixed, and defaulting from `eligible` alone is all it needed.
+    expect(
+      entry().getByRole("checkbox", {
+        name: /^meter_iforest — needs payload meter, this corpus carries none$/,
+      }),
+    ).not.toBeChecked();
+
+    // A foreign LANE is marked the same way, and names the lane rather than the payload it is
+    // also missing: first-unmet-wins, so nobody is asked to fix two things to repair one.
+    expect(
+      entry().getByRole("checkbox", {
+        name: /^flow_burst — reads lane flow, this corpus feeds telemetry$/,
+      }),
+    ).not.toBeChecked();
+
+    // A corpus switch moves the marks both ways. The selection SURVIVES it, now marked: only
+    // constructibility prunes, because eligibility is a statement about the corpus and an
+    // ineligible pick is a legal explained choice. Pruning on eligibility also fired on any
+    // re-run of the reconciler, so bumping the entry count silently dropped a deliberate pick.
     await userEvent.selectOptions(screen.getByTestId("eval_corpus"), "fleet_scan");
     await waitFor(() =>
       expect(entry().getByRole("checkbox", { name: "flow_burst" })).toBeInTheDocument(),
     );
-    expect(entry().queryByRole("checkbox", { name: "stub_threshold" })).not.toBeInTheDocument();
+    expect(
+      entry().getByRole("checkbox", {
+        name: /^stub_threshold — reads lane telemetry, this corpus feeds flow$/,
+      }),
+    ).toBeChecked();
 
-    // Switching back must prune the stale pick rather than raising.
+    // Switching back clears the mark, and the pick is still the operator's.
     await userEvent.selectOptions(screen.getByTestId("eval_corpus"), "synthetic");
     await waitFor(() =>
-      expect(entry().getByRole("checkbox", { name: "stub_threshold" })).toBeInTheDocument(),
+      expect(entry().getByRole("checkbox", { name: "stub_threshold" })).toBeChecked(),
     );
   });
 

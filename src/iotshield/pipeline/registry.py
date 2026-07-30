@@ -273,7 +273,7 @@ def _flow_burst(
 
 
 def _rules(
-    lane: Literal["telemetry", "log", "flow"] = _DEFAULT_RULES_LANE.value,
+    lane: Literal["log", "flow"] = _DEFAULT_RULES_LANE.value,
     ruleset: str = _PACKAGED_RULES,
     merge_gap_minutes: float = _DEFAULT_RULES_MERGE_GAP,
 ) -> RuleDetector:
@@ -284,6 +284,17 @@ def _rules(
     configured entries, not two adapters. The Literal is declaration rather than enforcement
     (params arrive untyped from YAML; ``Lane()`` is what rejects a bad value), so ``/modules``
     can offer the closed vocabulary as a choice instead of a free-text box.
+
+    It offers the lanes the **packaged library** actually covers, which is the same
+    narrowing ``_stub_threshold`` applies for the same reason: the vocabulary a form renders
+    must be what this adapter can do, not every value the type admits. ``lane: telemetry``
+    is grammatically valid and has real fields, but no shipped rule uses it, so the choice
+    was a dead end an operator could only discover by submitting a run. Nor is the fix to
+    write one: a flow or log signature is portable (port 23 is telnet on every estate, and
+    ``POSSIBLE BREAK-IN ATTEMPT`` is an OpenSSH string), while a telemetry signature names a
+    channel and an engineering limit that belong to one site's equipment. Telemetry rules
+    are therefore something a deployment authors, and — the Literal being declaration only —
+    it reaches them by naming its own shelved rule set beside ``lane: telemetry`` in config.
 
     ``ruleset`` names a rule set — ``packaged`` (the default, the library that ships with the
     product) or one on the deployment's shelf, which ``available_rulesets`` publishes as this

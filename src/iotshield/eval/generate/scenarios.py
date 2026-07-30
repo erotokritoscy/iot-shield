@@ -6,8 +6,12 @@ appears in ``eval list``, in ``/eval/corpora``, and in the dashboard's picker wi
 any of them.
 """
 
+from iotshield.detect.meter.params import DEFAULT_MIN_TRAIN_HOURS
+from iotshield.eval.fit import TRAIN_FRACTION
 from iotshield.eval.generate.flow import SOURCE_FORMAT as FLOW_CSV
+from iotshield.eval.generate.meter import fitting_hours, hours
 from iotshield.eval.generate.world import Clock, Device, FaultSpec, Recording, Scenario
+from iotshield.normalize.meter import SENSIPRO_HOURLY_CSV
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
 from iotshield.normalize.syslog import SOURCE_FORMAT as SYSLOG
 
@@ -255,8 +259,84 @@ TRIMODAL = Scenario(
     seed=5000,
 )
 
+WATER_METER = "meter-water-04"
+POWER_METER = "meter-power-11"
+
+
+def _meter_recordings() -> tuple[Recording, ...]:
+    """One recording per fault shape plus a clean one, on a water meter and a power meter.
+
+    ## Why these recordings are about 31 weeks long
+
+    Every other corpus here is minutes of data. ``meter_iforest`` cannot be fitted from minutes:
+    it needs ``DEFAULT_MIN_TRAIN_HOURS`` of clean history — itself derived from ``fp_budget``,
+    715 rows for the quantile plus a week to warm the rolling window — and ``--fit-protocol
+    prefix`` only reserves the first ``TRAIN_FRACTION`` of the clock. The length is therefore
+    *computed* from those two numbers rather than typed, so it stays correct if either moves.
+    Sizing it by hand is how a corpus ends up one row short of fittable and reports a table of
+    skips that reads like a broken detector.
+
+    That length is also why there is one recording per shape rather than ``synthetic``'s three.
+    Per-case variance is worth having and this trades it for a clock long enough to fit at the
+    product's real operating point, which was the more important of the two: a corpus that
+    cannot be fitted measures nothing at all.
+
+    Each fault lands on one meter while the other is **asserted clean** in the same recording,
+    which is what makes a false alarm on the quiet meter countable (ADR-0021's roster). They
+    alternate, so each meter is both subject and control across the corpus, and the two
+    utilities exercise the one-model-per-meter law that ADR-0030 D7 built the adapter around.
+    """
+    water = Device(asset_id=WATER_METER, kind="water_meter", role="district water meter")
+    power = Device(asset_id=POWER_METER, kind="power_meter", role="building supply meter")
+    meters = (water, power)
+    clock = hours(fitting_hours(TRAIN_FRACTION, DEFAULT_MIN_TRAIN_HOURS))
+    # Multiples of "3x what this hour of the week normally draws" (meter.CALIBRATION). The spike
+    # sits above the line and the drift ends on it, mirroring `synthetic`; `stuck` freezes the
+    # counter and has no magnitude, so its intensity is never read.
+    over = {"spike": 1.3, "drift": 1.0, "stuck": 1.0}
+    # Comfortably past the reserved prefix: `prefix` caps training at the asset's FIRST fault,
+    # so a fault inside the reserved fraction would shorten the very history it needs.
+    start = int(clock.steps * 0.65)
+    return (
+        *(
+            Recording(
+                name=f"{kind}-{subject.asset_id.rsplit('-', 1)[-1]}",
+                clock=clock,
+                devices=meters,
+                faults=(
+                    FaultSpec(
+                        kind=kind,
+                        asset_id=subject.asset_id,
+                        start_step=start + offset,
+                        # Long enough to be an episode rather than one odd hour: a leak or a
+                        # stalled register lasts days, and `min_episode_hours` means a
+                        # single-hour excursion is reportable but not what this measures.
+                        length_steps=72,
+                        intensity=over[kind],
+                    ),
+                ),
+            )
+            for offset, (kind, subject) in enumerate(
+                (("spike", water), ("drift", power), ("stuck", water))
+            )
+        ),
+        Recording(name="clean", clock=clock, devices=meters),
+    )
+
+
+METER_FLEET = Scenario(
+    name="meter_fleet",
+    description=(
+        "Hourly utility metering on a water and an electricity meter: a consumption surge, a "
+        "developing leak and a frozen register against an hour-of-week profile"
+    ),
+    formats=(SENSIPRO_HOURLY_CSV.name,),
+    recordings=_meter_recordings(),
+    seed=7000,
+)
+
 SCENARIOS: dict[str, Scenario] = {
-    scenario.name: scenario for scenario in (SYNTHETIC, FLEET_SCAN, TRIMODAL)
+    scenario.name: scenario for scenario in (SYNTHETIC, FLEET_SCAN, TRIMODAL, METER_FLEET)
 }
 
 # There is deliberately no `DEFAULT_SCENARIO`. It described itself as "what `--corpus` defaults

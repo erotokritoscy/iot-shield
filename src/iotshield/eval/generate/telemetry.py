@@ -29,6 +29,7 @@ from iotshield.eval.generate.port import (
     Observed,
     Streams,
     one_boundary,
+    ramp,
 )
 from iotshield.eval.generate.world import Clock, Device, FaultSpec, GenerationError
 from iotshield.normalize.stub import SOURCE_FORMAT as STUB_CSV
@@ -119,7 +120,7 @@ its last plausible value" is a statement about two readings being identical, so 
 one reading cannot say it. ``spike`` and ``drift`` used to belong here for a much worse reason —
 their shapes were built from ``linspace``, which spends its endpoints on the boundary values, so
 a one-sample spike multiplied its amplitude by ``sin(0)`` and a one-sample drift by the ramp's
-starting zero. Both silently produced nothing. ``_bump`` and ``_ramp`` fix that at the source
+starting zero. Both silently produced nothing. ``_bump`` and ``port.ramp`` fix that at the source
 rather than declaring a minimum for it, which is why this table has one entry instead of three.
 """
 
@@ -142,17 +143,6 @@ def _bump(samples: int) -> np.ndarray:
     """
     shape = np.sin(np.linspace(0.0, math.pi, samples + 2)[1:-1])
     return shape / shape.max()
-
-
-def _ramp(samples: int, rise: float) -> np.ndarray:
-    """A ramp **ending** at ``rise``, well-defined for every ``samples >= 1``.
-
-    Same defect, same cure. ``linspace(0, rise, 1)`` is ``[0.0]``, so a drift covering one sample
-    ended where it started. Dropping the leading zero means the ramp ends at ``rise`` whatever
-    its width — which is what the shape's docstring always claimed ("a slow ramp ending past the
-    threshold") — and costs nothing at the wide end, where the first step is ``rise/n``.
-    """
-    return np.linspace(0.0, rise, samples + 1)[1:]
 
 
 def _rise(series: _Series, channel: str, fault: FaultSpec) -> float:
@@ -340,7 +330,7 @@ class SensorRig(LaneBehaviour):
         # A slow ramp ending at the target but never locally sudden, so a fixed rule catches it
         # only once it crosses — this shape is where *latency* separates detectors that a
         # hit/miss score would tie.
-        series[profile.warm][span] += _ramp(
+        series[profile.warm][span] += ramp(
             span.stop - span.start, _rise(series, profile.warm, fault)
         )
 
@@ -370,6 +360,10 @@ class StubCsvRenderer:
     """
 
     lane = Lane.TELEMETRY
+    payload = None
+    """Bare numeric readings. The meter dialects share this lane and do NOT share this half of
+    the shape, which is the distinction ``BEHAVIOURS`` is keyed on."""
+
     source_format = STUB_CSV
 
     def header(self) -> tuple[str, ...]:

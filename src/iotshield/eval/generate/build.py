@@ -31,7 +31,7 @@ from functools import partial
 from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.detect import merge_runs
 from iotshield.eval.corpus import Case, CaseInput, Corpus
-from iotshield.eval.generate.port import BEHAVIOURS, RENDERERS, Behaviour, Renderer
+from iotshield.eval.generate.port import BEHAVIOURS, RENDERERS, Behaviour, Renderer, shape_id
 from iotshield.eval.generate.rng import stream
 from iotshield.eval.generate.world import (
     FaultSpec,
@@ -47,6 +47,7 @@ _NORMALIZER_FOR = {
     "syslog": "syslog",
     "flow-csv": "flow",
     "zeek-conn": "flow",
+    "sensipro-hourly-csv": "meter",
 }
 """Which normalizer reads each renderable format back — the inverse of ``RENDERERS``.
 
@@ -57,13 +58,19 @@ check loudly instead of skipping it into invisibility.
 
 def _resolve(source_format: str) -> tuple[Renderer, Behaviour]:
     renderer = lookup("renderer", RENDERERS, source_format)
-    behaviour = BEHAVIOURS.get(renderer.lane)
+    # Both axes, because a lane is not the whole shape (ADR-0035). Keyed on the lane alone, a
+    # meter dialect resolved to the sensor rig — the same lane, a different vocabulary — and
+    # was handed plain numeric readings carrying no `MeterReading` at all.
+    shape = (renderer.lane, renderer.payload)
+    behaviour = BEHAVIOURS.get(shape)
     if behaviour is None:
         # Not a `lookup`: this is a wiring inconsistency between two registries, not a name
         # a caller mistyped, so the message has to name both sides.
+        known = ", ".join(sorted(shape_id(known_shape) for known_shape in BEHAVIOURS))
         raise GenerationError(
-            f"renderer {source_format!r} produces {renderer.lane} events but no behaviour "
-            f"models that lane; known: {', '.join(sorted(BEHAVIOURS))}"
+            f"renderer {source_format!r} produces {renderer.lane} events carrying "
+            f"{renderer.payload or 'no'} payload, but no behaviour models that shape; "
+            f"known: {known}"
         )
     return renderer, behaviour
 

@@ -93,6 +93,14 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 # In a spec with several detectors a bare name may not identify one knob — qualify it.
 uv run python -m iotshield.eval --corpus device_trimodal \
     --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
+# The metering corpus, fitted per meter from each meter's own reserved prefix (ADR-0038).
+# One spec only: this corpus has NO baseline arm. `stub_threshold` is the project's floor
+# everywhere else, and it compares an absolute value in the channel's own units — 80.0, chosen
+# for a rig's pressure. A meter draws 0.045 m3 or 0.62 kWh an hour, so it scores zero on every
+# case for a units reason rather than a detection one, which teaches nothing; and picking a
+# meter-scaled threshold instead would be a number we typed in (ADR-0021 D7).
+uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
+    --spec config/bench/meter.yaml
 ```
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
@@ -162,9 +170,10 @@ precision/recall, pooled from `CaseReport.lanes` rather than averaged across cas
 derives every lane-bearing total from that mapping, so a per-lane and a pooled copy of one count
 cannot disagree.
 
-Three corpora are generated and committed: `synthetic` (telemetry, 3 fault shapes),
-`fleet_scan` (multi-device flow captures with the volume/direction/cardinality controls), and
-`device_trimodal` (one device on all three lanes, for the corroboration A/B). SKAB is
+Four corpora are generated and committed: `synthetic` (telemetry, 3 fault shapes),
+`fleet_scan` (multi-device flow captures with the volume/direction/cardinality controls),
+`device_trimodal` (one device on all three lanes, for the corroboration A/B), and `meter_fleet`
+(hourly metering on a water and an electricity meter — ADR-0038). SKAB is
 **GPLv3**, so it is not redistributed — `fetch skab` converts a local checkout into gitignored
 bundles. An absent corpus is a *skip* (exit 0), not a failure, so CI stays green on a fresh
 clone — but an **unknown** corpus name is exit 2, because a typo in a CI job must not pass green
@@ -181,8 +190,12 @@ either flag prints it too. The old defaults benchmarked `synthetic` with team3 �
 that cannot work — and printed a table of zeros.
 
 The generator (`eval/generate/`) is a **world** (devices + a clock + declared faults, no
-formats) rendered through two ports: a `Behaviour` per lane (what normal looks like, and what a
-fault does to it) and a `Renderer` per wire format (events → text). **A label is made of the
+formats) rendered through two ports: a `Behaviour` per **(lane, payload)** (what normal looks
+like, and what a fault does to it) and a `Renderer` per wire format (events → text). Keyed on
+both axes because a lane is not the whole shape (ADR-0035) and metering proved it inside the
+generator too: a meter behaviour is a *second* telemetry-lane behaviour, so keyed by lane alone it
+collided with the sensor rig and a meter dialect was handed plain numeric readings (ADR-0038 D2).
+**A label is made of the
 instants a behaviour actually perturbed** (`Observed.expressed`), never of the declared fault
 window — so the answer key cannot describe something absent from the bytes (ADR-0027 D1) — and
 those instants are split into contiguous runs of the lane's **own** clock with the same
@@ -196,11 +209,24 @@ against a truth that counted each once), and an intensity that would make a faul
 **downward** is refused with the per-channel floor named — `intensity` is multiples of an alarm
 line, but the handlers reach an absolute target, so anything under `baseline/boundary` (0.938 for
 a rig's Temperature) inverted the fault while the label still named it. Adding a
-lane is one behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A
+shape is one behaviour + one renderer; a dialect is one renderer; a corpus is one `Scenario`. A
 renderer is the **inverse of a normalizer**, and the meta-test that composes the two (emit →
 parse → compare, every field) is what caught an RFC 3164 corpus silently scoring zero after New
-Year; a companion test refuses a bundle-storable format with no renderer. Streams are seeded by
+Year; a companion test now requires every consumable format to be either bundle-storable *or*
+listed in `NOT_STORED` with a reason, because intersecting with `_EXTENSIONS` made a format
+missing from that table invisible rather than reported (ADR-0038 D6). It is **not** one line per
+event: the meter normalizer differences a cumulative counter, so N events are the differences of
+N+1 readings and its inverse writes the extra opening row — which is why the ordering law is now
+"the output depends on input order and loses nothing", the mirror form having been one-line-per-
+event in disguise (D3). Streams are seeded by
 *name*, so adding a device leaves every other device's bytes untouched.
+
+**A cumulative lane labels the observation, not the bytes (ADR-0038 D4).** Perturb one hour of a
+meter's counter and every later row differs forever, so comparing rendered lines would demand a
+label over the whole remainder of the recording — thousands of hours at which nothing was observed
+differently. A running total is a statement about the past; what a detector reads at an instant is
+the *consumption* for it, so that is what `expressed` and the label-law test compare. On the four
+non-differencing lanes the line is the observation and nothing changes.
 
 A fault shape must also be well-defined at **one sample**, because a device's sampling rate
 decides how many readings a declared window covers: 40 steps is 40 samples on a 1 Hz rig and one
@@ -223,6 +249,14 @@ per fault kind (fan-out's 20 peers, port-scan's 15 ports and exfiltration's 50 M
 alarm lines on one lane), and two meta-tests hold it: every expressible fault has a boundary
 matching the registry, and a scenario can assert its own **difficulty** — the test whose absence
 let the 316.7 ship.
+
+A boundary may name **no** registry param, and only then (ADR-0038 D5): `meter_iforest` fits its
+threshold to a false-alarm budget on each meter's own history, so there is no default to match and
+`fp_budget` cannot stand in for one (a rate is not a magnitude). Its boundary is quoted in units the
+behaviour owns — 3x what this hour of the week normally draws — and the hatch is narrowed twice: a
+meta-test allows `param=None` only for a **`Fittable`** detector, and the registry check is replaced
+by the behavioural one, since a number in a behaviour's own units can only be validated by
+measuring whether the fault is actually caught at it.
 
 Detectors judge every channel of every device against one absolute value, so a device *kind*
 selects a telemetry profile too (ADR-0028 D7): a gateway reports CPU load twice a minute rather
@@ -273,11 +307,24 @@ publishes each committed `config/bench/*.yaml` with the corpora it fits, so the 
 can run the *committed file verbatim* rather than composing a lookalike that silently drops
 `assets:` and every source and engine param. `/eval/corpora` also
 publishes `lanes` **and `payloads`** (what those formats feed, decoded server-side so no client
-parses a `lane:`/`payload:` prefix), which is how the Evaluate page offers only detectors the
-corpus can actually feed: **any** of the lanes, **all** of the payloads (ADR-0035). The lane
-alone offered `meter_iforest` on every `stub-csv` corpus — where it matches the modality and
-can read none of the events, since none carries a `MeterReading` — and, sorting first, made it
-the default entry. Flow and trimodal bench specs deliberately register **no `assets:`**, because
+parses a `lane:`/`payload:` prefix), which is how the Evaluate page knows which detectors the
+corpus can actually feed: **any** of the lanes, **all** of the payloads — `api.evaluation.can_judge`
+(ADR-0035). The lane alone offered `meter_iforest` on every `stub-csv` corpus, where it matches the
+modality and can read none of the events since none carries a `MeterReading`, and — sorting first —
+made it the default entry.
+
+**That predicate now decides the default, not the offer (ADR-0038 D1).** Every registered detector
+stays in the list; an ineligible one is greyed with its reason (*needs payload `meter`, this corpus
+carries none*) and is still selectable. Filtering it out was the wrong half of the fix: since no
+corpus carried a meter payload, it removed `meter_iforest` from **every** corpus at once, so the
+page reported five detectors where the registry has six and hid the missing corpus along with it. A
+filter that removes an option in every case is a deletion. The bug being fixed was only that it
+became the *default*, and running an ineligible pairing deliberately is a real measurement — the
+harness already carries the guard's warning and the detector's own `why_silent` into the report, so
+the row of zeros arrives with two explanations. The rule is the guard's own: refuse what is
+structurally broken, mark what is merely futile.
+
+Flow and trimodal bench specs deliberately register **no `assets:`**, because
 `asset_weight` is something we type in and would be indistinguishable from a real ranking
 improvement (ADR-0021 D7).
 
