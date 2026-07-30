@@ -97,7 +97,10 @@ export function Textarea({
 }
 
 interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
-  readonly label: string;
+  /** A node rather than a string so a caller can append a reason beside the name, which the
+   * wrapping `<label>` then folds into the accessible name — the reason is read out with the
+   * option instead of being decoration a screen reader never reaches. */
+  readonly label: React.ReactNode;
 }
 
 export function Checkbox({ label, className, id, ...props }: CheckboxProps) {
@@ -217,13 +220,27 @@ interface MultiSelectProps {
   readonly value: readonly string[];
   readonly onValueChange: (value: string[]) => void;
   readonly hint?: React.ReactNode;
+  /** Why an option will not do what its name suggests, keyed by option.
+   *
+   * An annotated option stays **selectable**. A disabled checkbox with a tooltip is the same
+   * refusal as omitting it, and the case this exists for is a choice that is futile rather
+   * than invalid: the run is legal, produces a real result, and explains itself.
+   */
+  readonly notes?: Readonly<Record<string, string>>;
 }
 
 /**
  * A checkbox list rather than a `<select multiple>`: multi-select via ctrl-click is a
  * discoverability trap, and these lists (detectors in an entry, sinks) are short.
  */
-export function MultiSelect({ label, options, value, onValueChange, hint }: MultiSelectProps) {
+export function MultiSelect({
+  label,
+  options,
+  value,
+  onValueChange,
+  hint,
+  notes,
+}: MultiSelectProps) {
   const toggle = (option: string) => {
     // Preserve the *offered* order rather than click order, so a spec's label reads the
     // same however it was assembled.
@@ -239,14 +256,25 @@ export function MultiSelect({ label, options, value, onValueChange, hint }: Mult
         {options.length === 0 ? (
           <span className="caption">Nothing to choose from.</span>
         ) : (
-          options.map((option) => (
-            <Checkbox
-              key={option}
-              label={option}
-              checked={value.includes(option)}
-              onChange={() => toggle(option)}
-            />
-          ))
+          options.map((option) => {
+            const note = notes?.[option];
+            return (
+              <Checkbox
+                key={option}
+                label={
+                  note === undefined ? (
+                    option
+                  ) : (
+                    <>
+                      {option} <span className="text-dim">— {note}</span>
+                    </>
+                  )
+                }
+                checked={value.includes(option)}
+                onChange={() => toggle(option)}
+              />
+            );
+          })
         )}
       </div>
       {hint ? <p className="caption mt-1">{hint}</p> : null}
