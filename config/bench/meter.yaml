@@ -12,6 +12,15 @@
 #   uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
 #       --spec config/bench/meter.yaml
 #
+# It runs alone, and that is a real gap rather than an oversight. Every other corpus is read
+# against `bench/stub.yaml` as a floor, and that detector compares an absolute value in the
+# channel's own units: 80.0, which straddles a rig's pressure and is three orders of magnitude
+# above a meter's hourly draw. Paired here it would score zero on every case because of the
+# units, not because a fixed threshold is blind to anything — and a meter-scaled threshold would
+# be a number we chose, indistinguishable from a real result (ADR-0021 D7). A `stub.yaml` cannot
+# be reused directly either: a spec declares one source per input position in the corpus's own
+# formats, so a floor arm here would need its own file naming `sensipro-hourly-csv`.
+#
 # The shipped `demo_meter` artifact is deliberately NOT named here. A baseline describes ONE
 # meter (ADR-0030 D7): that artifact was fitted on the demo meter's own clean months, so
 # pointing it at a generated meter is a skip, not a judgment. Fitting from the corpus is the

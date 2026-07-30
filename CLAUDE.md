@@ -94,9 +94,13 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 uv run python -m iotshield.eval --corpus device_trimodal \
     --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
 # The metering corpus, fitted per meter from each meter's own reserved prefix (ADR-0037).
-# `stub_threshold` is offered here as the floor: a fixed threshold cannot see a frozen register.
+# One spec only: this corpus has NO baseline arm. `stub_threshold` is the project's floor
+# everywhere else, and it compares an absolute value in the channel's own units — 80.0, chosen
+# for a rig's pressure. A meter draws 0.045 m3 or 0.62 kWh an hour, so it scores zero on every
+# case for a units reason rather than a detection one, which teaches nothing; and picking a
+# meter-scaled threshold instead would be a number we typed in (ADR-0021 D7).
 uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
-    --spec config/bench/meter.yaml --spec config/bench/stub.yaml
+    --spec config/bench/meter.yaml
 ```
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest

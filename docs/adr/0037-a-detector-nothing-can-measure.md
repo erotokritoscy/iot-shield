@@ -152,8 +152,7 @@ Pooled: evF1 0.23, evP 0.14, evR 0.67, `ovl` 0.95. Two findings, neither tuned a
 
 - **The frozen register is caught**, and it is the shape that justifies this detector existing.
   Consumption reads exactly zero, which is an ordinary level for 3am and impossible at 7pm; no
-  magnitude rule can separate those and a model of normal can. `stub_threshold` is offered on
-  this corpus as the floor to read that against.
+  magnitude rule can separate those and a model of normal can.
 - **Precision is ~3x the declared `fp_budget`** (35 alarms over ~8,400 clean meter-hours against
   ~1 per 730). The likely cause is that the reserved prefix is ~1,050 hours, a short sample from
   which to estimate a 99.86th percentile, so the fitted threshold is optimistic. Recorded rather
@@ -192,3 +191,12 @@ the gap *visible*, and D2-D6 are what closed it.
   input is `normalized-jsonl` still succeeds, the case `NOT_STORED` says cannot happen.
 - **`NOT_STORED`'s `normalized-jsonl` entry is an argument, not a proof.** If a passthrough
   corpus ever turns out to be worth having, the reasoning there is what has to be revisited.
+- **`meter_fleet` has no baseline arm.** Every other corpus is read against `bench/stub.yaml`,
+  the floor that makes "has this detector earned its complexity" answerable. That detector
+  compares an absolute value in the channel's own units, and its 80.0 was chosen to straddle a
+  rig's pressure — three orders of magnitude above a meter's hourly draw, so paired here it
+  scores zero for a units reason rather than a detection one. Measured, to be sure it was the
+  units: zero detections on all four cases, including the surge at 3.9x normal. A meter-scaled
+  threshold would be a number we chose, which ADR-0021 D7 is about. So this corpus reports
+  `meter_iforest` against nothing, and what a floor should be on a lane whose units are
+  site-specific is genuinely unresolved.
