@@ -25,13 +25,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from iotshield._paths import REPO_ROOT
 from iotshield.eval.corpus import CorpusInfo
 from iotshield.pipeline import PipelineSpec, load_spec
 
 BENCH_PATH_ENV = "IOTSHIELD_BENCH_PATH"
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_BENCH_ROOT = _REPO_ROOT / "config" / "bench"
+DEFAULT_BENCH_ROOT = REPO_ROOT / "config" / "bench"
 """Bench specs ship inside the repository, beside the corpora they are written against."""
 
 

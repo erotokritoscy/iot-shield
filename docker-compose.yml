@@ -100,11 +100,19 @@ services:
       # fetched locally (`iotshield.eval fetch skab`) visible to the API without ever
       # baking it into a shippable artifact.
       IOTSHIELD_CORPUS_PATH: "/app/data/eval"
+      # The rule shelf (ADR-0037): where a DEPLOYMENT's own detection rules live, as opposed
+      # to the library packaged inside the product. Bind-mounted read-only below, so adding a
+      # rule set is creating a directory on the host — no rebuild, no restart, and it shows up
+      # in the dashboard's `ruleset` dropdown on the next page load. Config names a rule set
+      # and never a path, so this variable is the only thing that decides which directories a
+      # run can read rules from.
+      IOTSHIELD_RULES_PATH: "/app/config/rules"
     ports:
       - "127.0.0.1:8100:8100"
     volumes:
       - ./results:/app/results
       - ./data/eval:/app/data/eval:ro
+      - ./config/rules:/app/config/rules:ro
     depends_on:
       init:
         condition: service_completed_successfully
@@ -172,6 +180,9 @@ services:
       - --config=config/demo.yaml
     environment:
       <<: *db-env
+      # Set explicitly rather than left to the repo-shaped default: that default is derived
+      # from the package's own location and is only right for an editable install.
+      IOTSHIELD_RULES_PATH: "/app/config/rules"
     depends_on:
       init:
         condition: service_completed_successfully

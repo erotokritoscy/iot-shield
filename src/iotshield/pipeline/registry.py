@@ -11,8 +11,8 @@ unknown names and bad params fail loudly with the known alternatives.
 """
 
 import inspect
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cache
 from typing import Any, Generic, Literal, TypeVar
@@ -47,6 +47,8 @@ from iotshield.detect.rules.detector import (
     DEFAULT_MERGE_GAP_MINUTES as _DEFAULT_RULES_MERGE_GAP,
 )
 from iotshield.detect.rules.detector import capability as _rules_capability
+from iotshield.detect.rules.loader import PACKAGED as _PACKAGED_RULES
+from iotshield.detect.rules.loader import available_rulesets, resolve_ruleset
 from iotshield.detect.stub import capability as _stub_threshold_capability
 from iotshield.detect.team3.artifact import available_artifacts as _team3_artifacts
 from iotshield.detect.team3.artifact import load_artifact
@@ -80,9 +82,9 @@ class AdapterSpec(Generic[T]):
     Pairing factory and capability in one record means the two can never drift out
     of each other's existence — you cannot add an adapter without declaring its shape.
 
-    The two optional fields are how an adapter that *learns* declares the ADR-0022 split,
-    so tooling can act on it without knowing the adapter. Both default to "not a learning
-    adapter", which is why ``stub_threshold`` and ``log_burst`` say nothing.
+    ``params_type`` and ``artifact_param`` are how an adapter that *learns* declares the
+    ADR-0022 split, so tooling can act on it without knowing the adapter. Both default to
+    "not a learning adapter", which is why ``stub_threshold`` and ``log_burst`` say nothing.
     """
 
     factory: Callable[..., T]
@@ -104,18 +106,26 @@ class AdapterSpec(Generic[T]):
     letting someone combine them and hit the atomicity error (``_fitted.resolve_params``).
     """
 
-    artifacts: tuple[str, ...] = ()
-    """Which cached fits this adapter ships (ADR-0035 D1).
+    discovered: Mapping[str, Callable[[], Sequence[str]]] = field(default_factory=dict)
+    """Params whose closed vocabulary is *found* rather than declared (ADR-0035 D1, ADR-0037).
 
-    ``artifact_param`` names the *field*; this names the **values**, and without it the two
-    shipped ids existed nowhere a client could read them — so the one page that needed them
-    carried a hardcoded table listing one of the two.
+    Some vocabularies cannot be written as a ``Literal`` because their members are files:
+    ``artifact`` names one of the fits an adapter's package ships, ``ruleset`` names one of the
+    rule sets on the deployment's shelf. Both are closed sets the registry can enumerate and
+    the signature cannot express, so both are published as that param's ``ParamInfo.choices``
+    and every form that already renders a closed vocabulary as a ``<select>`` renders them too.
+    One channel, because they are one idea: the shape of the fact is identical and only where
+    it is read from differs.
 
-    Resolved eagerly at import: listing both packages costs 3.5 ms against a 1.7 s
-    ``iotshield`` import, and this module already imports the packages that hold them. A
-    callable would buy 0.2% of an import that has already happened, at the price of a
-    None-vs-empty distinction and a method to reconcile it — "declares no provider" and
-    "ships nothing" mean the same thing to every reader, so they are the same value.
+    A **callable**, resolved per catalogue call. ADR-0035 D1 chose eager resolution for
+    artifacts and gave a good reason: package resources cannot change while the process runs,
+    so a list taken at import is a list that stays true. That premise is exactly what fails for
+    a shelf the operator is invited to drop files into — the loader already refuses to cache a
+    named rule set so an edit needs no restart, and a vocabulary cached at import would offer
+    yesterday's answer. The cost eager resolution avoided was a listing per call, which is one
+    directory read; the None-vs-empty distinction it worried about does not arise, because an
+    absent key and a callable returning nothing both mean "publish no choices" and ``params_of``
+    already collapses them.
     """
 
 
@@ -254,7 +264,7 @@ def _flow_burst(
 
 def _rules(
     lane: Literal["telemetry", "log", "flow"] = _DEFAULT_RULES_LANE.value,
-    ruleset: str | None = None,
+    ruleset: str = _PACKAGED_RULES,
     merge_gap_minutes: float = _DEFAULT_RULES_MERGE_GAP,
 ) -> RuleDetector:
     """Build a rule detector for one lane over one rule set (ADR-0032 D3).
@@ -265,14 +275,20 @@ def _rules(
     (params arrive untyped from YAML; ``Lane()`` is what rejects a bad value), so ``/modules``
     can offer the closed vocabulary as a choice instead of a free-text box.
 
-    ``ruleset`` names a directory; left unset, the packaged library ships with the product.
-    A malformed rule, an unknown field, or a lane the rule set cannot feed raises here at
-    construction — caught and attributed by ``_construct`` — so a bad rule fails named,
-    before the run, rather than as a detector that quietly finds nothing.
+    ``ruleset`` names a rule set — ``packaged`` (the default, the library that ships with the
+    product) or one on the deployment's shelf, which ``available_rulesets`` publishes as this
+    param's choices. It is **not** a path, and this factory is where that is enforced: a
+    ``PipelineSpec`` is the same object whether it came from a YAML file or an HTTP request
+    body, so a ``ruleset`` honoured as a path made every run request able to name a directory
+    on the server (ADR-0037).
+
+    A malformed rule, an unknown field, an unknown rule set, or a lane the rule set cannot
+    feed raises here at construction — caught and attributed by ``_construct`` — so a bad rule
+    fails named, before the run, rather than as a detector that quietly finds nothing.
     """
     return RuleDetector(
         lane=Lane(lane),
-        ruleset=str(ruleset) if ruleset else None,
+        ruleset=resolve_ruleset(ruleset),
         merge_gap_minutes=float(merge_gap_minutes),
     )
 
@@ -338,7 +354,7 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         static(_TEAM3_CAPABILITY),
         params_type=Team3Params,
         artifact_param="artifact",
-        artifacts=_team3_artifacts(),
+        discovered={"artifact": _team3_artifacts},
     ),
     "log_burst": AdapterSpec(_log_burst, static(_LOG_BURST_CAPABILITY)),
     "flow_burst": AdapterSpec(_flow_burst, static(_FLOW_BURST_CAPABILITY)),
@@ -347,9 +363,9 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         static(_METER_CAPABILITY),
         params_type=MeterParams,
         artifact_param="artifact",
-        artifacts=_meter_artifacts(),
+        discovered={"artifact": _meter_artifacts},
     ),
-    "rules": AdapterSpec(_rules, _rules_capability),
+    "rules": AdapterSpec(_rules, _rules_capability, discovered={"ruleset": available_rulesets}),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {

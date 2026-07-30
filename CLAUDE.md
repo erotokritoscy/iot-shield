@@ -431,13 +431,19 @@ done at deployment from each meter's own clean history.
 *ready to run* — without it the page opened on `meter_iforest` (it sorts first) and therefore
 on a chain `compute_run` refuses.
 
-**An adapter also publishes the artifact ids it ships** (`AdapterSpec.artifacts`, ADR-0035
+**An adapter also publishes the artifact ids it ships** (`AdapterSpec.discovered`, ADR-0035
 D1), carried as that param's `choices` rather than as a field of its own — the ids are a
 closed vocabulary the registry knows and a `str | None` annotation cannot express, so they go
 through the same door as presets and lanes and every form that renders one renders these.
 The product ships exactly two (`skab_zscore`, `demo_meter`); before this they existed nowhere
 a client could read, so the Evaluate page's artifact box was free text over a vocabulary
-nobody published, and it carried a hardcoded table naming one of the two.
+nobody published, and it carried a hardcoded table naming one of the two. That field is the
+**one channel for a vocabulary that is found rather than declared**, and it holds callables
+resolved per catalogue call (ADR-0037 D4): artifact ids could be snapshotted at import because
+package resources cannot change while the process runs, but `rules`' shelf is a directory
+operators are invited to drop files into, so a snapshot would offer yesterday's answer.
+A vocabulary that comes back empty publishes no `choices` at all, which is what keeps the
+free-text fallback for an adapter packaged without its artifacts.
 
 **Compose offers a learning detector its artifact and NO hyperparameters (ADR-0036).** A run
 never fits, so of the two ways to build such a detector only one can work there: an artifact
@@ -474,6 +480,7 @@ guess makes the detector skip every real asset and report nothing (ADR-0034 D7).
 
 ```
 src/iotshield/
+  _paths.py        REPO_ROOT, counted once: the fallback under every "ships in the repo" default (corpora, bench specs, the rule shelf), each overridable by env
   contracts/       frozen data contracts (pydantic v2) — the product's core
   capabilities.py  adapter capability vocabulary (format / lane / payload / signal tokens)
   flow.py          FLOW-lane vocabulary: the typed FlowRecord that crosses normalize->detect (ADR-0023)
@@ -504,6 +511,7 @@ web/            the React dashboard (ADR-0031) — the product UI, served by ngi
 tests/          mirrors src; port contract tests are parametrized over all adapters
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
+config/rules/   the rule shelf: one subdirectory per DEPLOYMENT-authored rule set, named by `ruleset:` (ADR-0037)
 data/demo/      small demo inputs (keep tiny; big datasets stay in ../reference/)
 data/eval/      corpus bundles (manifest + gzipped readings + interval labels)
 ```
@@ -536,7 +544,24 @@ two families fail in opposite directions — statistics catch what nobody antici
 cannot say what it is; a signature says exactly what something is but only catches what
 somebody wrote down — so they are complements, and having only one half was a real gap. It is
 also the first detector **extensible without Python**: adding a detection is dropping a YAML
-file into `detect/rules/library/` or into a directory named by `ruleset:`.
+file into `detect/rules/library/` (part of the product) or into a rule set on the deployment's
+**shelf** (`IOTSHIELD_RULES_PATH`, `config/rules` by default, mounted into `pipeline-api`).
+
+**`ruleset` names a rule set on that shelf; it is never a path (ADR-0037).** A `PipelineSpec`
+is the same object whether it was read from YAML or posted to `/runs`, so there is no trusted
+plane on which "a directory of mine" keeps its old meaning: honouring a path let any caller aim
+the loader at a directory on the server, and the 422 quoted two lines of whatever failed to
+parse. The registry factory resolves a name against the shelf by **membership, never
+sanitizing** (`sink/file.py`'s stance on the same hazard), so a traversal, an absolute path and
+a typo fail identically with the list of what exists. `packaged` is the default and names the
+library; blank and absent still mean it, so an old config keeps working. Naming the library
+rather than leaving the field optional is also what keeps the dropdown coherent — an optional
+closed vocabulary would need the blank `<option>` no `Select` renders, and would display the
+first shelf entry while holding nothing (ADR-0036 D2's defect, one field over). Two limits are
+recorded rather than fixed: listing does not compile, so an offered name can still hold
+malformed rules (refused, named, at construction), and `lane`'s vocabulary is fixed at what the
+*packaged* library covers, so a shelved rule set for another lane is reachable from config but
+not from the dashboard's two dropdowns.
 
 A rule addresses a **closed, checked field vocabulary** (`detect/rules/fields.py`), not
 free-form paths into `metadata`. This is `FlowRecord`'s problem one level up: a field name is

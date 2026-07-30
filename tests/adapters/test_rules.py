@@ -25,7 +25,13 @@ from iotshield.detect.rules.fields import (
     read_comparable,
     resolve,
 )
-from iotshield.detect.rules.loader import load_rules, load_ruleset
+from iotshield.detect.rules.loader import (
+    PACKAGED,
+    available_rulesets,
+    load_rules,
+    load_ruleset,
+    resolve_ruleset,
+)
 from iotshield.detect.rules.model import (
     THRESHOLD,
     ConfidenceTier,
@@ -385,6 +391,112 @@ def test_a_lane_the_ruleset_cannot_feed_is_refused_with_what_it_holds() -> None:
     rules would find nothing, forever, and look exactly like a quiet night."""
     with pytest.raises(ValueError, match="no 'telemetry' rules"):
         load_rules(Lane.TELEMETRY)
+
+
+# --- The shelf: config names a rule set, never a path (ADR-0037) ------------------------
+
+
+def shelve(root: Path, name: str, **overrides: object) -> Path:
+    """Put one loadable rule set on a shelf, and return it."""
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "rule.yml").write_text(
+        yaml.safe_dump(rule_document(**overrides)), encoding="utf-8"
+    )
+    return directory
+
+
+def test_the_shelf_lists_the_library_first_then_its_own(tmp_path: Path) -> None:
+    shelve(tmp_path, "site-rules")
+    shelve(tmp_path, "pilot")
+    assert available_rulesets(tmp_path) == (PACKAGED, "pilot", "site-rules")
+
+
+def test_a_directory_with_no_rule_files_is_not_a_rule_set(tmp_path: Path) -> None:
+    """Offering it would be offering a name that fails at construction — the dropdown's whole
+    value is that its members are ones the adapter can actually load."""
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "README.md").write_text("not a rule\n", encoding="utf-8")
+    (tmp_path / "stray.yml").write_text("id: loose\n", encoding="utf-8")  # a file, not a set
+    assert available_rulesets(tmp_path) == (PACKAGED,)
+
+
+def test_a_missing_shelf_lists_the_library_rather_than_raising(tmp_path: Path) -> None:
+    """``/modules`` must answer for every registered adapter, so a shelf that is simply not
+    there cannot take the catalogue down with it (the decision ``packaged_artifact_ids``
+    already made for a package shipped without its artifacts)."""
+    assert available_rulesets(tmp_path / "no-such-shelf") == (PACKAGED,)
+
+
+def test_the_shelf_is_read_per_call_not_snapshotted(tmp_path: Path) -> None:
+    """The reason this vocabulary is a callable and the artifact one was a tuple (ADR-0037):
+    an operator dropping a rule set onto a running server's shelf must see it."""
+    assert available_rulesets(tmp_path) == (PACKAGED,)
+    shelve(tmp_path, "later")
+    assert available_rulesets(tmp_path) == (PACKAGED, "later")
+
+
+def test_the_packaged_name_is_reserved_and_cannot_be_shadowed(tmp_path: Path) -> None:
+    """A shelf directory called ``packaged`` would otherwise appear twice in one dropdown, with
+    the two options meaning different things."""
+    shelve(tmp_path, PACKAGED)
+    assert available_rulesets(tmp_path) == (PACKAGED,)
+    assert resolve_ruleset(PACKAGED, tmp_path) is None
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", PACKAGED])
+def test_the_library_resolves_to_no_directory(name: str | None, tmp_path: Path) -> None:
+    """Blank and absent mean the default, as they did before rule sets had names — so a config
+    written against the old free-text field keeps working instead of failing at construction."""
+    assert resolve_ruleset(name, tmp_path) is None
+
+
+def test_a_shelved_name_resolves_to_its_directory(tmp_path: Path) -> None:
+    directory = shelve(tmp_path, "site-rules")
+    resolved = resolve_ruleset("site-rules", tmp_path)
+    assert resolved is not None
+    assert Path(resolved) == directory.resolve()
+    assert [rule.id for rule in load_ruleset(resolved)] == ["test-rule"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../secrets",
+        "site-rules/../../secrets",
+        "/etc",
+        "C:/Windows",
+        "\\\\host\\share",
+        "typo",
+    ],
+)
+def test_a_name_that_is_not_on_the_shelf_is_refused_with_what_is(name: str, tmp_path: Path) -> None:
+    """The security half of ADR-0037. Membership, never sanitizing: a traversal, an absolute
+    path, a UNC path and an honest typo all fail identically, so the message reveals nothing
+    about whether the thing named exists — and the caller never learns the shelf's own path.
+    """
+    shelve(tmp_path, "site-rules")
+    with pytest.raises(ValueError) as caught:
+        resolve_ruleset(name, tmp_path)
+    message = str(caught.value)
+    assert "unknown rule set" in message
+    assert "packaged, site-rules" in message
+    assert str(tmp_path) not in message
+
+
+def test_a_refused_name_is_never_read_from_disk(tmp_path: Path) -> None:
+    """A directory that exists but is not on the shelf is refused *as a name*, so nothing under
+    it is opened. Without this the message could confirm a path's contents (a real one echoed
+    two lines of the offending file back to the HTTP caller before ADR-0037)."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.yaml").write_text("token: s3cr3t\n", encoding="utf-8")
+    shelf = tmp_path / "shelf"
+    shelve(shelf, "site-rules")
+    with pytest.raises(ValueError) as caught:
+        resolve_ruleset(str(outside), shelf)
+    assert "s3cr3t" not in str(caught.value)
+    assert "private.yaml" not in str(caught.value)
 
 
 # --- The shipped library (the port of the upstream contract checker) --------------------

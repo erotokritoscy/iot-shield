@@ -193,6 +193,41 @@ class TestRuns:
         assert response.status_code == 422
         assert "min_count must be >= 2" in response.json()["detail"]["message"]
 
+    def test_a_run_cannot_name_a_rule_directory_on_the_server(
+        self, control: ControlHarness, tmp_path: Path
+    ) -> None:
+        """ADR-0037. A ``PipelineSpec`` is the same object whether it was read from a YAML file
+        or posted to this endpoint, so ``ruleset`` honoured as a path let any caller aim the
+        rule loader at a directory and read the parse errors — which quote the offending file.
+
+        Rule sets are named against the server's own shelf instead, and a name that is not on
+        it is refused without the shelf ever being left.
+        """
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "private.yaml").write_text("token: s3cr3t\n", encoding="utf-8")
+
+        bad = spec(detectors=[{"name": "rules", "params": {"ruleset": str(outside)}}])
+        response = control.client.post(
+            "/runs", json={"spec": bad, "inputs": [{"content": STUB_CSV}]}
+        )
+        assert response.status_code == 422
+        message = response.json()["detail"]["message"]
+        assert "unknown rule set" in message
+        assert "s3cr3t" not in message
+        assert "packaged" in message  # what it could have named instead
+
+    def test_modules_offers_the_rule_sets_on_the_shelf(self, control: ControlHarness) -> None:
+        """The other half of the same fix: a name nobody can guess is no better than a path.
+
+        The shelf is listed per request (ADR-0037), so this is also what a client sees after an
+        operator drops a rule set in without restarting the API.
+        """
+        detectors = {d["name"]: d for d in control.client.get("/modules").json()["detectors"]}
+        ruleset = next(p for p in detectors["rules"]["params"] if p["name"] == "ruleset")
+        assert ruleset["default"] == "packaged"
+        assert "packaged" in ruleset["choices"]
+
     def test_a_bad_param_value_is_refused_before_anything_is_written(
         self, control: ControlHarness
     ) -> None:

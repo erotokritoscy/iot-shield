@@ -40,8 +40,14 @@ suggested_actions:
   - Check whether the destination is expected.
 ```
 
-Drop it in `src/iotshield/detect/rules/library/`, or in any directory a run points at with
-`ruleset:`. It is picked up automatically.
+Drop it in `src/iotshield/detect/rules/library/` to make it part of the product, or in a rule
+set of your own on the deployment's shelf (`config/rules/<your-set>/`, see
+`config/rules/README.md`), which a run selects with `ruleset: <your-set>`. Either way it is
+picked up automatically — the shelf is read per request, so a rule set added while the API is
+running appears without a restart.
+
+`ruleset` names a rule set on that shelf; it is not a path (ADR-0037). If your rules live
+somewhere else entirely, point `IOTSHIELD_RULES_PATH` at the directory that holds them.
 
 **Your existing rule files work almost unchanged.** The grammar is yours — selections,
 operators, `condition` — and the extra keys you added for us (`rule_type`,

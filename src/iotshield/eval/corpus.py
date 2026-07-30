@@ -22,6 +22,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from iotshield._paths import REPO_ROOT
 from iotshield.contracts import Lane
 from iotshield.eval.bundle import (
     MANIFEST_NAME,
@@ -47,8 +48,7 @@ from iotshield.eval.truth import AssetTruth, GroundTruth, Incident
 
 CORPUS_PATH_ENV = "IOTSHIELD_CORPUS_PATH"
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CORPUS_ROOT = _REPO_ROOT / "data" / "eval"
+DEFAULT_CORPUS_ROOT = REPO_ROOT / "data" / "eval"
 """Corpora ship *inside* the repository, so a clone of it can benchmark with no other setup."""
 
 

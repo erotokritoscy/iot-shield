@@ -6,16 +6,28 @@ lane — the published field list, generated from the code that implements it.
 
 from iotshield.detect.rules.detector import RuleDetector, capability
 from iotshield.detect.rules.fields import describe as describe_fields
-from iotshield.detect.rules.loader import DEFAULT_LIBRARY, load_rules, load_ruleset
+from iotshield.detect.rules.loader import (
+    DEFAULT_LIBRARY,
+    PACKAGED,
+    available_rulesets,
+    load_rules,
+    load_ruleset,
+    resolve_ruleset,
+    rules_root,
+)
 from iotshield.detect.rules.model import Rule, compile_rule
 
 __all__ = [
     "DEFAULT_LIBRARY",
+    "PACKAGED",
     "Rule",
     "RuleDetector",
+    "available_rulesets",
     "capability",
     "compile_rule",
     "describe_fields",
     "load_rules",
     "load_ruleset",
+    "resolve_ruleset",
+    "rules_root",
 ]

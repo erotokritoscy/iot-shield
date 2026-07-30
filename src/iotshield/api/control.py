@@ -230,11 +230,11 @@ def describe_params(
     the Evaluate page can build a hyperparameter form from one call.
 
     ``discovered_choices`` carries a closed vocabulary the *signature cannot express*: the
-    artifact ids an adapter ships are files found at import time, so the only annotation
-    writable for them is ``str | None`` (ADR-0035 D1). Supplying them here rather than as a
-    field of their own means every form that already renders a closed vocabulary as a
-    ``<select>`` renders these too, and there is one representation of "allowed values" on
-    the wire instead of two that can disagree.
+    artifact ids an adapter ships and the rule sets on a deployment's shelf are both files, so
+    the only annotation writable for them is ``str`` (ADR-0035 D1, ADR-0037). Supplying them
+    here rather than as a field of their own means every form that already renders a closed
+    vocabulary as a ``<select>`` renders these too, and there is one representation of "allowed
+    values" on the wire instead of two that can disagree.
     """
     fields = params_type.model_fields if params_type is not None else {}
     discovered = discovered_choices or {}
@@ -270,9 +270,13 @@ def params_of(spec: AdapterSpec[Any]) -> list[ParamInfo]:
 
     ``describe_params`` stays public underneath for ``_sink_info``, which has a factory and
     no spec.
+
+    The spec's vocabularies are resolved *here*, per call, because one of them is a directory
+    the operator may add to while the server runs (ADR-0037). A vocabulary that comes back
+    empty publishes no choices at all rather than an empty ``<select>``: an adapter packaged
+    without its artifacts falls back to free text, which is the escape hatch ADR-0035 D1 kept.
     """
-    ids = spec.artifacts
-    discovered = {spec.artifact_param: ids} if spec.artifact_param and ids else {}
+    discovered = {param: ids for param, find in spec.discovered.items() if (ids := find())}
     return describe_params(spec.factory, spec.params_type, discovered)
 
 

@@ -7,6 +7,7 @@ with what the built adapter actually does — so the guard never reads a stale l
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from iotshield.api.control import params_of
 from iotshield.capabilities import Capability, formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
 from iotshield.detect._artifacts import packaged_artifact_ids
+from iotshield.detect.rules.loader import PACKAGED, RULES_PATH_ENV, available_rulesets
 from iotshield.flow import METADATA_KEY as FLOW_METADATA_KEY
 from iotshield.meter import METADATA_KEY as METER_METADATA_KEY
 from iotshield.normalize import (
@@ -203,7 +205,8 @@ def test_a_param_with_no_closed_vocabulary_reports_no_choices() -> None:
     assert _choices_of(DETECTORS["stub_threshold"], "threshold") is None
 
 
-# --- shipped artifact ids as a closed vocabulary (ADR-0035 D1) ----------------
+# --- discovered vocabularies: shipped artifacts and shelved rule sets ---------
+# (ADR-0035 D1 for the channel, ADR-0037 for the second thing that travels down it)
 
 
 @pytest.mark.parametrize("name", sorted(n for n, s in DETECTORS.items() if s.artifact_param))
@@ -217,7 +220,7 @@ def test_a_learning_adapter_publishes_the_artifact_ids_it_ships(name: str) -> No
     spec = DETECTORS[name]
     param = spec.artifact_param
     assert param is not None  # the parametrization selected on it
-    ids = spec.artifacts
+    ids = spec.discovered[param]()
     assert ids, f"{name} declares an artifact_param but enumerates nothing"
     assert _choices_of(spec, param) == list(ids)
     for artifact_id in ids:
@@ -225,9 +228,46 @@ def test_a_learning_adapter_publishes_the_artifact_ids_it_ships(name: str) -> No
 
 
 def test_an_adapter_that_does_not_learn_enumerates_no_artifacts() -> None:
-    """`artifact_ids` is total, so the API catalogues need no None-handling of their own."""
-    assert DETECTORS["stub_threshold"].artifacts == ()
-    assert DETECTORS["log_burst"].artifacts == ()
+    """The channel is opt-in, so the API catalogues need no None-handling of their own."""
+    assert DETECTORS["stub_threshold"].discovered == {}
+    assert DETECTORS["log_burst"].discovered == {}
+
+
+@pytest.mark.parametrize("label,spec", _ALL_SPECS, ids=[label for label, _ in _ALL_SPECS])
+def test_a_declared_default_is_one_of_the_params_own_choices(label: str, spec: AdapterSpec) -> None:
+    """A default outside its own vocabulary is a form that opens on a value it cannot show.
+
+    Neither ``Select`` nor ``st.selectbox`` renders an option that is not in its list, so such
+    a param *displays* the first choice while holding the default — the display-vs-value
+    incoherence ADR-0036 D2 removed for artifacts, here as a law for every adapter. ``None``
+    is exempt: that is "not given", which ADR-0033 says opens an optional vocabulary blank.
+    """
+    for param in params_of(spec):
+        if param.choices is None or param.default is None:
+            continue
+        assert param.default in param.choices, (
+            f"{label}: {param.name} defaults to {param.default!r}, "
+            f"which is not one of {param.choices}"
+        )
+
+
+def test_the_rules_detector_offers_the_shelf_as_choices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one discovered vocabulary that can change while the process runs (ADR-0037).
+
+    Resolved per catalogue call rather than at import, so a rule set dropped onto the shelf is
+    offered without a restart — asserted here end to end (env var -> listing -> the choices
+    ``/modules`` publishes), because that is the property an eager snapshot would silently lose.
+    """
+    assert _choices_of(DETECTORS["rules"], "ruleset") == list(available_rulesets())
+    assert _default_of(DETECTORS["rules"], "ruleset") == PACKAGED
+
+    # Never compiled during a listing, so any file with the right suffix marks a rule set.
+    (tmp_path / "site-rules").mkdir()
+    (tmp_path / "site-rules" / "a-rule.yml").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(RULES_PATH_ENV, str(tmp_path))
+    assert _choices_of(DETECTORS["rules"], "ruleset") == [PACKAGED, "site-rules"]
 
 
 def test_an_unknown_artifact_package_lists_nothing_rather_than_raising() -> None:
