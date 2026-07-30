@@ -180,8 +180,10 @@ services:
       - --config=config/demo.yaml
     environment:
       <<: *db-env
-      # Set explicitly rather than left to the repo-shaped default: that default is derived
-      # from the package's own location and is only right for an editable install.
+      # Stated rather than left to the repo-shaped default. The default would in fact resolve
+      # correctly here (`uv sync` installs the project editable, so /app/src/iotshield/... makes
+      # REPO_ROOT /app) — but a rule shelf that silently comes back empty is indistinguishable
+      # from one that is merely unused, so the shelf a run may read is named on purpose.
       IOTSHIELD_RULES_PATH: "/app/config/rules"
     depends_on:
       init:

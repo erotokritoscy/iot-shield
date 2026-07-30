@@ -20,12 +20,11 @@ non-editable wheel resolves to the site-packages parent, every listing comes bac
 the dashboard blames the corpus for a missing directory.
 """
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from iotshield._paths import REPO_ROOT
+from iotshield._paths import REPO_ROOT, configured_root
 from iotshield.eval.corpus import CorpusInfo
 from iotshield.pipeline import PipelineSpec, load_spec
 
@@ -73,10 +72,7 @@ class BenchSpec:
 
 def bench_root(root: Path | None = None) -> Path:
     """The directory bench specs live in: explicit argument, else env, else the repo's own."""
-    if root is not None:
-        return root
-    configured = os.environ.get(BENCH_PATH_ENV, "").strip()
-    return Path(configured) if configured else DEFAULT_BENCH_ROOT
+    return configured_root(BENCH_PATH_ENV, DEFAULT_BENCH_ROOT, root)
 
 
 def list_bench_specs(root: Path | None = None) -> list[BenchSpec]:

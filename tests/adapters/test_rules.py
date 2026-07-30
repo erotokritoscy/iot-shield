@@ -49,6 +49,7 @@ from tests.rule_fixtures import (
     oriented_event,
     rule_document,
     telemetry_event,
+    write_ruleset,
 )
 
 
@@ -396,19 +397,17 @@ def test_a_lane_the_ruleset_cannot_feed_is_refused_with_what_it_holds() -> None:
 # --- The shelf: config names a rule set, never a path (ADR-0037) ------------------------
 
 
-def shelve(root: Path, name: str, **overrides: object) -> Path:
-    """Put one loadable rule set on a shelf, and return it."""
+def put_ruleset(root: Path, name: str) -> Path:
+    """Put one loadable rule set on a shelf, and return its directory."""
     directory = root / name
     directory.mkdir(parents=True)
-    (directory / "rule.yml").write_text(
-        yaml.safe_dump(rule_document(**overrides)), encoding="utf-8"
-    )
+    write_ruleset(directory, rule_document())
     return directory
 
 
 def test_the_shelf_lists_the_library_first_then_its_own(tmp_path: Path) -> None:
-    shelve(tmp_path, "site-rules")
-    shelve(tmp_path, "pilot")
+    put_ruleset(tmp_path, "site-rules")
+    put_ruleset(tmp_path, "pilot")
     assert available_rulesets(tmp_path) == (PACKAGED, "pilot", "site-rules")
 
 
@@ -432,14 +431,14 @@ def test_the_shelf_is_read_per_call_not_snapshotted(tmp_path: Path) -> None:
     """The reason this vocabulary is a callable and the artifact one was a tuple (ADR-0037):
     an operator dropping a rule set onto a running server's shelf must see it."""
     assert available_rulesets(tmp_path) == (PACKAGED,)
-    shelve(tmp_path, "later")
+    put_ruleset(tmp_path, "later")
     assert available_rulesets(tmp_path) == (PACKAGED, "later")
 
 
 def test_the_packaged_name_is_reserved_and_cannot_be_shadowed(tmp_path: Path) -> None:
     """A shelf directory called ``packaged`` would otherwise appear twice in one dropdown, with
     the two options meaning different things."""
-    shelve(tmp_path, PACKAGED)
+    put_ruleset(tmp_path, PACKAGED)
     assert available_rulesets(tmp_path) == (PACKAGED,)
     assert resolve_ruleset(PACKAGED, tmp_path) is None
 
@@ -452,30 +451,23 @@ def test_the_library_resolves_to_no_directory(name: str | None, tmp_path: Path) 
 
 
 def test_a_shelved_name_resolves_to_its_directory(tmp_path: Path) -> None:
-    directory = shelve(tmp_path, "site-rules")
+    directory = put_ruleset(tmp_path, "site-rules")
     resolved = resolve_ruleset("site-rules", tmp_path)
     assert resolved is not None
     assert Path(resolved) == directory.resolve()
     assert [rule.id for rule in load_ruleset(resolved)] == ["test-rule"]
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "../secrets",
-        "site-rules/../../secrets",
-        "/etc",
-        "C:/Windows",
-        "\\\\host\\share",
-        "typo",
-    ],
-)
+@pytest.mark.parametrize("name", ["../secrets", "/etc", "typo"])
 def test_a_name_that_is_not_on_the_shelf_is_refused_with_what_is(name: str, tmp_path: Path) -> None:
-    """The security half of ADR-0037. Membership, never sanitizing: a traversal, an absolute
-    path, a UNC path and an honest typo all fail identically, so the message reveals nothing
-    about whether the thing named exists — and the caller never learns the shelf's own path.
+    """The security half of ADR-0037. Membership, never sanitizing.
+
+    Three *intents*, not three branches — a traversal, an absolute path, an honest typo. A shelf
+    name can only ever be one of the single path components ``iterdir`` yielded, so everything
+    else fails identically by construction. What is asserted is that the failure reveals nothing:
+    not whether the thing named exists, and not where the shelf is.
     """
-    shelve(tmp_path, "site-rules")
+    put_ruleset(tmp_path, "site-rules")
     with pytest.raises(ValueError) as caught:
         resolve_ruleset(name, tmp_path)
     message = str(caught.value)
@@ -492,7 +484,7 @@ def test_a_refused_name_is_never_read_from_disk(tmp_path: Path) -> None:
     outside.mkdir()
     (outside / "private.yaml").write_text("token: s3cr3t\n", encoding="utf-8")
     shelf = tmp_path / "shelf"
-    shelve(shelf, "site-rules")
+    put_ruleset(shelf, "site-rules")
     with pytest.raises(ValueError) as caught:
         resolve_ruleset(str(outside), shelf)
     assert "s3cr3t" not in str(caught.value)

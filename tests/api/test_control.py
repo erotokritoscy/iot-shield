@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from iotshield.api.control import create_control_app
+from iotshield.detect.rules.loader import RULES_PATH_ENV
 from iotshield.storage import create_schema, make_engine, make_session_factory, repository
 
 STUB_CSV = (
@@ -100,6 +101,32 @@ class TestHealthAndModules:
         # The sibling param on the same factory is genuinely open-ended: a timezone name.
         assert params["source_timezone"]["choices"] is None
         assert params["source_timezone"]["type"] == "str"
+
+    def test_a_rule_set_added_while_running_is_offered_without_a_restart(
+        self, control: ControlHarness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The rule shelf as a closed vocabulary (ADR-0037), asserted **over HTTP** because that
+        is where it was false.
+
+        ``AdapterSpec.discovered`` holds callables so this vocabulary is read per call, but
+        `/modules` served a response built at *import* time: every layer underneath resolved the
+        shelf freshly and the one a client actually reads was frozen at process start. A unit
+        test on the helper passes either way — only a second request, after a change to the
+        shelf, can tell the difference. The full list is asserted, not just membership, so this
+        pins the offer an operator sees rather than that something was offered.
+        """
+        monkeypatch.setenv(RULES_PATH_ENV, str(tmp_path))
+
+        def offered() -> dict[str, Any]:
+            body = control.client.get("/modules").json()
+            rules = next(d for d in body["detectors"] if d["name"] == "rules")
+            return next(p for p in rules["params"] if p["name"] == "ruleset")
+
+        assert offered()["default"] == "packaged"
+        assert offered()["choices"] == ["packaged"]
+        (tmp_path / "site-rules").mkdir()
+        (tmp_path / "site-rules" / "rule.yml").write_text("{}", encoding="utf-8")
+        assert offered()["choices"] == ["packaged", "site-rules"]
 
 
 class TestValidate:
@@ -216,17 +243,6 @@ class TestRuns:
         assert "unknown rule set" in message
         assert "s3cr3t" not in message
         assert "packaged" in message  # what it could have named instead
-
-    def test_modules_offers_the_rule_sets_on_the_shelf(self, control: ControlHarness) -> None:
-        """The other half of the same fix: a name nobody can guess is no better than a path.
-
-        The shelf is listed per request (ADR-0037), so this is also what a client sees after an
-        operator drops a rule set in without restarting the API.
-        """
-        detectors = {d["name"]: d for d in control.client.get("/modules").json()["detectors"]}
-        ruleset = next(p for p in detectors["rules"]["params"] if p["name"] == "ruleset")
-        assert ruleset["default"] == "packaged"
-        assert "packaged" in ruleset["choices"]
 
     def test_a_bad_param_value_is_refused_before_anything_is_written(
         self, control: ControlHarness

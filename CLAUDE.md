@@ -433,7 +433,7 @@ on a chain `compute_run` refuses.
 
 **An adapter also publishes the artifact ids it ships** (`AdapterSpec.discovered`, ADR-0035
 D1), carried as that param's `choices` rather than as a field of its own — the ids are a
-closed vocabulary the registry knows and a `str | None` annotation cannot express, so they go
+closed vocabulary the registry knows and the annotation cannot express, so they go
 through the same door as presets and lanes and every form that renders one renders these.
 The product ships exactly two (`skab_zscore`, `demo_meter`); before this they existed nowhere
 a client could read, so the Evaluate page's artifact box was free text over a vocabulary

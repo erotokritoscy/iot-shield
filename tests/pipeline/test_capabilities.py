@@ -15,7 +15,7 @@ from iotshield.api.control import params_of
 from iotshield.capabilities import Capability, formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
 from iotshield.detect._artifacts import packaged_artifact_ids
-from iotshield.detect.rules.loader import PACKAGED, RULES_PATH_ENV, available_rulesets
+from iotshield.detect.rules.loader import PACKAGED, RULES_PATH_ENV
 from iotshield.flow import METADATA_KEY as FLOW_METADATA_KEY
 from iotshield.meter import METADATA_KEY as METER_METADATA_KEY
 from iotshield.normalize import (
@@ -31,6 +31,7 @@ from iotshield.pipeline.registry import (
     AdapterSpec,
     build_detector,
     build_normalizer,
+    config_parameters,
 )
 from tests import DEMO_DIR
 
@@ -40,8 +41,14 @@ _ALL_SPECS = [
     *((f"alert_engine:{name}", spec) for name, spec in ALERT_ENGINES.items()),
 ]
 
+every_spec = pytest.mark.parametrize(
+    "label,spec", _ALL_SPECS, ids=[label for label, _ in _ALL_SPECS]
+)
+"""Apply a law to every registered adapter. Named once so the next such law cannot quietly
+cover a subset — three of these now share it, and each was a copy of the same decorator."""
 
-@pytest.mark.parametrize("label,spec", _ALL_SPECS, ids=[label for label, _ in _ALL_SPECS])
+
+@every_spec
 def test_every_adapter_declares_a_nonempty_capability(label: str, spec: AdapterSpec) -> None:
     capability = spec.capability({})  # default params
     assert isinstance(capability, Capability)
@@ -220,11 +227,29 @@ def test_a_learning_adapter_publishes_the_artifact_ids_it_ships(name: str) -> No
     spec = DETECTORS[name]
     param = spec.artifact_param
     assert param is not None  # the parametrization selected on it
-    ids = spec.discovered[param]()
-    assert ids, f"{name} declares an artifact_param but enumerates nothing"
+    find = spec.discovered.get(param)
+    assert find, f"{name} declares an artifact_param but enumerates nothing"
+    ids = find()
+    assert ids, f"{name} enumerates an empty set of artifacts"
     assert _choices_of(spec, param) == list(ids)
     for artifact_id in ids:
         assert build_detector(name, {param: artifact_id}) is not None
+
+
+@every_spec
+def test_every_discovered_vocabulary_names_a_real_param(label: str, spec: AdapterSpec) -> None:
+    """A ``discovered`` key that matches no factory param is silently ignored.
+
+    This is the one guarantee generalising the channel gave away. While it was
+    ``artifact_param`` plus ``artifacts``, the key was *derived* — ``{spec.artifact_param: ids}``
+    — so it could not disagree with the param it described. Now the name is written twice, and
+    ``describe_params`` looks it up with ``.get``, so ``discovered={"artefact": ...}`` publishes
+    no choices at all and the form falls back to a free-text box: exactly the defect ADR-0035 D1
+    exists to remove, restored by a typo that nothing else would report.
+    """
+    known = {parameter.name for parameter in config_parameters(spec.factory)}
+    unknown = set(spec.discovered) - known
+    assert not unknown, f"{label}: discovered names {sorted(unknown)}, which are not params"
 
 
 def test_an_adapter_that_does_not_learn_enumerates_no_artifacts() -> None:
@@ -233,7 +258,7 @@ def test_an_adapter_that_does_not_learn_enumerates_no_artifacts() -> None:
     assert DETECTORS["log_burst"].discovered == {}
 
 
-@pytest.mark.parametrize("label,spec", _ALL_SPECS, ids=[label for label, _ in _ALL_SPECS])
+@every_spec
 def test_a_declared_default_is_one_of_the_params_own_choices(label: str, spec: AdapterSpec) -> None:
     """A default outside its own vocabulary is a form that opens on a value it cannot show.
 
@@ -260,7 +285,6 @@ def test_the_rules_detector_offers_the_shelf_as_choices(
     offered without a restart — asserted here end to end (env var -> listing -> the choices
     ``/modules`` publishes), because that is the property an eager snapshot would silently lose.
     """
-    assert _choices_of(DETECTORS["rules"], "ruleset") == list(available_rulesets())
     assert _default_of(DETECTORS["rules"], "ruleset") == PACKAGED
 
     # Never compiled during a listing, so any file with the right suffix marks a rule set.

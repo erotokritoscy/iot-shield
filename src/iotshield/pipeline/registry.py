@@ -124,8 +124,18 @@ class AdapterSpec(Generic[T]):
     named rule set so an edit needs no restart, and a vocabulary cached at import would offer
     yesterday's answer. The cost eager resolution avoided was a listing per call, which is one
     directory read; the None-vs-empty distinction it worried about does not arise, because an
-    absent key and a callable returning nothing both mean "publish no choices" and ``params_of``
-    already collapses them.
+    absent key and a callable returning nothing both mean "publish no choices", which
+    ``describe_params`` decides in one place.
+
+    The key must name a real factory param. It is written twice (beside ``artifact_param`` for a
+    learning adapter), where the previous field derived it, so a typo cannot disagree with the
+    param it describes — it silently publishes nothing and the form falls back to free text.
+    ``test_every_discovered_vocabulary_names_a_real_param`` is what replaces the guarantee the
+    derived key used to give for free.
+
+    Holding a mapping makes ``AdapterSpec`` unhashable where the previous tuple left it hashable.
+    Nothing hashes a spec (they are registry *values*), and neither ``MappingProxyType`` nor a
+    frozen dict exists to restore it, so this is recorded rather than worked around.
     """
 
 

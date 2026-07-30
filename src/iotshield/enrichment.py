@@ -100,7 +100,7 @@ def validate_action_step(step: str) -> str:
     """Refuse a step ``action_text``/``action_steps`` could not round-trip. Returns it.
 
     The pair is a claim about our own prose, and prose is exactly what a contributor writes:
-    the authoring guide invites rules into any directory named by ``ruleset:``, which no test
+    the authoring guide invites rules onto the deployment's own shelf, which no test
     of the packaged library can reach. So the invariant is enforced where the text is
     *authored* rather than hoped about downstream, and the message quotes the offender
     because the audience is someone editing YAML with no type checker in front of them.

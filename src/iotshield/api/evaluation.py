@@ -233,13 +233,17 @@ def _is_fittable(name: str) -> bool:
 
 
 def _detector_summaries() -> list[DetectorSummary]:
-    """The benchmarkable-detector catalogue, built once.
+    """The benchmarkable-detector catalogue, built per request.
 
-    ``DETECTORS`` is a module-level constant with static factories and static capabilities,
-    so this cannot change in a process — the same invariant ``/modules`` relies on for
-    ``_MODULES_RESPONSE``. Worth building once because the Evaluate page re-fetches it on
-    every Streamlit rerun (i.e. every widget click), and the answer costs a signature
-    introspection per parameter per detector.
+    ``DETECTORS`` is a module-level constant, so this looked invariant for the process and was
+    built once — the same reasoning ``/modules`` used. It stopped being true when a param's
+    vocabulary became a directory the operator may add to while the server runs (ADR-0037): the
+    registry entry is still constant, but one of the *answers* it publishes is not. Caching here
+    would have made the shelf's whole promise ("drop in a rule set, no restart") false at the
+    surface that shows it, while every layer underneath resolved it freshly.
+
+    Measured at 0.44 ms, against a page-load endpoint. The neighbour below (``/specs``) had
+    already made this trade for the same reason.
     """
     summaries: list[DetectorSummary] = []
     for name, spec in sorted(DETECTORS.items()):
@@ -294,7 +298,6 @@ def _corpus_summary(info: CorpusInfo) -> CorpusSummary:
 
 def create_eval_router() -> APIRouter:
     router = APIRouter(prefix="/eval", tags=["evaluation"])
-    detector_catalogue = _detector_summaries()
 
     @router.get("/corpora")
     def corpora() -> CorporaResponse:
@@ -308,7 +311,7 @@ def create_eval_router() -> APIRouter:
     @router.get("/detectors")
     def detectors() -> list[DetectorSummary]:
         """The detectors a benchmark can compare, with their training capability."""
-        return detector_catalogue
+        return _detector_summaries()
 
     @router.get("/specs")
     def specs() -> list[BenchSpecSummary]:

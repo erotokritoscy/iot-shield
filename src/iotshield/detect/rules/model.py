@@ -256,7 +256,7 @@ class RuleFile(BaseModel):
 
         The pair is documented as each other's inverse, but the only test of that iterates
         the packaged library — and this file's own guide tells contributors to drop rules
-        into any directory named by ``ruleset:``. Checking here covers both, and turns a
+        into a rule set on the deployment's shelf. Checking here covers both, and turns a
         silent loss (a step that merges into its neighbour and disappears from the alert)
         into a load error naming the file.
         """

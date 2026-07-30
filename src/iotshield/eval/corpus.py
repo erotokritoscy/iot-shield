@@ -18,11 +18,10 @@ lives* is a deployment property. It is never a caller-supplied value, because a 
 names a path is a request to read arbitrary files (ADR-0018 §9-A).
 """
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from iotshield._paths import REPO_ROOT
+from iotshield._paths import REPO_ROOT, configured_root
 from iotshield.contracts import Lane
 from iotshield.eval.bundle import (
     MANIFEST_NAME,
@@ -179,10 +178,7 @@ class CorpusInfo:
 
 def corpus_root(root: Path | None = None) -> Path:
     """The directory bundles live in: explicit argument, else env, else the repo's own."""
-    if root is not None:
-        return root
-    configured = os.environ.get(CORPUS_PATH_ENV, "").strip()
-    return Path(configured) if configured else DEFAULT_CORPUS_ROOT
+    return configured_root(CORPUS_PATH_ENV, DEFAULT_CORPUS_ROOT, root)
 
 
 # Rendering readings into wire text lives with the lane that defines the format:

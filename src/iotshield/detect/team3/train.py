@@ -32,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from iotshield._paths import REPO_ROOT
 from iotshield.detect.team3._features import build_multivariate_features
 from iotshield.detect.team3._zscore import fit_robust_baseline, score_robust_z
 from iotshield.detect.team3.artifact import Team3Artifact, Team3State
@@ -52,12 +53,10 @@ SKAB_CHANNELS: tuple[str, ...] = (
 # a hyperparameter: below it a feature's spread is at the MAD floor and carries no signal.
 _DEFAULT_MIN_MAD = 1e-6
 
-# Repo layout: src/iotshield/detect/team3/train.py -> parents[4] is the iotshield
-# repo root; the read-only reference tree sits beside it. We train on the normal
-# prefix of an abrupt-anomaly valve run (ADR-0012 D3).
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# The read-only reference tree sits beside the repo. We train on the normal prefix of an
+# abrupt-anomaly valve run (ADR-0012 D3).
 _DEFAULT_SOURCE = (
-    _REPO_ROOT.parent
+    REPO_ROOT.parent
     / "reference"
     / "team3-telemetry-ad"
     / "Datasets"

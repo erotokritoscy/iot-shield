@@ -13,7 +13,6 @@ from iotshield.detect.rules.loader import (
     load_rules,
     load_ruleset,
     resolve_ruleset,
-    rules_root,
 )
 from iotshield.detect.rules.model import Rule, compile_rule
 
@@ -29,5 +28,4 @@ __all__ = [
     "load_rules",
     "load_ruleset",
     "resolve_ruleset",
-    "rules_root",
 ]

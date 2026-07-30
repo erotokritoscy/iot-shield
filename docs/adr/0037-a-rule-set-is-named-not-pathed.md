@@ -95,11 +95,24 @@ The check lives in the **registry factory**, not in the loader. `load_ruleset` s
 path, because it is the library-level entry point and a Python caller who can pass a path can
 already open the file; nothing is gained by hobbling it and the existing tests keep their
 meaning. The factory is where the config plane ends, and it is the only way config reaches
-this adapter.
+this adapter — `registry._rules` is the only `RuleDetector(` construction in `src/`.
 
-A resolved absolute path is also **re-checked for containment** before it is returned. That is
-redundant given membership, and kept for the reason `sink/file.py` gives: it turns the
-docstring's promise into a checked property that cannot rot if the listing changes.
+**Listing and resolving are one function** (`_shelved`, name -> directory), and resolution
+returns the entry exactly as the directory listing gave it. The first attempt computed them
+separately — a name-only listing, then a re-joined `resolve()` with a containment check
+mirroring `sink/file.py`'s — and the two disagreed: `is_dir()` follows a symlink so a
+**symlinked rule set** was listed, while `resolve()` resolved it and the containment check then
+refused it. Sharing one rule set between two deployments by symlinking it onto the shelf is a
+plausible admin move, and it produced a dropdown entry that always failed at construction:
+exactly what a dropdown exists to prevent. (It also leaked the shelf's absolute path into the
+error, which the sibling membership error deliberately withholds.)
+
+So the trust boundary is stated once: **which entry a caller may select is the product's
+decision; what a shelf entry points to is the deployment's.** That is the same line the corpus
+root and the sink's output directory already draw. Membership against real listed entries is
+also what makes the guarantee structural rather than inspected — a name can only be one of the
+single path components `iterdir` yielded, so a traversal, an absolute path, a UNC path and a
+nested `sub/dir` cannot be members at all, and no separate containment check is needed.
 
 ### D3 — The packaged library gets a name, and it is the default
 
@@ -132,12 +145,36 @@ package resources cannot change while the process runs, so a list taken at impor
 and a callable would have bought 0.2% of an import that has already happened. That premise is
 exactly what fails for a directory operators are invited to drop files into — the loader
 already refuses to cache a named rule set so an edit needs no restart, and a vocabulary
-snapshotted at import would offer yesterday's answer to a page that reloads. The cost is one
-directory listing per `/modules` call, bounded by a directory the deployment controls. The
+snapshotted at import would offer yesterday's answer to a page that reloads. The
 None-versus-empty distinction that argument worried about does not arise: an absent key and a
-callable returning nothing both mean "publish no choices", and `params_of` already collapses
-them, which is what keeps ADR-0035 D1's free-text fallback alive for an adapter packaged
+callable returning nothing both mean "publish no choices", which `describe_params` decides in
+one place, and that is what keeps ADR-0035 D1's free-text fallback alive for an adapter packaged
 without its artifacts.
+
+**Laziness had to be taken all the way up, and the first attempt did not.** `/modules` served a
+`ModulesResponse` built at *import* time and `/eval/detectors` one built at router creation, both
+on the reasoning that the registries are module-level constants and therefore so is the
+catalogue. That premise held until one of the *answers* a constant registry publishes became a
+directory. So every layer underneath resolved the shelf freshly while the two surfaces a client
+actually reads were frozen at process start: the no-restart promise was false end to end, and
+asserted in five places while being false. Both are now built per request, measured at 0.84 ms
+and 0.44 ms against endpoints a page hits on load, and `/eval/specs` had already made that exact
+trade one function below (*"unlike `DETECTORS`, these are files an operator can edit while the
+server runs"*). What let it through is that the property was tested at the layer where it held —
+a unit test on `params_of` passes either way — so the regression test is an **over-HTTP** one
+that lists, drops a rule set on the shelf, and lists again.
+
+**The key must name a real param, and that is now a test rather than a guarantee.** The field it
+replaces derived its key (`{spec.artifact_param: ids}`), so it could not disagree with the param
+it described. Writing the key by hand gives that up: `describe_params` looks it up with `.get`,
+so `discovered={"artefact": ...}` publishes no choices and the form silently falls back to a
+free-text box — the exact defect ADR-0035 D1 removed, restored by a typo.
+`test_every_discovered_vocabulary_names_a_real_param` is what replaces the lost guarantee, at the
+altitude this repo already uses for cross-adapter laws.
+
+Holding a mapping makes `AdapterSpec` unhashable where the tuple left it hashable. Nothing
+hashes a spec — they are registry values — and neither `MappingProxyType` nor a frozen dict is
+hashable either, so this is recorded rather than worked around.
 
 ### D5 — The shelf is mounted, so the promise is true end to end
 
@@ -149,15 +186,21 @@ clone starts with an empty shelf rather than a missing one. Creating a directory
 now the whole procedure: no rebuild, no restart, and it appears in the dropdown on the next
 page load.
 
-### D6 — One definition of the repository root
+### D6 — One definition of the repository root, and one way to override it
 
-Three subsystems default a directory to one shipping in the repo, and each counted `__file__`'s
-parents. Two were at the same depth; the rules loader is one package deeper, so its copy would
-have been the first with a different index — and an index off by one yields a directory that
-does not exist rather than an error, so every listing comes back empty and the subsystem blames
-its missing data. `iotshield/_paths.REPO_ROOT` is counted once, and `corpus.py` and `bench.py`
-now read it instead of deriving their own. Behaviour-identical; both keep their public
-`DEFAULT_*_ROOT` names and their env overrides.
+Six places derived the repository root from `__file__`, at **three different depths**:
+`eval/corpus.py` and `eval/bench.py` at `parents[3]`, `detect/meter/train.py` and
+`detect/team3/train.py` at `parents[4]`, `eval/fetch.py` at `parents[3].parent`, and the rules
+loader would have added a seventh. An index off by one yields a directory that does not exist
+rather than an error, so every listing comes back empty and the subsystem blames its missing
+data. `iotshield/_paths.REPO_ROOT` is counted once and all six read it; `src/` now contains
+exactly one `Path(__file__).resolve().parents[...]`. Verified path-for-path identical before and
+after, and every public `DEFAULT_*_ROOT` name and env override is unchanged.
+
+The three `*_root()` functions were also the same four lines three times, down to the `.strip()`
+that makes a variable set to whitespace mean "unset" rather than "the current directory", so
+that is `_paths.configured_root(env, default, root)` now. Two of the three modules no longer
+import `os` at all.
 
 ## Consequences
 
@@ -166,10 +209,24 @@ now read it instead of deriving their own. Behaviour-identical; both keep their 
   it unset), and the two guides that showed a path now show a name. A deployment whose rules
   live elsewhere points `IOTSHIELD_RULES_PATH` at that directory and names the subdirectory —
   the same move as `IOTSHIELD_CORPUS_PATH`.
-- **The shelf is read on every `/modules` call.** One `iterdir` plus one short-circuiting walk
-  per candidate subdirectory. A subdirectory holding no rule files at all is walked in full
-  before being rejected, which is the only unbounded case and is bounded by content the
-  deployment put there.
+- **The shelf is read on every `/modules` and `/eval/detectors` call.** One `iterdir` plus one
+  short-circuiting walk per candidate subdirectory. A subdirectory holding no rule files at all
+  is walked in full before being rejected, which is the only unbounded case and is bounded by
+  content the deployment put there. `_rule_files` tests the **suffix before `is_file()`** for
+  that reason: the suffix is a string slice and the stat is a syscall, and the case that cannot
+  short-circuit is exactly the one the listing walks (measured 8x on a 5,000-file directory, and
+  47 ms -> 15 ms on a `/modules` request with a 2,000-file directory on the shelf).
+- **Resolving a name walks the shelf, rather than asking about the one name.** O(K) in rule sets
+  where O(1) is available, at 286 µs on a one-set shelf, per constructed detector. Deliberately
+  not optimised: the O(1) form needs a hand-rolled check that a name is a single path component,
+  and the naive spelling of it (`(shelf / name).parent == shelf`) **accepts `..`**, because
+  `Path("a/..").parent` is `a`. A membership test against names the OS actually listed cannot be
+  wrong that way. A security boundary is the wrong place to trade a proof for microseconds.
+- **Nothing publishes where the shelf is.** `/eval/corpora` reports `root`, but `/modules` does
+  not, and the errors deliberately withhold it (an unauthenticated write API should not describe
+  the server's filesystem). So a dropdown showing only `packaged` cannot distinguish "the mount
+  is wrong" from "the shelf is empty". A startup log line or one field on `ModulesResponse` would
+  close it; both are behaviour changes beyond this one.
 - **A rule set is still validated only when a detector is built.** Listing never compiles, so
   a name can be offered whose rules are malformed; construction refuses it, named, before the
   run. Compiling every shelved rule set to filter the dropdown would make a catalogue call
@@ -181,9 +238,14 @@ now read it instead of deriving their own. Behaviour-identical; both keep their 
   directory got parsed, and that is what a name removes.
 - **`lane` and `ruleset` are still independent vocabularies.** The `lane` Literal is fixed at
   what the *packaged* library covers, so a shelved rule set for a lane the library does not
-  cover cannot be selected with that lane from the dashboard, only from config. The honest fix
-  is a vocabulary conditional on another param's value, which `ParamInfo.choices` cannot
-  express; recorded rather than attempted.
+  cover cannot be selected with that lane from the dashboard, only from config. `ParamInfo.choices`
+  cannot express a vocabulary conditional on another param's value — but that is a limit of the
+  current schema, not a reason: this codebase's answer to a compatibility fact between two
+  published vocabularies is to compute the **join server-side** (`can_judge`, `_shape_fed_by`,
+  `BenchSpecSummary.corpora`), precisely so a client cannot get it wrong twice. The reason it is
+  not done here is that listing never compiles, so the server does not know which lanes a shelved
+  rule set covers without parsing it. Publishing legal (lane, rule set) pairs means deciding to
+  compile the shelf, which is the trade named two bullets up.
 - **A new law is now tested for every adapter:** a param whose default is not `None` must be a
   member of its own `choices`. A default outside them is a form that opens on a value it cannot
   display, which is the class of bug ADR-0036 D2 fixed once for artifacts, and it is now

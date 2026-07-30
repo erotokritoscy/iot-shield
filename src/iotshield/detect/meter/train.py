@@ -20,14 +20,13 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from iotshield._paths import REPO_ROOT
 from iotshield.detect.meter.artifact import MeterArtifact
 from iotshield.detect.meter.detector import MeterIForestDetector
 from iotshield.detect.meter.params import MeterParams
 from iotshield.normalize.meter import EOA_METER_CSV, MeterNormalizer
 
-# Repo layout: src/iotshield/detect/meter/train.py -> parents[4] is the repo root.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_DEFAULT_SOURCE = _REPO_ROOT / "data" / "demo" / "demo_meter_history.csv"
+_DEFAULT_SOURCE = REPO_ROOT / "data" / "demo" / "demo_meter_history.csv"
 _DEFAULT_OUT = Path(__file__).resolve().parent / "artifacts" / "demo_meter.json"
 
 

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from iotshield._paths import REPO_ROOT
 from iotshield.detect.team3.train import DEFAULT_ASSET_ID
 from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, write_bundle
 from iotshield.eval.generate.telemetry import to_stub_csv
@@ -134,13 +135,7 @@ def _convert_skab(source: Path) -> list[Corpus]:
 
 # Where SKAB sits in the internship workspace, as a convenience default only — a standalone
 # clone of this repository has no such tree and must pass --source.
-_WORKSPACE_SKAB = (
-    Path(__file__).resolve().parents[3].parent
-    / "reference"
-    / "team3-telemetry-ad"
-    / "Datasets"
-    / "SKAB"
-)
+_WORKSPACE_SKAB = REPO_ROOT.parent / "reference" / "team3-telemetry-ad" / "Datasets" / "SKAB"
 
 DATASETS: dict[str, Dataset] = {
     "skab": Dataset(

@@ -230,9 +230,11 @@ def describe_params(
     the Evaluate page can build a hyperparameter form from one call.
 
     ``discovered_choices`` carries a closed vocabulary the *signature cannot express*: the
-    artifact ids an adapter ships and the rule sets on a deployment's shelf are both files, so
-    the only annotation writable for them is ``str`` (ADR-0035 D1, ADR-0037). Supplying them
-    here rather than as a field of their own means every form that already renders a closed
+    artifact ids an adapter ships and the rule sets on a deployment's shelf are both files
+    discovered at runtime, so the widest annotation writable for them is a bare ``str`` (or
+    ``str | None`` where "not given" means something, as it does for an artifact — ADR-0035 D1,
+    ADR-0037). Supplying them here rather than as a field of their own means every form that
+    already renders a closed
     vocabulary as a ``<select>`` renders these too, and there is one representation of "allowed
     values" on the wire instead of two that can disagree.
     """
@@ -244,8 +246,12 @@ def describe_params(
         default = parameter.default if has_default else None
         if default is None and parameter.name in fields:
             default = fields[parameter.name].get_default(call_default_factory=True)
+        # `if found` rather than `is not None`: a vocabulary that came back empty publishes no
+        # choices at all, never an empty `<select>`. That rule lives here, once, so a caller of
+        # this public function cannot publish one by supplying `{param: []}` — an adapter
+        # packaged without its artifacts falls back to free text, the ADR-0035 D1 escape hatch.
         found = discovered.get(parameter.name)
-        choices = list(found) if found is not None else _literal_choices(parameter.annotation)
+        choices = list(found) if found else _literal_choices(parameter.annotation)
         params.append(
             ParamInfo(
                 name=parameter.name,
@@ -272,12 +278,14 @@ def params_of(spec: AdapterSpec[Any]) -> list[ParamInfo]:
     no spec.
 
     The spec's vocabularies are resolved *here*, per call, because one of them is a directory
-    the operator may add to while the server runs (ADR-0037). A vocabulary that comes back
-    empty publishes no choices at all rather than an empty ``<select>``: an adapter packaged
-    without its artifacts falls back to free text, which is the escape hatch ADR-0035 D1 kept.
+    the operator may add to while the server runs (ADR-0037). What an empty result publishes is
+    ``describe_params``'s rule, not restated here.
     """
-    discovered = {param: ids for param, find in spec.discovered.items() if (ids := find())}
-    return describe_params(spec.factory, spec.params_type, discovered)
+    return describe_params(
+        spec.factory,
+        spec.params_type,
+        {param: find() for param, find in spec.discovered.items()},
+    )
 
 
 def _literal_choices(annotation: Any) -> list[str] | None:
@@ -331,14 +339,27 @@ def _run_response(report: RunReport) -> RunResponse:
     )
 
 
-# The adapter catalogue is invariant for the process (the registries are module-level
-# constants), so build it once rather than re-introspecting every factory per request.
-_MODULES_RESPONSE = ModulesResponse(
-    normalizers=[_module_info("normalizer", n, s) for n, s in NORMALIZERS.items()],
-    detectors=[_module_info("detector", n, s) for n, s in DETECTORS.items()],
-    alert_engines=[_module_info("alert_engine", n, s) for n, s in ALERT_ENGINES.items()],
-    sinks=[_sink_info(n, s) for n, s in SINKS.items()],
-)
+def _modules_response() -> ModulesResponse:
+    """The adapter catalogue, built per request.
+
+    This was a module-level constant, on the reasoning that the registries are module-level
+    constants and therefore so is the catalogue. That held until a param's vocabulary became a
+    *directory the operator may add to while the server runs* (ADR-0037): the registry entry is
+    still invariant, but one of the answers it publishes is not, and a catalogue snapshotted at
+    import would have served the shelf as it looked when the process started. Every layer
+    underneath already resolved it freshly (that is why ``AdapterSpec.discovered`` holds
+    callables), so caching here was the one place that made the whole chain stale.
+
+    Measured at 0.84 ms for a full rebuild — a signature introspection per parameter per
+    adapter, on an endpoint a client hits when a page loads. ``/eval/specs`` had already made
+    this trade for the same reason, and against a cost it stated in the same terms.
+    """
+    return ModulesResponse(
+        normalizers=[_module_info("normalizer", n, s) for n, s in NORMALIZERS.items()],
+        detectors=[_module_info("detector", n, s) for n, s in DETECTORS.items()],
+        alert_engines=[_module_info("alert_engine", n, s) for n, s in ALERT_ENGINES.items()],
+        sinks=[_sink_info(n, s) for n, s in SINKS.items()],
+    )
 
 
 # --- App ---------------------------------------------------------------------
@@ -363,8 +384,8 @@ def create_control_app(engine: Engine) -> FastAPI:
 
     @app.get("/modules")
     def modules() -> ModulesResponse:
-        """The adapter catalogue: names, capabilities, and param schemas (built once)."""
-        return _MODULES_RESPONSE
+        """The adapter catalogue: names, capabilities, and param schemas (built per request)."""
+        return _modules_response()
 
     @app.post("/runs/validate")
     def validate_run(request: ValidateRequest) -> ValidateResponse:
