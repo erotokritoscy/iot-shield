@@ -14,6 +14,7 @@ from iotshield.api.control import params_of
 from iotshield.capabilities import Capability, formats_in, lanes_in, payloads_in
 from iotshield.contracts import Lane
 from iotshield.detect._artifacts import packaged_artifact_ids
+from iotshield.detect.rules.loader import load_ruleset
 from iotshield.flow import METADATA_KEY as FLOW_METADATA_KEY
 from iotshield.meter import METADATA_KEY as METER_METADATA_KEY
 from iotshield.normalize import (
@@ -150,6 +151,25 @@ def test_declared_lane_choices_are_the_value_carrying_lanes() -> None:
     # the value-carrying lanes, not every Lane; this pins that (and catches a new such lane).
     value_carrying = [Lane.TELEMETRY.value, Lane.FLOW.value]
     assert _choices_of(DETECTORS["stub_threshold"], "lane") == value_carrying
+
+
+def test_the_rules_detector_offers_only_the_lanes_its_library_covers() -> None:
+    """The same law one adapter over, and the one place it can be checked against *data*.
+
+    ``lane: telemetry`` compiles, has published fields, and matches nothing in the packaged
+    library — so offering it as a choice was a dead end whose only symptom was a construction
+    error after the operator had composed a whole run, since the guard reads declarations and
+    cannot open a rule file (ADR-0014).
+
+    Derived from the library rather than named here, so the offer cannot go stale in either
+    direction: writing the first telemetry rule fails this test and points at the Literal to
+    widen, exactly as deleting the last log rule would.
+    """
+    covered = {rule.lane for rule in load_ruleset()}
+    assert covered, "guard the guard: an empty library would satisfy this vacuously"
+    # Lane declaration order, the order every other published lane vocabulary is in.
+    expected = [lane.value for lane in Lane if lane in covered]
+    assert _choices_of(DETECTORS["rules"], "lane") == expected
 
 
 def test_learning_adapters_params_type_mirrors_the_factory_signature() -> None:
@@ -312,6 +332,8 @@ def test_the_rules_detector_needs_a_payload_only_on_the_lane_that_reads_one() ->
         FLOW_METADATA_KEY
     }
     assert payloads_in(DETECTORS["rules"].capability({"lane": "log"}).consumes) == set()
+    # Telemetry is not in the *offered* vocabulary (no packaged rule uses it), but a config
+    # naming its own ruleset can still ask for it — so the declaration has to be right here.
     assert payloads_in(DETECTORS["rules"].capability({"lane": "telemetry"}).consumes) == set()
 
 
