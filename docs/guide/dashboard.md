@@ -8,9 +8,9 @@ services, and what a page can show is bounded by what they publish.
 guide is the product view of it. What it shows, why it is arranged that way, what it refuses to do,
 and what you have to know before you change it.
 
-There is a second dashboard in the tree, `src/iotshield/dashboard/`, the Streamlit app this one
-replaced. It is still runnable on `:8501` and still tested, but it is frozen. `web/` is the UI that
-gets changed.
+It replaced a Streamlit app that has since been deleted. That app is why several decisions here
+are phrased as translations of something, and ADR-0031 is where the comparison is recorded, but
+there is no second dashboard in the tree any more. `web/` is the only UI.
 
 ## The one fact everything else follows from
 
@@ -150,9 +150,10 @@ transient failure is permanent until the operator guesses that a full page reloa
 
 ## The Evaluate mode is gated by a probe, not by a flag
 
-The evaluation plane has two server flags. `IOTSHIELD_EVAL_API` decides whether the Pipeline API
-registers the `/eval` router at all; `IOTSHIELD_EVAL_UI` used to show the Streamlit mode. A static
-bundle cannot read server environment variables, so the second flag is unreachable from here.
+The evaluation plane once had two server flags. `IOTSHIELD_EVAL_API` decides whether the Pipeline
+API registers the `/eval` router at all; `IOTSHIELD_EVAL_UI` showed the mode in the Streamlit app.
+A static bundle cannot read server environment variables, so the second flag was unreachable from
+here, and it has been removed along with the app that read it.
 
 It was also always the weaker of the two. Without the API flag the router is *absent*, not guarded,
 so the UI flag could only ever hide a mode that already could not work. The SPA therefore **probes**
@@ -343,10 +344,10 @@ report from an older harness is told so specifically rather than described as ma
 
 `web/src/charts/specs.ts` holds six builders: the telemetry timeline, the severity bar, benchmark
 spec scores, the sweep curve, per-case variance, and one case's timeline. They are Vega-Lite specs
-ported one-to-one from the Streamlit app's `src/iotshield/dashboard/charts.py`, close enough to
-diff.
+ported one-to-one from the Streamlit app's chart module, which is why they are grouped in one file
+rather than living beside the pages that draw them.
 
-That file was never styling. It encodes decisions that have to survive any restyle:
+That file is not styling. It encodes decisions that have to survive any restyle:
 
 - a **single hue** for a magnitude comparison, because identity rides on the axis and a second hue
   adds noise rather than information;

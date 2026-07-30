@@ -39,11 +39,13 @@ repository checkout, and `IOTSHIELD_RULES_PATH` overrides it. `docker-compose.ym
 directory read-only into the Pipeline API and sets that variable, so on the compose stack you
 add a rule set by creating a subdirectory here.
 
-Writing the rules themselves — the field vocabulary, the operators, worked examples — is
-`docs/integration/rule-authoring-guide.md`. Validate a set before a run with:
+Writing the rules themselves — the operators, the grammar, worked examples, and what happens
+to a rule once it fires — is `docs/guide/detectors.md`. The **field vocabulary** a rule may
+name on the left of a comparison is published by the code that implements it, so it cannot
+drift from what actually matches:
 
 ```
-python -m iotshield.detect.rules   # the field vocabulary a rule may address
+python -m iotshield.detect.rules   # every field, its kind, and what it holds
 ```
 
 A rule set is compiled when a run constructs the detector, not when it is listed, so a name

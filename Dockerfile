@@ -1,8 +1,10 @@
-# One image, four roles: the init step, the API, the dashboard, and the batch
-# runner are the same codebase with different commands (set in compose). This is
-# the MVP image — correct and reproducible, deliberately NOT yet hardened (slim
-# base / non-root / distroless). team3 (ADR-0012) has now settled the dependency
-# surface as numpy-only, so that hardening pass is unblocked; it is tracked
+# One image, three roles: the init step, both APIs, and the batch runner are the
+# same codebase with different commands (set in compose). The dashboard is not
+# among them — it is a separate nginx image built from web/. This is the MVP
+# image — correct and reproducible, deliberately NOT yet hardened (slim base /
+# non-root / distroless). The runtime dependency surface was numpy-only until the
+# meter detector brought scikit-learn in (ADR-0030), ~100 MB with scipy, which
+# makes that hardening pass more valuable rather than less; it is tracked
 # separately and intentionally not done in this change.
 
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
@@ -30,6 +32,6 @@ RUN uv sync --frozen --no-dev
 COPY config ./config
 COPY data ./data
 
-# Put the venv on PATH so `python`, `streamlit`, etc. resolve to it. Each service
+# Put the venv on PATH so `python`, `uvicorn`, etc. resolve to it. Each service
 # supplies its own command in docker-compose.yml.
 ENV PATH="/app/.venv/bin:$PATH"

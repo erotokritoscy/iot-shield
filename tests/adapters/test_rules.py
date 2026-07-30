@@ -676,18 +676,32 @@ def test_time_ordering_of_the_library_is_irrelevant_to_matching() -> None:
 # --- The published field list cannot go stale -------------------------------------------
 
 
-def test_the_authoring_guide_documents_every_published_field() -> None:
-    """The published field list is generated from the table that implements it, and this is
-    what keeps the human-readable copy honest.
+def test_every_published_field_documents_itself() -> None:
+    """The vocabulary IS its own documentation, so there is no second copy to go stale.
 
-    A hand-maintained field list is a promise to keep two things in sync forever, which
-    nobody keeps — and the cost of it drifting falls on the one audience with no type
-    checker and no error message: someone writing YAML.
+    This used to pin a hand-written field list in a separate authoring guide. That is a
+    promise to keep two things in sync forever, which nobody keeps — and the cost of it
+    drifting falls on the one audience with no type checker and no error message: someone
+    writing YAML. Since ``FieldSpec.description`` is what ``python -m iotshield.detect.rules``
+    prints, the copy was removable rather than merely checkable, and drift stops being
+    *detected* and becomes impossible (the move ADR-0035 D2 made for ``PAYLOAD_BY_LANE``).
+
+    What is left to enforce is that the descriptions are usable *as* the reference: present,
+    long enough to say something, and not a restatement of the name they sit beside — the
+    three ways a field silently becomes undocumented while still appearing in the listing.
     """
-    guide = Path("docs/integration/rule-authoring-guide.md").read_text(encoding="utf-8")
-    for lane_fields in describe().values():
+    for lane, lane_fields in describe().items():
         for spec in lane_fields:
-            assert f"`{spec['name']}`" in guide, f"{spec['name']} is published but undocumented"
+            name, text = spec["name"], spec["description"]
+            # Lane-qualified in the message, not by concatenation: a flow field is already
+            # named `flow.peer_ip`, while `severity` is published on all three lanes.
+            where = f"{name!r} on lane {lane}"
+            assert text.strip(), f"{where} is published with no description"
+            assert len(text) >= 20, f"{where} has a description too short to document it: {text!r}"
+            assert not text.lower().startswith(name.lower()), (
+                f"{where} has a description that restates its name rather than explaining it: "
+                f"{text!r}"
+            )
 
 
 def test_the_flow_vocabulary_tracks_flowrecord() -> None:

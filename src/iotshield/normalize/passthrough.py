@@ -8,7 +8,7 @@ normalization elsewhere. For those, "normalization" is not parsing a wire format
 failure is still captured as a ``MalformedRecord``, never dropped (ADR-0004). The four-port
 model is untouched — the pipeline still *always* normalizes; this is simply the smallest
 normalizer that honours every port law, which also makes it the hello-world for a new
-contributor (docs/design/weeks-3-4.md §5.2/§5.6).
+contributor (ADR-0025).
 
 Format ("normalized-jsonl"): one JSON object per line, each matching ``NormalizedEvent``'s
 fields. Blank lines are skipped (no content is not data).

@@ -345,7 +345,7 @@ reason instead of reading like a bad detector. Reported, not refused: a delibera
 detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
-docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboards (:8080 React, :8501 Streamlit)
+docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8080)
 docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
 ```
@@ -559,7 +559,6 @@ src/iotshield/
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
-  dashboard/    Streamlit app, the original UI (consumes the APIs only; same three planes as web/ below). Kept runnable on :8501 during the changeover (ADR-0031)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)
@@ -567,7 +566,7 @@ src/iotshield/
 web/            the React dashboard (ADR-0031) — the product UI, served by nginx on :8080
   src/lib/api/    the ONE door into both APIs: types generated from their /openapi.json
                   (committed) + zod validation per response, so drift fails loudly here
-  src/charts/     the six Vega-Lite builders, ported one-to-one from dashboard/charts.py
+  src/charts/     the six Vega-Lite builders, ported one-to-one from the Streamlit app's charts
   src/pages/      Monitor (Triage/Assets/DataHealth), Operate (Compose), evaluate/
   src/index.css   the design tokens — change the look here, never with a hex in a component
   nginx.conf.template  serves the SPA and proxies /api + /pipeline, which is why the
@@ -587,12 +586,13 @@ points one way (eval → pipeline, never back), and a benchmark **cannot** write
 type checker rather than discipline that stops twenty benchmark runs flooding an operator's
 triage queue.
 
-Two flags, both off unless a deployment opts in (compose sets both — it is the research
-stack): `IOTSHIELD_EVAL_API` decides whether the Pipeline API *registers* the `/eval` router
-(absent, not merely guarded — a product image has no route and no OpenAPI entry), and
-`IOTSHIELD_EVAL_UI` shows the dashboard's Evaluate mode. The dashboard runs benchmarks
-through the API and renders them; it never computes, and its `eval` imports are deferred so
-the package stays deletable. With no API reachable it falls back to a saved report JSON.
+One flag, off unless a deployment opts in (compose sets it — it is the research stack):
+`IOTSHIELD_EVAL_API` decides whether the Pipeline API *registers* the `/eval` router (absent,
+not merely guarded — a product image has no route and no OpenAPI entry). The dashboard needs no
+flag of its own: it **probes** `/eval/corpora` and hides the mode when the router is absent, so
+one flag decides the plane end to end (ADR-0031 D5). The old `IOTSHIELD_EVAL_UI` gated the
+Streamlit app's mode and went with it. The dashboard runs benchmarks through the API and renders
+them; it never computes. With no API reachable it falls back to an uploaded report JSON.
 
 Detectors may implement the **optional** `Fittable` capability (`fit(events) -> Detector`,
 returning a new detector). The pipeline never calls it; only a benchmark does, so it can
@@ -633,8 +633,10 @@ text in a YAML file *at runtime*, so no type checker can see it, and a rule that
 and matches nothing is indistinguishable from a quiet night. So the untyped hop becomes one
 *table* wide instead of one function call wide — and each entry **reads through** the typed
 lane record, never around it, which is what makes the vocabulary unable to drift from the
-data (it stops type-checking), enumerable (`python -m iotshield.detect.rules` prints it, and
-a test pins `docs/integration/rule-authoring-guide.md` against it), and checkable at load (an
+data (it stops type-checking), enumerable (`python -m iotshield.detect.rules` prints every
+field with its kind and `FieldSpec.description`, which **is** the published reference — there
+is no prose copy to go stale, and a test holds each description to being present, long enough
+to say something, and not a restatement of the name), and checkable at load (an
 unknown field is refused with a "did you mean"; an operator that does not suit a field's kind
 is refused too, where the upstream engine raises `TypeError` mid-run). The grammar is ported
 verbatim from Antonia's engine — selections, seven operators, a flat `condition` — because it

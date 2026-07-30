@@ -21,9 +21,9 @@ file — which is the difference between a system experts extend and a system ex
 and therefore the thing most likely to keep this repo alive after the internship.
 
 Provenance: the rule *grammar* and three of the shipped rules come from Antonia Voutouri's
-``iot-ot-alert-correlation`` (see ``library/`` for per-rule credit and
-``docs/integration/rule-detector-and-enrichment-plan.md`` for the agreement). The engine is
-re-implemented rather than wrapped, as that letter proposed: hers reads her canonical event
+``iot-ot-alert-correlation`` (see ``library/`` for per-rule credit, and ADR-0032 for the
+integration agreement). The engine is re-implemented rather than wrapped, as that agreement
+proposed: hers reads her canonical event
 model, and converting our events into it would mean inventing fields we do not have
 (ADR-0032 D1).
 
