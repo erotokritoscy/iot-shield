@@ -1,0 +1,59 @@
+# Benchmark spec: team3's z-score on the METERING corpus — the baseline arm meter.yaml lacks.
+#
+# WHY THIS EXISTS. `config/bench/meter.yaml` runs alone, and its own header calls that a real
+# gap: every other corpus is read against a floor arm, and metering had none. `stub.yaml`
+# cannot serve, for two reasons it states — it compares an absolute 80.0 (three orders of
+# magnitude above a meter's hourly draw, so it would score zero for a units reason rather than
+# a detection one), and a spec must declare one source per input position in the corpus's own
+# formats, so a floor arm here needs its own file naming `sensipro-hourly-csv`. This is that
+# file, with a detector that actually has a chance.
+#
+# WHY TEAM3 CAN READ THIS CORPUS AT ALL. The two detectors declare different shapes at the
+# normalize->detect joint (ADR-0035): `meter_iforest` consumes lane `telemetry` AND payload
+# `meter`, while `team3_zscore` consumes the LANE ALONE. `consumes` is a conjunction, so the
+# meter corpus satisfies both — the forest needs the typed MeterReading, the z-score needs only
+# the numbers, and metering is the one corpus shape where a purpose-built detector and a
+# general-purpose one can be asked the same question about the same bytes.
+#
+# WHAT IT MEASURES. Whether a domain-specific model earns its complexity. Both are fitted per
+# asset from each meter's own reserved prefix, judged against the same answer key:
+#
+#   uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
+#       --spec config/bench/meter.yaml --spec config/bench/meter_team3.yaml
+#
+# Measured at the time of writing: the forest scores evF1 0.23 (P 0.14 / R 0.67, 79
+# detections), the z-score evF1 0.16 (P 0.09 / R 1.00, 319 detections). So the general
+# detector finds *everything* — perfect event recall, which the forest does not reach — and
+# pays for it by speaking four times as often. The purpose-built model buys precision, not
+# sensitivity. That is a more useful result than a win: it says what the extra machinery is
+# actually for, and it says the honest thing about both, which is that hourly metering at
+# these operating points is a hard lane for either.
+#
+# No `artifact:`, so this is an *untrained* model and needs `--fit-protocol prefix` (ADR-0022).
+# The committed `skab_zscore` artifact is deliberately NOT named: it was fitted on SKAB's
+# channels for `skab-testbed`, and an artifact judges only the asset it was fitted for
+# (ADR-0034), so pointing it at a water meter is a skip rather than a judgment.
+
+source_format: sensipro-hourly-csv
+normalizer: meter
+
+detectors:
+  - name: team3_zscore
+    params:
+      # Left at the product's defaults. Tuning them against this corpus would make the
+      # comparison a statement about how hard we tried on each side (ADR-0021 D7); `--sweep`
+      # is the honest way to ask that question, and this spec is the one to sweep.
+      window_size: 60
+      lag_steps: [1, 5, 10]
+      percentile: 99.0
+
+alert_engine:
+  name: weighted
+  params:
+    # An hour, matching meter.yaml: this lane's events ARE hourly, so a five-minute bucket
+    # holds at most one and every alert would cite a single detection. The two arms must share
+    # a bucket or their volume factors are not comparable.
+    bucket_minutes: 60
+
+# No `assets:`, matching meter.yaml — `asset_weight` is a number we would be typing in, and a
+# ranking improvement it produced would be indistinguishable from a real one (ADR-0021 D7).

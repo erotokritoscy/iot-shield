@@ -51,19 +51,34 @@ def test_a_leak_fires_with_evidence_drawn_from_the_model_columns() -> None:
     assert top.evidence["num_anomalous_points"] >= 1
 
 
-def test_the_demo_meter_leak_is_led_by_the_hour_of_week_residual() -> None:
-    """At the production 168-hour window, the residual is what carries this detector: the
-    leak's volume is ordinary for an evening and extraordinary for 3am, which is the case a
-    magnitude threshold cannot express."""
+def test_the_shipped_artifact_holds_its_false_alarm_budget_on_its_own_history() -> None:
+    """The shipped artifact, at the production 168-hour window, against the ten weeks of
+    clean history it was fitted on.
+
+    Two properties in one run, and the pairing is the point. The threshold is *learned* to a
+    false-alarm budget of roughly one alarm per meter-month rather than chosen, so the honest
+    expectation on clean data is not silence — it is about one. A detector that scored zero
+    here would mean the threshold had drifted conservative and the budget no longer described
+    it.
+
+    And the residual is what carries this detector at 168 hours: `deviation` leads, which is
+    the case a magnitude threshold cannot express, since the volume involved is ordinary for
+    an evening and extraordinary at 3am.
+
+    (This previously ran against `data/demo/demo_meter.csv`, a curated file carrying an
+    injected leak, which went with the demo rebuild. The history file survives because it is
+    the artifact's only training input — `detect/meter/train.py` — so pinning the artifact
+    against it is both hermetic and the thing most worth pinning.)
+    """
     detector = build_detector("meter_iforest", {"artifact": "demo_meter"})
-    text = (DEMO_DIR / "demo_meter.csv").read_text(encoding="utf-8")
+    text = (DEMO_DIR / "demo_meter_history.csv").read_text(encoding="utf-8")
     result = MeterNormalizer().normalize(text, source_format="eoa-meter-csv", origin="test://demo")
     detections = detector.detect(result.events)
-    assert len(detections) == 1, "the demo is tuned to surface exactly the leak"
-    leak = detections[0]
-    assert leak.event_kind is EventKind.COLLECTIVE
-    assert leak.evidence["top_features"][0]["feature"] == "deviation"
-    assert "usual level for this hour" in leak.evidence["explanation"]
+    assert len(detections) == 1, "~1 alarm per meter-month over ten weeks is the fitted budget"
+    top = detections[0]
+    assert top.event_kind is EventKind.COLLECTIVE
+    assert top.evidence["top_features"][0]["feature"] == "deviation"
+    assert "usual level for this hour" in top.evidence["explanation"]
 
 
 def test_an_asset_with_no_fitted_model_is_skipped_not_scored() -> None:

@@ -9,7 +9,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from sqlalchemy.orm import Session
@@ -167,231 +167,195 @@ class TestEndToEnd:
         assert "Warnings:" in report.render()
 
 
-class TestDemoArtifacts:
-    """The committed demo files are covered by exact counts: the demo cannot rot."""
+class TestWalkthroughDemo:
+    """The dashboard walkthrough, pinned by exact counts: the demo cannot rot.
 
-    def test_demo_csv_and_config_produce_expected_run(self, tmp_path: Path) -> None:
-        from iotshield.pipeline import load_config
+    These build the spec inline rather than loading a YAML file, because the walkthrough is
+    driven from the Compose page and there is no config behind it. Pinning a config nobody
+    runs would guard the wrong thing; what must not rot is the two runs a presenter actually
+    performs, so that is what these are.
 
-        config = load_config(REPO_ROOT / "config" / "demo.yaml").model_copy(
-            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
+    ``scripts/make_demo_data.py`` writes the three inputs. Every number below is arithmetic
+    a presenter says out loud in front of an audience — the detection counts add up by lane,
+    and the priority moves for one device and not the other — so a change to either side
+    fails here before it fails on a projector.
+
+    **No ``assets:``, deliberately.** ``ComposePage`` has no asset-registration section, so a
+    run driven by clicking auto-discovers every device at MEDIUM. Registering the camera at
+    HIGH is legal from YAML and raises its priority (52.7 -> 55.7 on one lane), which is a
+    real feature and is pinned separately below — but pinning it *here* would document
+    numbers nobody can reproduce from the dashboard, and the dashboard is the demo.
+    """
+
+    CAMERA = "10.0.0.24"
+    GATEWAY = "10.0.0.11"
+    SENSOR = "10.0.0.31"
+
+    REGISTERED_CAMERA: ClassVar[list[dict[str, str]]] = [
+        {
+            "asset_id": "10.0.0.24",
+            "name": "Line-1 IP camera (cam-07)",
+            "asset_type": "camera",
+            "location": "line-1",
+            "criticality": "high",
+        }
+    ]
+
+    def _flow_only(
+        self, tmp_path: Path, assets: list[dict[str, str]] | None = None
+    ) -> PipelineConfig:
+        """Arm A: the flow lane alone — one modality, judged on its own."""
+        return PipelineConfig.model_validate(
+            {
+                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
+                "sources": [
+                    {
+                        "normalizer": "flow",
+                        "source_format": "zeek-conn",
+                        "path": str(REPO_ROOT / "data" / "demo" / "camera_flow.log"),
+                    }
+                ],
+                "detectors": [{"name": "rules", "params": {"lane": "flow"}}],
+                "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 5}},
+                "assets": assets or [],
+            }
         )
-        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo.csv")
-        assert (report.events, report.malformed, report.detections, report.alerts) == (19, 3, 4, 2)
-        # Registered high-criticality pump outranks the discovered gateway.
-        assert report.top_alerts[0].asset_id == "pump-02"
-        assert report.top_alerts[1].asset_id == "gw-01"
 
-    def test_file_demo_config_writes_jsonl_with_no_database(self, tmp_path: Path) -> None:
-        # The file-only demo: the same normalize+detect as demo.yaml, but a file sink and
-        # no database at all (ADR-0018). Redirect the output into tmp so the run is hermetic.
-        from iotshield.pipeline import SinkConfig, load_config
-
-        out = tmp_path / "results.jsonl"
-        config = load_config(REPO_ROOT / "config" / "demo_file.yaml").model_copy(
-            update={"sinks": [SinkConfig(name="file", params={"path": str(out)})]}
+    def _all_lanes(self, tmp_path: Path) -> PipelineConfig:
+        """Arm B: the same bytes plus two more lanes on the same device."""
+        demo = REPO_ROOT / "data" / "demo"
+        return PipelineConfig.model_validate(
+            {
+                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
+                "sources": [
+                    {
+                        "normalizer": "flow",
+                        "source_format": "zeek-conn",
+                        "path": str(demo / "camera_flow.log"),
+                    },
+                    {
+                        "normalizer": "syslog",
+                        "source_format": "syslog",
+                        "path": str(demo / "camera_syslog.log"),
+                    },
+                    {
+                        "normalizer": "stub",
+                        "source_format": "stub-csv",
+                        "path": str(demo / "camera_telemetry.csv"),
+                    },
+                ],
+                "detectors": [
+                    {"name": "rules", "params": {"lane": "flow"}},
+                    {"name": "rules", "params": {"lane": "log"}},
+                    {"name": "stub_threshold"},
+                ],
+                "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 5}},
+            }
         )
-        assert config.database_url is None
-        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo.csv")
-        assert (report.events, report.malformed, report.detections) == (19, 3, 4)
-        assert report.destinations == ["file"]
-        record = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
-        assert len(record["events"]) == 19
 
-    def test_team3_demo_produces_a_real_detection_and_alert(self, tmp_path: Path) -> None:
-        # The team3 detector on a real SKAB valve fault: one sustained anomaly
-        # episode -> one prioritized alert on the registered testbed asset.
+    def test_arm_a_judges_one_lane_and_names_the_threat(self, tmp_path: Path) -> None:
+        # Signatures, not rate detection: the camera probes SIX hosts on telnet (fan-out's
+        # boundary is 20) and uploads 4.2 MB (exfiltration's is 50 MB), so every statistical
+        # detector would correctly stay silent and a rule catches it anyway.
         from iotshield.contracts import AlertSeverity
-        from iotshield.pipeline import load_config
 
-        config = load_config(REPO_ROOT / "config" / "demo_team3.yaml").model_copy(
-            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
-        )
-        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_team3.csv")
-        assert (report.events, report.malformed, report.detections, report.alerts) == (
-            2400,
-            0,
-            1,
-            1,
-        )
-        top = report.top_alerts[0]
-        assert top.asset_id == "skab-testbed"
-        assert top.severity == AlertSeverity.CRITICAL
+        report = run_pipeline(self._flow_only(tmp_path))
+        assert (report.events, report.malformed, report.detections, report.alerts) == (12, 0, 3, 2)
 
-    def test_triage_demo_ranks_by_severity_criticality_and_volume(self, tmp_path: Path) -> None:
-        # The flagship: two detectors (team3_zscore + stub_threshold) feed the
-        # weighted engine over four assets, so the ranked queue exercises every
-        # single-lane priority factor at once (ADR-0012 + ADR-0013). The stub
-        # threshold (300) sits above SKAB's largest channel, so the two detectors
-        # never overlap: team3 owns skab-testbed, stub owns the pumps.
+        camera, gateway = report.top_alerts
+        assert camera.asset_id == self.CAMERA
+        assert camera.severity is AlertSeverity.HIGH
+        assert camera.priority_score == pytest.approx(52.7, abs=0.05)
+        assert len(camera.detection_ids) == 2  # telnet propagation + the bulk upload
+        assert camera.score_components["corroboration"] == 1.0  # one lane, on its own
+        # The alert says WHAT it is, which is the whole point of the rule detector.
+        assert camera.threat_class == "Remote Services (T1021)"
+
+        # A real but lesser finding, which is what gives the queue something to rank.
+        assert gateway.asset_id == self.GATEWAY
+        assert gateway.severity is AlertSeverity.MEDIUM
+        assert gateway.threat_class == "External Remote Services (T1133)"
+
+    def test_arm_b_corroborates_three_lanes_on_the_same_device(self, tmp_path: Path) -> None:
+        # The payoff. corroboration is 1 + 0.5*(lanes-1), so three lanes make it 2.0 — its
+        # highest value with today's three lanes.
         from iotshield.contracts import AlertSeverity
-        from iotshield.pipeline import load_config
 
-        config = load_config(REPO_ROOT / "config" / "demo_triage.yaml").model_copy(
-            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
-        )
-        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_triage.csv")
-        assert (report.events, report.malformed, report.detections, report.alerts) == (
-            2414,
-            0,
-            8,
-            4,
-        )
-        ranked = [(alert.asset_id, alert.severity) for alert in report.top_alerts]
-        assert ranked == [
-            ("skab-testbed", AlertSeverity.HIGH),  # real team3 anomaly, severity saturated
-            ("reactor-pump", AlertSeverity.HIGH),  # 750 breach x CRITICAL asset
-            ("utility-pump", AlertSeverity.MEDIUM),  # IDENTICAL breach, LOW asset -> demoted
-            ("boiler-pump", AlertSeverity.MEDIUM),  # mild readings but 5x -> volume escalates
-        ]
+        report = run_pipeline(self._all_lanes(tmp_path))
+        assert (report.events, report.malformed, report.detections, report.alerts) == (110, 2, 8, 2)
 
-    def test_syslog_demo_normalizes_multi_host_logs(self, tmp_path: Path) -> None:
-        # The normalizer showcase: two syslog dialects across three hosts, no
-        # numeric readings, so the telemetry detector fires on nothing. The visible
-        # results are LOG events and the quarantined malformed lines (ADR-0011).
-        from iotshield.pipeline import load_config
+        camera = report.top_alerts[0]
+        assert camera.asset_id == self.CAMERA
+        assert camera.severity is AlertSeverity.CRITICAL
+        assert camera.priority_score == pytest.approx(80.0, abs=0.05)
+        assert camera.score_components["corroboration"] == 2.0
+        # 2 flow + 2 log + 3 telemetry. The sum is checkable by eye on a projector, which is
+        # why the thermal excursion is three samples rather than a long climb.
+        assert len(camera.detection_ids) == 7
 
-        config = load_config(REPO_ROOT / "config" / "demo_syslog.yaml").model_copy(
-            update={"database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}"}
+    def test_registering_the_camera_raises_it_above_the_discovered_default(
+        self, tmp_path: Path
+    ) -> None:
+        """Asset criticality is a real ranking factor, and the dashboard cannot reach it.
+
+        `ComposePage` has no asset-registration section, so every device a clicked run sees is
+        auto-discovered at MEDIUM (`asset_weight` 1.10). Declaring the camera HIGH from YAML
+        weights it 1.20 and moves it 52.7 -> 55.7 on the flow lane alone. The *band* does not
+        change, which is why the walkthrough loses nothing by not registering anything — but
+        the factor exists and is worth pinning, since the gap between what config can express
+        and what the UI can is exactly the kind of thing that rots unnoticed.
+        """
+        discovered = run_pipeline(self._flow_only(tmp_path)).top_alerts[0]
+        registered = run_pipeline(
+            self._flow_only(tmp_path, assets=self.REGISTERED_CAMERA)
+        ).top_alerts[0]
+
+        assert discovered.score_components["asset_weight"] == pytest.approx(1.10)
+        assert registered.score_components["asset_weight"] == pytest.approx(1.20)
+        assert registered.priority_score > discovered.priority_score
+        assert registered.severity is discovered.severity
+
+    def test_the_extra_lanes_move_the_camera_and_leave_the_gateway_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """The walkthrough's actual claim, asserted as the difference between the two arms.
+
+        A priority that rose everywhere would prove nothing — it could be a scoring change.
+        What corroboration means is that the device with independent agreement across lanes
+        moves and the device without it does not.
+        """
+        solo = {a.asset_id: a for a in run_pipeline(self._flow_only(tmp_path)).top_alerts}
+        joint = {a.asset_id: a for a in run_pipeline(self._all_lanes(tmp_path)).top_alerts}
+
+        assert joint[self.CAMERA].priority_score > solo[self.CAMERA].priority_score
+        assert joint[self.GATEWAY].priority_score == solo[self.GATEWAY].priority_score
+        # Same detection, same score, same rule: only the corroboration factor differs.
+        assert (
+            joint[self.CAMERA].score_components["severity"]
+            == solo[self.CAMERA].score_components["severity"]
         )
-        report = run_pipeline(config, REPO_ROOT / "data" / "demo" / "demo_syslog.log")
-        assert (report.events, report.malformed, report.detections, report.alerts) == (
-            12,
-            3,
-            0,
-            0,
-        )
-        # The telemetry detector on log-lane data idles by design (ADR-0011): the
-        # guard surfaces that as a warning rather than refusing the showcase run.
-        assert any("will not fire" in warning for warning in report.warnings)
-        assert "Warnings:" in report.render()
-        # ... and the 20% reject rate stays below the malformed-rate threshold, so the
-        # showcase is not falsely flagged as a wrong-normalizer misconfig (ADR-0017).
+
+    def test_the_quiet_device_stays_quiet(self, tmp_path: Path) -> None:
+        # A ranked queue is only credible if something in the input earns nothing. The sensor
+        # appears on the flow and log lanes and raises no alert in either arm.
+        for config in (self._flow_only(tmp_path), self._all_lanes(tmp_path)):
+            report = run_pipeline(config)
+            assert self.SENSOR not in {alert.asset_id for alert in report.top_alerts}
+
+    def test_unparseable_lines_are_quarantined_rather_than_dropped(self, tmp_path: Path) -> None:
+        # "Nothing is silently dropped" is a claim the Data Health page makes visible, so the
+        # demo input carries two genuinely broken lines: a truncated write and a line with no
+        # PRI. Both are captured with their original text.
+        report = run_pipeline(self._all_lanes(tmp_path))
+        assert report.malformed == 2
+        # ...and two bad lines out of 112 stays far below the wrong-normalizer warning rate,
+        # so the walkthrough is not flagged as a misconfiguration (ADR-0017).
         assert not any("may not match" in warning for warning in report.warnings)
 
-    def test_multimodal_demo_correlates_two_lanes_on_one_asset(self, tmp_path: Path) -> None:
-        # ADR-0019 + ADR-0020: one run ingests a telemetry CSV + a syslog stream for the same
-        # asset, and now BOTH lanes have a detector — so this is the run where cross-lane
-        # corroboration finally fires. The telemetry spike (2 point detections) and the log
-        # burst (1 collective detection) pool into one 5-minute bucket on pump-02.
-        from iotshield.contracts import AlertSeverity
-        from iotshield.pipeline import load_config
-
-        loaded = load_config(REPO_ROOT / "config" / "demo_multimodal.yaml")
-        config = loaded.model_copy(
-            update={
-                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
-                "sources": [
-                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
-                    for source in loaded.sources
-                ],
-            }
-        )
-        report = run_pipeline(config)
-        assert (report.events, report.malformed, report.detections, report.alerts) == (9, 0, 3, 1)
-        top = report.top_alerts[0]
-        assert top.asset_id == "pump-02"
-        assert len(top.detection_ids) == 3  # 2 telemetry + 1 log burst, pooled
-        # The payoff: two lanes agreeing about one asset. Every earlier demo scored
-        # corroboration 1.0, because only one lane ever had a detector to speak for it.
-        assert top.score_components["corroboration"] == 1.5
-        assert top.severity is AlertSeverity.HIGH
-        # Both produced lanes are judged now, so the uncovered-lane warning is gone.
-        assert not any("no detector that consumes it" in warning for warning in report.warnings)
-
-    def _demo(self, name: str, tmp_path: Path):
-        """Load a shipped demo config with repo-relative paths and a scratch database."""
-        from iotshield.pipeline import load_config
-
-        loaded = load_config(REPO_ROOT / "config" / name)
-        return loaded.model_copy(
-            update={
-                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
-                "sources": [
-                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
-                    for source in loaded.sources
-                ],
-            }
-        )
-
-    def test_flow_demo_detects_the_scan_and_quarantines_foreign_traffic(
-        self, tmp_path: Path
-    ) -> None:
-        # ADR-0023 + ADR-0024: a compromised camera sweeping the internet for telnet. The
-        # sweep merges into ONE collective detection, the busy-but-boring gateway (30 flows,
-        # one destination) stays silent, and the flow between two foreign hosts is captured
-        # as malformed rather than dropped.
-        report = run_pipeline(self._demo("demo_flow.yaml", tmp_path))
-        assert (report.events, report.malformed, report.detections, report.alerts) == (81, 1, 1, 1)
-        top = report.top_alerts[0]
-        assert top.asset_id == "10.0.0.24"
-        assert len(top.detection_ids) == 1  # one incident, one judgment
-        assert top.score_components["corroboration"] == 1.0  # single lane, on its own
-
-    def test_trimodal_demo_correlates_all_three_lanes_on_one_asset(self, tmp_path: Path) -> None:
-        # The payoff of the FLOW lane: telemetry + log + flow agreeing about one device.
-        # corroboration is 1 + 0.5*(lanes-1), so three lanes make it 2.0 — a factor no run
-        # could reach before, since the product had only ever had two judged lanes.
-        from iotshield.contracts import AlertSeverity
-
-        report = run_pipeline(self._demo("demo_trimodal.yaml", tmp_path))
-        assert (report.detections, report.alerts) == (4, 1)
-        top = report.top_alerts[0]
-        assert top.asset_id == "10.0.0.24"
-        # corroboration == 2.0 IS the three-lane assertion: the factor is derived from the
-        # number of distinct lanes in the bucket, so no separate lane check is needed.
-        assert top.score_components["corroboration"] == 2.0
-        assert top.severity is AlertSeverity.CRITICAL
-        assert len(top.detection_ids) == 4  # 2 telemetry points + 1 log burst + 1 flow sweep
-        # The same flow sweep alone scores MEDIUM (see the test above); corroboration is
-        # what moves it, so assert the ordering rather than a brittle exact score.
-        solo = run_pipeline(self._demo("demo_flow.yaml", tmp_path))
-        assert top.priority_score > solo.top_alerts[0].priority_score
-
-    def test_log_demo_merges_the_brute_force_into_one_alert(self, tmp_path: Path) -> None:
-        # ADR-0020: the LOG lane's first detector. Twelve sshd failures in ~60s on
-        # gateway-01 merge into ONE collective detection (not twelve), while gateway-02's
-        # two scattered failures stay below the trigger and say nothing. Every line is
-        # severity INFO, so only the content-matched preset can see this at all.
-        from iotshield.contracts import AlertSeverity
-        from iotshield.pipeline import load_config
-
-        loaded = load_config(REPO_ROOT / "config" / "demo_log.yaml")
-        config = loaded.model_copy(
-            update={
-                "database_url": f"sqlite:///{(tmp_path / 'demo.db').as_posix()}",
-                "sources": [
-                    source.model_copy(update={"path": str(REPO_ROOT / (source.path or ""))})
-                    for source in loaded.sources
-                ],
-            }
-        )
-        report = run_pipeline(config)
-        assert (report.events, report.malformed, report.detections, report.alerts) == (16, 0, 1, 1)
-        top = report.top_alerts[0]
-        assert top.asset_id == "gateway-01"
-        assert top.severity is AlertSeverity.HIGH
-        # The burst itself drove the alert: 12 matches against an exceedance boundary of 4.
-        assert "log_burst:auth_failure" in top.rationale
-        # A clean chain (the log lane is both produced and consumed) and a clean input.
-        assert report.warnings == []
-
-    def test_passthrough_demo_validates_prenormalized_jsonl_and_ranks_the_spikes(
-        self, tmp_path: Path
-    ) -> None:
-        # ADR-0025: a partner system already emits NormalizedEvent JSONL. The passthrough
-        # normalizer validates and envelopes rather than parses — 7 events through, 3 lines
-        # quarantined (a naive timestamp, a wrong-lane record, a non-JSON checkpoint line).
-        # stub_threshold flags the three spikes above 80; the two on the registered,
-        # high-criticality pump correlate into one alert that outranks the discovered sensor.
-        report = run_pipeline(self._demo("demo_passthrough.yaml", tmp_path))
-        assert (report.events, report.malformed, report.detections, report.alerts) == (7, 3, 3, 2)
-        assert [alert.asset_id for alert in report.top_alerts] == ["pump-07", "sensor-03"]
-        # The two pump spikes fall in one time bucket -> one alert carrying both detections.
-        assert len(report.top_alerts[0].detection_ids) == 2
-        # A clean chain: telemetry is both produced (via the lane param) and consumed, and the
-        # 30% malformed rate is below the input-appropriateness threshold.
-        assert report.warnings == []
+    def test_the_demo_chain_is_clean(self, tmp_path: Path) -> None:
+        # Every produced lane has a detector that consumes it, so the compatibility guard has
+        # nothing to say. A warning here would appear on screen during the walkthrough.
+        assert run_pipeline(self._all_lanes(tmp_path)).warnings == []
 
 
 class TestMalformedRateWarning:

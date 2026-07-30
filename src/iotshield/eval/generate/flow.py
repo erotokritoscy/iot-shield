@@ -2,14 +2,14 @@
 
 The lane where a corpus finally has more than one device, which is what ADR-0026's asset-scoped
 truth exists for: the valuable measurement here is not *catching* the scanner (easy) but the
-innocent devices that must stay quiet — including the two controls ``config/demo_flow.yaml``
-claims and has never measured, a high-volume single-destination gateway and an inbound-heavy
-server.
+innocent devices that must stay quiet — a high-volume single-destination gateway and an
+inbound-heavy server, both of which a demo can only *claim* stay quiet and a labelled corpus
+can measure.
 
 ``flow-csv`` rather than ``zeek-conn``: it is our own dialect, described in ``normalize.flow``
 as the lane's "dumb, permanent reference dialect", it parses ISO-8601 exactly rather than epoch
-floats, and it is readable under ``gzip -dc``. The Zeek dialect is already exercised by
-``data/demo/demo_flow.log``, so this also widens dialect coverage rather than duplicating it.
+floats, and it is readable under ``gzip -dc``. The Zeek dialect is exercised by the demo input
+``scripts/make_demo_data.py`` writes, so this widens dialect coverage rather than duplicating it.
 """
 
 from collections.abc import Callable, Sequence

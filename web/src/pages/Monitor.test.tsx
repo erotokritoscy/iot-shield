@@ -137,7 +137,7 @@ describe("Triage", () => {
   it("names each piece of evidence by what it found, not by which detector found it", async () => {
     // The regression ADR-0032 D3 opened: six rules share one `method`, so labelling the
     // disclosures by method rendered several identical "rules:flow — why it fired" headings
-    // for genuinely different findings. `config/demo_rules.yaml`'s gateway alert shows three.
+    // for genuinely different findings — the walkthrough's camera raises two on the flow lane.
     server.use(
       http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json(seed.ruleDetections)),
     );

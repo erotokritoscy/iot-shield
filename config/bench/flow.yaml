@@ -1,9 +1,10 @@
 # Benchmark spec: the flow burst detector on the FLOW lane (ADR-0026).
 #
 # The first spec that measures a lane shipped on judgment alone. ADR-0024 chose fan_out's
-# 20-distinct-peers threshold by argument, and the only evidence for it was
-# `data/demo/demo_flow.log` — a file we wrote, in which the camera contacts 43 peers. A demo
-# you author yourself cannot falsify you. `fleet_scan` can: most of it is innocent devices.
+# 20-distinct-peers threshold by argument, and the only evidence for it was a demo input we
+# wrote ourselves, in which the camera contacted comfortably more peers than the boundary. A
+# demo you author yourself cannot falsify you. `fleet_scan` can: most of it is innocent
+# devices, and the sweep below reports that 27 beats the shipped 20 on this corpus.
 #
 # `threshold` is the one parameter worth sweeping, and this spec holds exactly ONE detector, so
 # the bare name is unambiguous:

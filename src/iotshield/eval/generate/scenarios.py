@@ -83,7 +83,7 @@ def _fleet(*extra: Device) -> tuple[Device, ...]:
     presets make a claim about, and none has ever been measured:
 
     - ``GATEWAY`` sends twenty flows per minute to ONE destination (300 per recording).
-      Volume is not fan-out. The 'thirty' this once claimed belongs to data/demo/demo_flow.log.
+      Volume is not fan-out.
     - ``SERVER`` is dialled *into* by many peers. Inbound is not fan-out.
     - ``RESOLVER`` is legitimately chatty, sitting just *under* the 20-peer boundary.
     - ``MIRROR`` is legitimately chatty *above* it, so the corpus measures what a fleet-wide

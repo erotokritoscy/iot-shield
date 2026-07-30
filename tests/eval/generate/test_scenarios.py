@@ -271,7 +271,7 @@ class TestFleetScanDiscriminates:
         assert _flow_cases()["exfiltration"].event_recall == 0.0
 
     def test_a_high_volume_single_destination_device_is_not_a_scanner(self) -> None:
-        """`demo_flow.yaml`'s first claimed control, measured for the first time.
+        """The flow demo's first claimed control, measured for the first time.
 
         The gateway sends thirty flows inside the window — all to one destination. Volume is
         not fan-out; cardinality is the signal.

@@ -56,7 +56,7 @@ class TestTriage:
 
         Six rules share one ``method``, so a UI that names evidence by method renders
         several identical headings for genuinely different findings — three of them on
-        `config/demo_rules.yaml`'s gateway alert. The fix is the sentence D7 requires of
+        the walkthrough's gateway alert. The fix is the sentence D7 requires of
         every detection, which is also what makes this assertable at all.
         """
         at = run_app(monkeypatch, rule_seeded)

@@ -69,7 +69,8 @@ export const detection = {
  * The Detector port gives an adapter one lane and the port suite pins `detection.method` to
  * it, so every rule on the flow lane reports `rules:flow` and the firing rule rides in
  * `Enrichment.origin` (ADR-0032 D3). Both rows below are therefore `rules:flow`, exactly as
- * `config/demo_rules.yaml` produces — the gateway alert there renders three of them.
+ * the demo walkthrough produces — its camera raises telnet propagation and a bulk upload,
+ * two different findings that report the same `method`.
  */
 export const ruleDetections = [
   {

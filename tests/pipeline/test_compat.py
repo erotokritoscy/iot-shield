@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from iotshield.pipeline import PipelineConfig, load_config
+from iotshield.pipeline import PipelineConfig, load_spec
 from iotshield.pipeline.compat import CompatLevel, check_compatibility
 
 CONFIG_DIR = Path(__file__).parents[2] / "config"
@@ -166,16 +166,40 @@ def test_unknown_alert_engine_is_an_error() -> None:
     assert any(i.level is CompatLevel.ERROR and "nope" in i.message for i in issues)
 
 
-@pytest.mark.parametrize("path", sorted(CONFIG_DIR.glob("*.yaml")), ids=lambda p: p.stem)
-def test_shipped_demo_configs_are_error_free(path: Path) -> None:
-    # Every committed demo must at least run: none may contain an ERROR-level issue
-    # (the syslog demo is allowed its idle-detector WARNING).
-    errors = [i for i in check_compatibility(load_config(path)) if i.level is CompatLevel.ERROR]
+BENCH_SPECS = sorted((CONFIG_DIR / "bench").glob("*.yaml"))
+
+
+def test_there_are_shipped_specs_to_check() -> None:
+    """An empty parametrize does not fail — it collects nothing and passes silently.
+
+    This guard used to run over `config/demo*.yaml`. Those were deleted when the demo moved
+    into the dashboard, and the glob below would have gone quietly vacuous rather than
+    telling anyone, so the non-emptiness is asserted separately from the check itself.
+    """
+    assert BENCH_SPECS, f"no benchmark specs found under {CONFIG_DIR / 'bench'}"
+
+
+@pytest.mark.parametrize("path", BENCH_SPECS, ids=lambda p: p.stem)
+def test_shipped_bench_specs_are_error_free(path: Path) -> None:
+    # Every committed spec must at least run: none may contain an ERROR-level issue. These
+    # are what the dashboard's Evaluate page offers, so a broken one is a broken demo.
+    #
+    # `load_spec`, not `load_config`: a benchmark cannot write to a store, so a bench spec
+    # carries no `database_url` and would be refused by PipelineConfig for defaulting to a
+    # postgres sink it cannot satisfy. That refusal is the type system doing its job
+    # (ADR-0021) — the guard itself takes the PipelineSpec both planes share.
+    errors = [i for i in check_compatibility(load_spec(path)) if i.level is CompatLevel.ERROR]
     assert errors == [], f"{path.name} has compatibility errors: {errors}"
 
 
-def test_syslog_demo_warns_about_its_idle_detector() -> None:
-    issues = check_compatibility(load_config(CONFIG_DIR / "demo_syslog.yaml"))
+def test_a_log_source_with_only_a_telemetry_detector_warns_about_the_idle_detector() -> None:
+    """The guard's middle verdict: structurally legal, certainly futile.
+
+    Nothing here is *broken* — a syslog normalizer and a telemetry detector are both fine
+    adapters — but the detector consumes a lane the run never produces, so it cannot fire.
+    Refuse what is structurally broken, mark what is merely futile.
+    """
+    issues = check_compatibility(cfg(source_format="syslog", normalizer="syslog"))
     assert issues and all(i.level is CompatLevel.WARNING for i in issues)
     assert any("will not fire" in i.message for i in issues)
 

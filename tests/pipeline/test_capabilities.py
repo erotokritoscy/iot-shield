@@ -363,7 +363,10 @@ def test_every_payload_a_detector_needs_is_produced_by_some_normalizer() -> None
 
 @pytest.mark.parametrize(
     "normalizer,source_format,path",
-    [("meter", "eoa-meter-csv", "demo_meter.csv"), ("flow", "zeek-conn", "demo_flow.log")],
+    [
+        ("meter", "eoa-meter-csv", "demo_meter_history.csv"),
+        ("flow", "zeek-conn", "camera_flow.log"),
+    ],
 )
 def test_a_normalizer_actually_emits_the_payload_it_declares(
     normalizer: str, source_format: str, path: str

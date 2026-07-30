@@ -144,7 +144,7 @@ def rule_seeded(tmp_path: Path) -> ApiClient:
     The Detector port gives an adapter one lane and the port suite pins `detection.method`
     to it, so every rule on the flow lane reports `rules:flow` and the firing rule rides in
     `Enrichment.origin` (ADR-0032 D3). Both detections below are therefore `rules:flow`,
-    exactly as `config/demo_rules.yaml` produces.
+    exactly as the walkthrough's rule detector produces.
     """
     client, engine = _client_for(tmp_path)
     telnet = Enrichment(

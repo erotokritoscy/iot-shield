@@ -43,9 +43,15 @@ Writing the rules themselves — the field vocabulary, the operators, worked exa
 `docs/integration/rule-authoring-guide.md`. Validate a set before a run with:
 
 ```
-python -m iotshield.detect.rules            # the field vocabulary a rule may address
-IOTSHIELD_RULES_PATH=config/rules python -m iotshield.pipeline --config config/demo_rules.yaml --input data/demo/flow.csv
+python -m iotshield.detect.rules   # the field vocabulary a rule may address
 ```
+
+A rule set is compiled when a run constructs the detector, not when it is listed, so a name
+offered in the dropdown can still hold a malformed rule — it is refused, and named, at
+construction. The quickest way to find out is to run one: point the dashboard's Compose page at
+`data/demo/camera_flow.log` with the `rules` detector on the flow lane and your `ruleset`
+selected. On the compose stack this directory is mounted read-only into `pipeline-api`, so a
+new subdirectory appears in that dropdown on the next page load — no rebuild, no restart.
 
 This directory is tracked with only this file in it, so the compose mount has something to
 bind and a fresh clone starts with an empty shelf rather than a missing one.

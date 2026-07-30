@@ -94,14 +94,21 @@ uv run python -m iotshield.eval --corpus skab_valve1 --fit-protocol prefix \
 uv run python -m iotshield.eval --corpus device_trimodal \
     --spec config/bench/trimodal_all.yaml --sweep flow_burst.threshold=10,20,30
 # The metering corpus, fitted per meter from each meter's own reserved prefix (ADR-0038).
-# One spec only: this corpus has NO baseline arm. `stub_threshold` is the project's floor
-# everywhere else, and it compares an absolute value in the channel's own units — 80.0, chosen
-# for a rig's pressure. A meter draws 0.045 m3 or 0.62 kWh an hour, so it scores zero on every
-# case for a units reason rather than a detection one, which teaches nothing; and picking a
-# meter-scaled threshold instead would be a number we typed in (ADR-0021 D7).
+# `stub_threshold` cannot be the floor here: it compares an absolute value in the channel's own
+# units — 80.0, chosen for a rig's pressure — and a meter draws 0.045 m3 or 0.62 kWh an hour, so
+# it would score zero for a units reason rather than a detection one. `meter_team3.yaml` is the
+# baseline arm instead: `team3_zscore` consumes the telemetry LANE ALONE while `meter_iforest`
+# also demands payload `meter`, so metering is the one corpus shape where a purpose-built and a
+# general-purpose detector can be asked the same question about the same bytes.
 uv run python -m iotshield.eval --corpus meter_fleet --fit-protocol prefix \
-    --spec config/bench/meter.yaml
+    --spec config/bench/meter.yaml --spec config/bench/meter_team3.yaml
 ```
+
+That pairing answers *does the domain-specific model earn its complexity?* and the honest
+answer is "in precision, not in sensitivity": the forest scores evF1 0.23 (P 0.14 / R 0.67,
+79 detections), the z-score evF1 0.16 (P 0.09 / R **1.00**, 319 detections). The general
+detector finds every incident and speaks four times as often to do it. Both are modest, which
+is the other half of the finding — hourly metering at these operating points is a hard lane.
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
 format, and **per-asset** interval labels. They are *discovered*, not registered: anything under
@@ -339,7 +346,7 @@ detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboards (:8080 React, :8501 Streamlit)
-docker compose run --rm runner  # batch job (profile "jobs"): populate the DB
+docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
 ```
 
@@ -391,76 +398,86 @@ invent. Differencing lives in the normalizer; the commissioning/service-start tr
 usability verdict are modelling judgments and live in the detector, because a normalizer that
 silently dropped a meter's first months could not be inverted (ADR-0030 D3/D4).
 
-Thirteen demo configs (`config/demo*.yaml`) exercise the adapters. `config/demo_weighted.yaml`
-is the same chain as `demo.yaml` through the `weighted` engine; the rest:
-`config/demo.yaml` + `data/demo/demo.csv`
-(telemetry → the `stub` normalizer → `stub_threshold` detector → detections/alerts);
-`config/demo_syslog.yaml` + `data/demo/demo_syslog.log` (syslog → the `syslog`
-normalizer, re-implemented from team4 → LOG-lane events across three hosts, both
-RFC dialects + quarantined malformed lines; no detections by design — ADR-0011);
-`config/demo_team3.yaml` + `data/demo/demo_team3.csv` (telemetry → the `team3_zscore`
-detector, vendored from team3, on a real SKAB valve fault → one collective
-detection → one alert — ADR-0012); `config/demo_triage.yaml` +
-`data/demo/demo_triage.csv` (both detectors → the `weighted` engine over four
-assets → a *ranked* queue where severity, asset criticality, and detection volume
-each visibly reorder the alerts — ADR-0013); `config/demo_file.yaml` +
-`data/demo/demo.csv` (the SAME pipeline as `demo.yaml`, but a **file/JSONL sink**
-instead of Postgres — no database, no dashboard — demonstrating the pluggable
-result store, ADR-0018); `config/demo_log.yaml` + `data/demo/demo_log.log` (an sshd brute
-force → the `log_burst` detector's `auth_failure` preset → twelve failures in ~60s merged
-into ONE collective detection → one HIGH alert; every line is severity INFO, so the
-`severity_spike` preset would see nothing — ADR-0020); and `config/demo_multimodal.yaml`
-(two sources in ONE run — `data/demo/demo_multimodal.csv` telemetry +
-`data/demo/demo_multimodal.log` syslog on the same asset — routed, pooled into two lanes,
-and **both judged**: the telemetry spike plus a log burst correlate into one alert whose
-`corroboration` factor is 1.5, the first time cross-lane agreement has ever fired — the
-same spike scores ~27/LOW on telemetry alone vs ~56/HIGH corroborated — ADR-0019 + ADR-0020);
-`config/demo_flow.yaml` + `data/demo/demo_flow.log` (a real-shaped Zeek `conn.log` → the
-`flow` normalizer → the `flow_burst` detector's `fan_out` preset → a compromised IP camera
-sweeping 41 hosts for telnet merges into ONE collective detection, score 43 vs boundary 20
-→ 44.1/MEDIUM; a gateway sending 30 flows to *one* destination correctly stays silent, an
-inbound SSH session does not count as fan-out, and a flow between two foreign hosts is
-quarantined not dropped — ADR-0023 + ADR-0024); and `config/demo_trimodal.yaml`
-(**all three lanes judging one asset in one run** — telemetry + syslog + flow on the camera
-→ 4 detections across 3 lanes → `corroboration` 2.0 (its highest value with today's three
-lanes; the factor `1 + 0.5·(lanes−1)` is not itself capped);
-the identical flow sweep scores 44.1/MEDIUM alone vs **76.4/CRITICAL** corroborated); and
-`config/demo_passthrough.yaml` + `data/demo/demo_passthrough.jsonl` (a partner system that
-already emits `NormalizedEvent` JSONL → the `passthrough` normalizer **validates and
-envelopes** rather than parses → 7 events, 3 quarantined lines (naive timestamp, wrong-lane
-record, non-JSON line), the `stub_threshold` detector ranks the pump's two correlated spikes
-above the discovered sensor — the smallest adapter that honors every port law, and the first
-normalizer whose produced lane is a config **param** so the guard stays accurate — ADR-0025).
+**There are no demo configs. The demo is the dashboard** (2026-07-30). Thirteen
+`config/demo*.yaml` files used to exercise the adapters one ADR at a time — a config per
+feature shipped, which is an *index of the codebase*, not a demo suite, and by the end no
+one could hold it in their head. They were deleted rather than pruned, because the Compose
+page composes a `PipelineSpec` in the browser and posts the input as an uploaded payload
+(`SourceInput.content`, never a server-side path): a run driven by clicking needs no YAML,
+and a config nobody runs is a config nobody maintains.
 
-`config/demo_rules.yaml` + `data/demo/demo_rules_flow.log` + `data/demo/demo_rules_syslog.log`
-(**the first alerts this product has produced that say WHAT they are** — ADR-0032. Two rule
-instances, one per lane, over the packaged library; `flow_burst:fan_out` is configured
-alongside them and finds **nothing**, deliberately: the camera probes SIX hosts on telnet
-(fan-out's boundary is 20) and uploads 4.2 MB (exfiltration's is 50 MB), so both are invisible
-to rate detection and obvious to a signature — a camera dialling port 23 has no legitimate
-reason to do so even once. 19 events → 7 detections from 6 rules across 2 lanes → 2 alerts:
-the camera raises FOUR detections across TWO lanes (telnet + a bulk upload on flow, the sshd
-break-in warning + a firmware-integrity CRITICAL on logs) → corroboration 1.50, volume 1.45 →
-**73.9/CRITICAL**, `threat_class: Remote Services (T1021)`, and a `recommended_action` unioned
-across the rules that fired. The gateway's inbound SSH from 203.0.113.9 → 45.3/MEDIUM,
-`External Remote Services (T1133)`. The demo also carries the trap the field list exists for:
-flow fields are asset-relative, so a service port is `flow.peer_port` on a connection the
-device MADE and `flow.asset_port` on one it RECEIVED — written the other way round a rule
-reads perfectly and can never fire.)
+What replaced them is **one scenario, generated** by `scripts/make_demo_data.py`
+(`uv run python scripts/make_demo_data.py`). Every file under `data/demo/` was previously
+hand-authored with no way to rebuild it, so "what exactly does this demo prove?" was a
+question only a careful reading of the bytes could answer. Now the scenario is declared in
+one module docstring and the bytes are derived from it.
 
-`config/demo_meter.yaml` + `data/demo/demo_meter.csv` and `data/demo/demo_meter_sensipro.csv`
-(**two different meter platforms in ONE run, judged by the same detector** — ADR-0030: an EOA
-water CSV written newest-first in naive Cyprus local time, plus a SensiPro hourly export
-carrying water *and* electricity → the `meter` normalizer's two dialects difference both
-counters gap-safely → 332 + 670 consumption events, 3 quarantined rows, a 2-hour gap that
-correctly yields nothing → the `meter_iforest` detector flags ONE thing: a continuous
-overnight draw at ~2x the evening peak held for three hours, score 0.7939 vs a threshold
-0.7436 *learned* on ten weeks of that meter's own clean history at ~1 false alarm per
-meter-month. The evidence names `deviation` at z=25.4 — "consumption far above the usual level
-for this hour of the week" — which is the case a magnitude threshold cannot express, since the
-volume is ordinary for an evening and extraordinary for 3am. The SensiPro meters have no
-fitted model in the demo artifact, so they are **skipped, not scored**, which is what
-one-model-per-meter means.)
+It is deliberately **not** the evaluation generator (`eval/generate/`). That one builds
+labelled corpora for *measurement* — a world, per-(lane, payload) behaviours, renderers and
+an answer key. This builds three small curated files for a five-minute walkthrough, and
+curation is the point: a demo input should be short enough to read on a projector and should
+trip exactly the detections the presenter is about to explain.
+
+One compromised IP camera on all three lanes at once, plus two devices that behave:
+
+```
+data/demo/camera_flow.log       Zeek conn.log
+data/demo/camera_syslog.log     RFC 5424, one RFC 3164 line, two unparseable lines
+data/demo/camera_telemetry.csv  stub-csv
+
+10.0.0.24  camera   telemetry runs hot (>80)   -> stub_threshold
+                    dials telnet out (6 hosts) -> rules: telnet-outbound-propagation
+                    4.2 MB upload              -> rules: high-upload-volume
+                    sshd break-in warning      -> rules: ssh-possible-break-in
+                    firmware integrity CRITICAL-> rules: critical-log-event
+10.0.0.11  gateway  inbound SSH from outside   -> rules: inbound-remote-admin
+10.0.0.31  sensor   nothing interesting        -> silent, correctly
+```
+
+The walkthrough is **two runs differing only in how many lanes are judged**, which is the
+same A/B `device_trimodal` measures in the evaluation plane, made visible in the product:
+
+| | events | malformed | detections | alerts | camera | corroboration |
+|---|---|---|---|---|---|---|
+| flow lane only | 12 | 0 | 3 | 2 | **52.7 HIGH** | 1.00 |
+| all three lanes | 110 | 2 | 8 | 2 | **80.0 CRITICAL** | 2.00 |
+
+Those are the numbers a **clicked** run produces, and they are what the tests pin, because
+`ComposePage` has no asset-registration section: every device a dashboard run sees is
+auto-discovered at MEDIUM (`asset_weight` 1.10). Registering the camera HIGH is legal from
+YAML and moves it to 55.7 / 81.5 — a real ranking factor, pinned by its own test — but the
+band does not change, so the walkthrough loses nothing by not reaching it. Documenting the
+YAML figures would have published numbers nobody can reproduce from the UI. That gap between
+what a config can express and what the page can is recorded in `docs/guide/dashboard.md`.
+
+The camera's seven detections are 2 flow + 2 log + 3 telemetry — the sum is checkable by eye,
+which is why the thermal excursion is three samples and not a long climb (`stub_threshold` is
+the reference adapter and emits one detection per row above the line rather than merging a
+run, so a longer excursion would report eleven detections for what a human calls four
+findings). **The gateway stays at 39.6 in both runs**, and that is the actual claim: a
+priority that rose everywhere would prove nothing, since it could be a scoring change.
+Corroboration means the device with independent cross-lane agreement moves and the device
+without it does not.
+
+Six of the seven camera detections come from **signatures, not rate detection**, and could
+not come from anywhere else: six telnet peers is far under `flow_burst:fan_out`'s boundary of
+twenty and 4.2 MB is far under exfiltration's 50 MB, so every statistical detector correctly
+stays silent while a rule fires on the first packet — a camera dialling port 23 has no
+legitimate reason to do so even once. The camera's alert reads
+`threat_class: Remote Services (T1021)` with actions unioned across the rules that fired; the
+gateway's reads `External Remote Services (T1133)`.
+
+Two syslog lines are broken on purpose (a truncated write, a line with no PRI) so the Data
+Health page has something to show: nothing is silently dropped.
+
+`data/demo/demo_meter_history.csv` is the one hand-authored file that survived the rebuild,
+and it is kept for a specific reason — it is the *sole* input to the committed meter artifact
+(`detect/meter/train.py`), which stores the clean history it was fitted on rather than the
+fitted weights (ADR-0030 D6). Deleting it would have made a shipped, tested artifact
+permanently unregenerable. `tests/adapters/test_meter_detector.py` now pins the artifact
+against that history: exactly one detection over ten weeks, which is the *fitted false-alarm
+budget* (~1 alarm per meter-month) rather than a silence, and `deviation` leads the
+attribution at the production 168-hour window.
 
 The meter artifact is committed (`src/iotshield/detect/meter/artifacts/demo_meter.json`) and
 regenerated with `uv run python -m iotshield.detect.meter.train`. Its format differs from
@@ -559,7 +576,7 @@ tests/          mirrors src; port contract tests are parametrized over all adapt
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
 config/rules/   the rule shelf: one subdirectory per DEPLOYMENT-authored rule set, named by `ruleset:` (ADR-0037)
-data/demo/      small demo inputs (keep tiny; big datasets stay in ../reference/)
+data/demo/      the walkthrough's inputs, GENERATED by scripts/make_demo_data.py (keep tiny; big datasets stay in ../reference/)
 data/eval/      corpus bundles (manifest + gzipped readings + interval labels)
 ```
 
@@ -683,9 +700,9 @@ schema would serve the dashboard and nobody else.
 
 That sentence is also **what both dashboards name a finding by** (ADR-0032 amendment).
 `method` was a good name only by accident — one detector used to mean one kind of finding —
-and D3 ends that deliberately, so a rule detector's six rules all report `rules:flow` and
-`demo_rules.yaml`'s gateway alert rendered three identical `rules:flow` disclosures for an
-SSH session, an SMB conversation and a bulk upload. Labelling by the explanation fixes it for
+and D3 ends that deliberately, so a rule detector's six rules all report `rules:flow` and one
+alert rendered three identical `rules:flow` disclosures for an SSH session, an SMB
+conversation and a bulk upload. Labelling by the explanation fixes it for
 every detector at once instead of special-casing `rules:*`, and falls back to `method` for
 rows stored before the law existed. Two fields of the same origin were also invisible:
 `recommended_action` is a *checklist* (D5 unions up to six steps across the bucket) flattened

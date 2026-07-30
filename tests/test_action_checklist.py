@@ -70,7 +70,7 @@ class TestAuthoringRefusals:
 class TestTruncationIsDisclosed:
     def test_a_trimmed_checklist_says_how_many_steps_were_dropped(self) -> None:
         """The cap is a real decision; applying it silently is not. On the shipped
-        demo_rules camera alert six of twelve steps vanished with no marker."""
+        a camera alert unioned across four rules, six of twelve steps vanished with no marker."""
         contributing = [
             _enrichment(*[f"Step {group}{index} happened." for index in range(4)])
             for group in "abc"

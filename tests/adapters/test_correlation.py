@@ -135,7 +135,7 @@ class TestGroupingIsProximityNotPosition:
 
 class TestVolumeCountsJudgmentsNotRows:
     def test_two_detectors_judging_one_window_are_one_claim(self) -> None:
-        """The shipped demo_rules gateway: two rules matching the SAME flow record pushed
+        """The walkthrough gateway: two rules matching the SAME flow record pushed
         volume 1.15 -> 1.30 and carried the alert over the HIGH floor by 0.037 points."""
         at = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
         same_window = [

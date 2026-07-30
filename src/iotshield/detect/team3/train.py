@@ -70,9 +70,9 @@ DEFAULT_ASSET_ID = "skab-testbed"
 """Which device the committed artifact's one model describes.
 
 A model is filed under an asset id and only judges that asset (ADR-0034), so this value is
-load-bearing rather than cosmetic: it is the id carried by ``data/demo/demo_team3.csv`` and
-by every ``skab_*`` evaluation bundle, which is what keeps ``config/demo_team3.yaml`` and
-the committed SKAB benchmarks running against the shipped artifact unchanged.
+load-bearing rather than cosmetic: it is the id carried by every ``skab_*`` evaluation
+bundle, which is what keeps ``config/bench/team3.yaml`` scoring against the shipped artifact
+rather than skipping every recording for want of a model.
 """
 
 

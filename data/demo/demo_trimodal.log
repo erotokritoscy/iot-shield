@@ -1,4 +1,0 @@
-<38>1 2026-07-07T12:00:05Z 10.0.0.24 camd 902 - - stream started, 1920x1080 @ 30fps
-<35>1 2026-07-07T12:02:00Z 10.0.0.24 camd 902 - - firmware integrity check FAILED for /opt/cam/bin/streamd
-<35>1 2026-07-07T12:02:15Z 10.0.0.24 camd 902 - - error: unexpected outbound connection attempt blocked by local policy
-<34>1 2026-07-07T12:02:35Z 10.0.0.24 kernel - - - critical: watchdog reset requested by unknown process

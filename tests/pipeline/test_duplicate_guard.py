@@ -64,7 +64,7 @@ class TestDuplicateDetectorsAreRecognisedByWhatTheyBuild:
 
     def test_two_genuinely_different_configurations_are_not_a_duplicate(self) -> None:
         """The case the list form exists for — a false positive here would be worse than the
-        false negatives, because it would fire on demo_rules' signature+statistics pairing."""
+        false negatives, because it would fire on a deliberate signature+statistics pairing."""
         entries = [
             {"name": "stub_threshold", "params": {"threshold": 80.0}},
             {"name": "stub_threshold", "params": {"threshold": 50.0}},
@@ -73,7 +73,7 @@ class TestDuplicateDetectorsAreRecognisedByWhatTheyBuild:
         assert not _warnings(_config(detectors=entries), DOUBLED)
 
     def test_two_different_adapters_on_one_lane_are_not_a_duplicate(self) -> None:
-        """demo_rules ships rules(lane: flow) alongside flow_burst on purpose: signatures and
+        """A rule detector is deliberately shipped alongside flow_burst: signatures and
         statistics are complements, so same-lane co-configuration must stay legal."""
         entries = [
             {"name": "rules", "params": {"lane": "flow"}},
@@ -91,18 +91,30 @@ class TestDuplicateSourcesAreCaught:
         """A run pools its sources, so this ingests every record twice — the generator
         already refuses the equivalent scenario for exactly this reason."""
         sources = [
-            {"normalizer": "stub", "source_format": "stub-csv", "path": "data/demo/demo.csv"},
-            {"normalizer": "stub", "source_format": "stub-csv", "path": "data/demo/demo.csv"},
+            {
+                "normalizer": "stub",
+                "source_format": "stub-csv",
+                "path": "data/demo/camera_telemetry.csv",
+            },
+            {
+                "normalizer": "stub",
+                "source_format": "stub-csv",
+                "path": "data/demo/camera_telemetry.csv",
+            },
         ]
 
         messages = _warnings(_config(sources=sources), "counted twice")
 
         assert messages
-        assert "data/demo/demo.csv" in messages[0]
+        assert "data/demo/camera_telemetry.csv" in messages[0]
 
     def test_two_different_files_through_one_normalizer_are_fine(self) -> None:
         sources = [
-            {"normalizer": "stub", "source_format": "stub-csv", "path": "data/demo/demo.csv"},
+            {
+                "normalizer": "stub",
+                "source_format": "stub-csv",
+                "path": "data/demo/camera_telemetry.csv",
+            },
             {"normalizer": "stub", "source_format": "stub-csv", "path": "data/demo/other.csv"},
         ]
 
