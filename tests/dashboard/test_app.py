@@ -160,9 +160,9 @@ def test_contract_drift_mid_page_shows_error_not_traceback(
     assert at.error
 
 
-def _catalogue_params(control_client: ControlClient) -> list:
-    """team3_zscore's params exactly as /modules reports them to the page."""
-    return next(m.params for m in control_client.modules().detectors if m.name == "team3_zscore")
+def _catalogue_params(control_client: ControlClient, name: str = "team3_zscore") -> list:
+    """One detector's params exactly as /modules reports them to the page."""
+    return next(m.params for m in control_client.modules().detectors if m.name == name)
 
 
 class TestCompose:
@@ -239,18 +239,46 @@ class TestCompose:
     ) -> None:
         """A form must be able to say "not given", and a widget cannot.
 
-        `describe_params` back-fills a learning adapter's real defaults, so every widget
-        renders populated. Submitting all of them made an untouched `team3_zscore` row an
-        explicit request for its whole hyperparameter block *plus* its artifact — the
-        half-configured request ADR-0022 D4 refuses. Picking that detector and pressing run
-        could not succeed.
+        `describe_params` back-fills real defaults, so every widget renders populated.
+        Submitting all of them makes each run an explicit request for every parameter, which is
+        wrong wherever "not given" carries meaning — and for `log_burst` it does twice over,
+        since `preset` owns the real window and count (ADR-0024 D3).
+        """
+        at = self._open(monkeypatch, empty_client, control_client)
+        at.selectbox(key="det_0_name").set_value("log_burst").run()
+        assert not at.exception
+
+        params = dashboard_app._param_widgets(
+            "det_0", _catalogue_params(control_client, "log_burst")
+        )
+        assert params == {}, f"untouched row submitted: {params}"
+
+    def test_a_learning_detector_offers_its_artifact_and_no_hyperparameters(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_client: ApiClient,
+        control_client: ControlClient,
+    ) -> None:
+        """A run never fits, so an artifact is the only thing that can configure one (ADR-0036).
+
+        It supplies the hyperparameters its weights were fitted with, and naming one beside it
+        is refused at construction as a half-configured request. Offering the knobs anyway made
+        every one of them a trap — moving a single knob turned a working chain into a failed run
+        — and the page only worked because `_untouched` drops what nobody moved.
         """
         at = self._open(monkeypatch, empty_client, control_client)
         at.selectbox(key="det_0_name").set_value("team3_zscore").run()
         assert not at.exception
 
-        params = dashboard_app._param_widgets("det_0", _catalogue_params(control_client))
-        assert params == {}, f"untouched row submitted: {params}"
+        # The ids the adapter ships, offered rather than typed from memory (ADR-0035 D1), and
+        # preselected because here an artifact is mandatory rather than optional.
+        artifact = at.selectbox(key="det_0_art")
+        assert list(artifact.options) == ["skab_zscore"]
+        assert artifact.value == "skab_zscore"
+
+        # ...and not one hyperparameter widget beside it.
+        rendered = {widget.key for widget in [*at.number_input, *at.selectbox, *at.text_input]}
+        assert rendered.isdisjoint({"det_0_window_size", "det_0_percentile", "det_0_channels"})
 
     def test_a_changed_parameter_is_still_sent(
         self,

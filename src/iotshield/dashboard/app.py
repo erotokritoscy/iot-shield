@@ -10,7 +10,7 @@ import os
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 import pandas as pd
@@ -332,6 +332,58 @@ def _param_widgets(prefix: str, params: list[ParamInfo]) -> dict[str, Any]:
     return values
 
 
+class _Artifacted(Protocol):
+    """The three fields both catalogues publish about a detector that can load a cached fit.
+
+    ``ModuleInfo`` (``/modules``) and ``DetectorSummary`` (``/eval/detectors``) are separate
+    response models on two different APIs, and the artifact chooser below is the same widget
+    on both pages. Typing it structurally is what lets the widget be written once without
+    either API importing the other, or this page joining one against the other.
+    """
+
+    name: str
+    params: list[ParamInfo]
+    artifact_param: str | None
+
+
+def _artifact_widget(prefix: str, summary: _Artifacted) -> str:
+    """Which cached fit to judge with: the ids the adapter ships, offered not recalled.
+
+    Split out of the Evaluate page's plan because the Compose page needs the identical widget
+    (ADR-0036): both are choosing weights from the closed vocabulary the adapter publishes
+    (``AdapterSpec.artifacts`` -> that param's ``choices``, ADR-0035 D1). The *caption* and the
+    blocker stay with each caller, because they genuinely differ — Evaluate can offer to fit
+    from scratch instead, and a run never can.
+
+    **Preselects, unlike every other closed vocabulary here.** ``_param_widgets`` deliberately
+    opens an optional one on "not given" (ADR-0033), which is right for ``meter.meter_type``
+    and wrong here: wherever this widget is rendered an artifact is *mandatory*, so a blank is
+    a reported blocker rather than an absent value, and the only thing opening blank buys is a
+    page that opens broken. It was also incoherent — ``st.selectbox`` has no empty option to
+    render, so the box *displayed* the first id while the value was ``""``, next to a warning
+    saying no artifact was named.
+
+    Free text stays as the escape hatch for an adapter that declares an artifact param and
+    enumerates nothing, where a dropdown would offer no way forward.
+    """
+    param = next((p for p in summary.params if p.name == summary.artifact_param), None)
+    shipped = "" if param is None or param.default is None else str(param.default)
+    offered = list(param.choices or ()) if param is not None else []
+    label = summary.artifact_param or "artifact"
+    help_text = (
+        "A committed artifact id. It supplies both the weights and the hyperparameters "
+        "they were fitted with — the two travel together."
+    )
+    if not offered:
+        return st.text_input(
+            label, value=shipped, key=f"{prefix}_art", placeholder="artifact id", help=help_text
+        )
+    default = shipped if shipped in offered else offered[0]
+    return st.selectbox(
+        label, offered, index=offered.index(default), key=f"{prefix}_art", help=help_text
+    )
+
+
 def _preferred_index(names: list[str], *ranked: Callable[[str], bool]) -> int:
     """Preselect by the first predicate that matches anything, in order of preference.
 
@@ -433,6 +485,15 @@ def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str])
 
     Keying by *index* instead of by name is the whole fix; everything else here is the
     shape ``_source_widgets`` already established.
+
+    **A learning adapter shows its artifact and no hyperparameters** (ADR-0036). This page
+    composes a *run*, and a run never fits (``Fittable`` is an evaluation-only capability), so
+    of the two ways to build such a detector only one can work here: an artifact supplies both
+    the weights and the hyperparameters they were fitted with, and naming a hyperparameter
+    beside it is refused at construction as a half-configured request. Offering the knobs
+    anyway made every one of them a trap — moving a single knob turned a working chain into a
+    failed run — and the page only worked at all because ``_untouched`` drops what nobody
+    moved. Fitting from scratch is the Evaluate page's job, where a fit protocol exists.
     """
     names = sorted(detectors)
     name = st.selectbox(
@@ -462,9 +523,22 @@ def _detector_widgets(index: int, detectors: dict[str, Any], produced: set[str])
         ),
         key=f"det_{index}_name",
     )
-    with st.expander(f"{name} parameters"):
-        params = _param_widgets(f"det_{index}", detectors[name].params)
-    return {"name": name, "params": params}
+    summary: ModuleInfo = detectors[name]
+    if summary.artifact_param is None:
+        with st.expander(f"{name} parameters"):
+            return {"name": name, "params": _param_widgets(f"det_{index}", summary.params)}
+    # Inline rather than inside a collapsed expander: this is the one param without which the
+    # run is refused, so it must not be something the operator has to go looking for.
+    chosen = _artifact_widget(f"det_{index}", summary)
+    st.caption(
+        f"Trained weights are atomic: the artifact supplies **{name}**'s hyperparameters too, "
+        "so there is nothing else to set here. A run never fits — to choose hyperparameters "
+        "and learn a baseline from data, use the Evaluate page's fit protocol."
+    )
+    # An empty id (only reachable through the free-text fallback) submits nothing, leaving the
+    # detector untrained so `_ensure_fitted` refuses the run by name rather than this page
+    # inventing an artifact that does not exist.
+    return {"name": name, "params": {summary.artifact_param: chosen} if chosen else {}}
 
 
 def compose_page(client: ControlClient) -> None:
@@ -821,36 +895,10 @@ def _detector_plan(
             label_visibility="collapsed",
         )
         if mode == _TRAINED:
-            artifact = next((p for p in summary.params if p.name == summary.artifact_param), None)
-            shipped = "" if artifact is None or artifact.default is None else str(artifact.default)
-            offered = list(artifact.choices or ()) if artifact is not None else []
-            help_text = (
-                "A committed artifact id. It supplies both the weights and the "
-                "hyperparameters they were fitted with — the two travel together."
-            )
-            if offered:
-                # The ids are a closed vocabulary the adapter publishes (ADR-0035 D1), so they
-                # are offered like every other one on this page. Trained mode makes the choice
-                # mandatory — a blank is the blocker below, not an absent value — so unlike an
-                # optional param this preselects rather than opening on "not given".
-                default = shipped if shipped in offered else offered[0]
-                chosen = st.selectbox(
-                    summary.artifact_param,
-                    offered,
-                    index=offered.index(default),
-                    key=f"{prefix}_art",
-                    help=help_text,
-                )
-            else:
-                # An adapter that names an artifact param but enumerates nothing: a dropdown
-                # would offer no way forward, so free text stays as the escape hatch.
-                chosen = st.text_input(
-                    summary.artifact_param,
-                    value=shipped,
-                    key=f"{prefix}_art",
-                    placeholder="artifact id",
-                    help=help_text,
-                )
+            # The same chooser the Compose page renders, over the ids the adapter publishes
+            # (ADR-0035 D1, ADR-0036). Shared so the two pages cannot disagree about the
+            # vocabulary, the preselection, or the escape hatch for an adapter shipping none.
+            chosen = _artifact_widget(prefix, summary)
             params = {summary.artifact_param: chosen}
             # Why this detector contributes nothing to the entry's sweep menu. Without it the
             # menu silently gains three options when this radio moves, and the radio lives

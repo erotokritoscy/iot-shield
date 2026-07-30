@@ -117,3 +117,26 @@ shipped — which is how a committed corpus became unrebuildable on 3.12 while p
   injected quantity is converted, the device's own baseline is not), and adding a fourth
   modality is not "one behaviour + one renderer" because `BEHAVIOURS` is keyed by `Lane`
   and `Calibration` cannot express a learned boundary. Both need design, not a patch.
+
+## Amendment (2026-07-30) — the optional-vocabulary rule, written down
+
+D6's fix introduced a rule this ADR never stated, and ADR-0035 and ADR-0036 both cite it as
+though it had: **a closed vocabulary whose default is `null` opens on "not given", not on
+`choices[0]`.** Recorded here so those citations point at something.
+
+Once `/modules` began reporting `choices` for an *optional* `Literal`, preselecting the first
+option fabricated a value nobody chose, and `isUntouched` then submitted it as though they had.
+Live for `meter.meter_type` (choices `water`/`electricity`, default `null`): picking a source
+dialect silently pinned the utility, harmless only while both dialects happened to default to
+water. It lives in `web/src/lib/params.ts:initialValue` and, for as long as that app exists, in
+`_param_widgets`.
+
+Two known gaps, both inherited by ADR-0036 rather than created by it:
+
+- **The rule is unrepresentable on screen.** `Select` renders no empty `<option>`, so a widget
+  holding `""` *displays* its first option. The operator sees "water" while the spec says
+  nothing. A placeholder option when `value === ""` is the fix; until then "opens on not given"
+  is true of the value and false of the pixels.
+- **It is untested at both levels.** `params.test.ts` covers the *defaulted* vocabulary, not the
+  optional one, and no fixture normalizer carries an optional vocabulary — which is why the gap
+  above survived unnoticed.

@@ -439,6 +439,26 @@ The product ships exactly two (`skab_zscore`, `demo_meter`); before this they ex
 a client could read, so the Evaluate page's artifact box was free text over a vocabulary
 nobody published, and it carried a hardcoded table naming one of the two.
 
+**Compose offers a learning detector its artifact and NO hyperparameters (ADR-0036).** A run
+never fits, so of the two ways to build such a detector only one can work there: an artifact
+supplies the weights *and* the hyperparameters they were fitted with, and naming a knob beside
+it is refused at construction as a half-configured request. Every knob on that page was
+therefore a trap (moving one turned a working chain into a failed run) and the page worked only
+because `_untouched`/`submittedParams` drop what nobody moved — a fix made at the submission
+layer while the display layer kept showing them. The chooser **preselects**, the deliberate
+exception to ADR-0033's "an optional vocabulary opens on *not given*" (a rule that ADR never
+wrote down; its 2026-07-30 amendment does): here an artifact is mandatory, and since `Select`
+has no empty option to render, opening blank *displayed* the first id while the value was `""`,
+next to a warning saying none was named. Shared by both pages that choose weights
+(`web/src/lib/artifact.ts` + `components/ArtifactField.tsx`, mirroring `params.ts` +
+`ParamFields`), with the caption per caller because Evaluate can offer to fit from scratch and a
+run cannot. Two open items ride with it, both recorded in ADR-0036 rather than fixed: *which* id
+preselects is a filename accident the moment an adapter ships two, and the same
+`{artifact, window_size}` request is still accepted from YAML, the CLI and `POST /runs` because
+the compatibility guard does not check it. `min_segment_length` and `min_episode_hours` are the
+two knobs this refuses that would in fact be safe to change beside an artifact — they act after
+scoring and misalign nothing — and splitting the params models to allow that is deferred.
+
 The team3 artifact is committed (`src/iotshield/detect/team3/artifacts/skab_zscore.json`);
 regenerate it only when the model/data change: `uv run python -m iotshield.detect.team3.train`.
 Its layout is schema **v3** — `{params, models}`, the ADR-0022 split made visible in the file:

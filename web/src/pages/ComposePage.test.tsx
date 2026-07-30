@@ -71,12 +71,61 @@ describe("Compose & run", () => {
     // know whether one is fitted: `/runs/validate` returns ok and the refusal arrives from
     // `_ensure_fitted` after the operator has pasted their data. `artifact_param` is published
     // for exactly this. A warning, never a gate — naming an artifact makes the chain legal.
+    //
+    // Shown against the adapter that ships no ids, because that is the only shape where the
+    // warning is still live: one that ships an artifact now preselects it (ADR-0036), so the
+    // page cannot open on an untrained chain by accident any more.
     await openCompose();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "team3_zscore");
+    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "unshipped_learner");
     expect(await screen.findByText(/has no fitted artifact/)).toBeInTheDocument();
+
+    // ...and naming one clears it, through the free-text fallback a dropdown cannot offer.
+    // One character, not a plausible id: the predicate is `trim() !== ""`, and each keystroke
+    // through userEvent costs ~13 ms.
+    await userEvent.type(screen.getByTestId("det_0_art"), "x");
+    await waitFor(() =>
+      expect(screen.queryByText(/has no fitted artifact/)).not.toBeInTheDocument(),
+    );
 
     await userEvent.type(screen.getByTestId("src_0_text"), CSV);
     await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+  });
+
+  it("offers a learning detector its artifact and no hyperparameters (ADR-0036)", async () => {
+    // A run never fits, so an artifact is the only thing that can configure such a detector:
+    // it supplies the hyperparameters its weights were fitted with, and naming one beside it
+    // is refused at construction as a half-configured request. Rendering the knobs anyway made
+    // each one a trap — moving a single knob turned a working chain into a failed run — and the
+    // page only worked because `submittedParams` drops what nobody touched.
+    const detector = await openCompose();
+    await userEvent.selectOptions(detector, "team3_zscore");
+
+    // The shipped id preselects: mandatory here, unlike an optional vocabulary that must be
+    // able to say "not given". A `<select>` has no blank option to render, so opening on ""
+    // *displayed* the first id while the value was empty, beside the untrained warning.
+    expect(await screen.findByTestId("det_0_art")).toHaveValue("skab_zscore");
+    expect(screen.queryByText(/has no fitted artifact/)).not.toBeInTheDocument();
+
+    // No knobs, and no collapsible to hide them in.
+    expect(screen.queryByTestId("det_0_window_size")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("det_0_percentile")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /team3_zscore parameters/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("submits a learning detector's artifact and nothing else (ADR-0036)", async () => {
+    const detector = await openCompose();
+    await userEvent.selectOptions(detector, "team3_zscore");
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+
+    await screen.findByText("Run complete.");
+    const body = captured.runBody as RunBody;
+    expect(body.spec.detectors).toEqual([
+      { name: "team3_zscore", params: { artifact: "skab_zscore" } },
+    ]);
   });
 
   it("lets an uploaded file be taken back", async () => {
@@ -146,36 +195,25 @@ describe("Compose & run", () => {
     expect(body.inputs).toEqual([{ content: CSV, origin: "pump-02.csv" }]);
   });
 
-  it("omits every untouched parameter from the submitted spec (C4)", async () => {
-    // `describe_params` back-fills a learning adapter's real defaults, so every widget
-    // renders populated. Submitting all of them made an untouched `team3_zscore` row an
-    // explicit request for its whole hyperparameter block *plus* its artifact — the
-    // half-configured request ADR-0022 D4 refuses.
-    const detector = await openCompose();
-    await userEvent.selectOptions(detector, "team3_zscore");
-    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
-    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
-    await userEvent.click(screen.getByTestId("compose_run"));
-
-    await screen.findByText("Run complete.");
-    const body = captured.runBody as RunBody;
-    expect(body.spec.detectors).toEqual([{ name: "team3_zscore", params: {} }]);
-  });
-
+  // C4's "an untouched row submits nothing" is asserted at DOM level by C5 below, whose second
+  // row keeps the catalogue default, and at unit level by `lib/params.test.ts` (twice, including
+  // the `preset`-owns-the-real-default case this used to exercise through the page). A third
+  // copy cost 1.0s of a 28.5s suite for no claim of its own; the learning-detector case it
+  // originally covered is a page state ADR-0036 deletes rather than moves.
   it("sends a parameter the operator actually moved (C4, the other half)", async () => {
     const detector = await openCompose();
-    await userEvent.selectOptions(detector, "team3_zscore");
-    await userEvent.click(screen.getByRole("button", { name: /team3_zscore parameters/ }));
-    const windowSize = await screen.findByTestId("det_0_window_size");
-    await userEvent.clear(windowSize);
-    await userEvent.type(windowSize, "20");
+    await userEvent.selectOptions(detector, "log_burst");
+    await userEvent.click(screen.getByRole("button", { name: /log_burst parameters/ }));
+    const minCount = await screen.findByTestId("det_0_min_count");
+    await userEvent.clear(minCount);
+    await userEvent.type(minCount, "12");
     await userEvent.type(screen.getByTestId("src_0_text"), CSV);
     await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
     await userEvent.click(screen.getByTestId("compose_run"));
 
     await screen.findByText("Run complete.");
     const body = captured.runBody as RunBody;
-    expect(body.spec.detectors).toEqual([{ name: "team3_zscore", params: { window_size: 20 } }]);
+    expect(body.spec.detectors).toEqual([{ name: "log_burst", params: { min_count: 12 } }]);
   });
 
   it("lets the same adapter appear twice with different params (C5)", async () => {

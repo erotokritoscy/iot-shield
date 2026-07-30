@@ -1,14 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ParamInfo } from "./api/types";
-import { initialValue, initialValues, isUntouched, submittedParams } from "./params";
+import { param } from "@/test/param";
 
-const param = (
-  name: string,
-  type: string | null,
-  value: unknown,
-  choices: string[] | null = null,
-): ParamInfo => ({ name, type, default: value, required: false, choices });
+import { initialValue, initialValues, isUntouched, submittedParams } from "./params";
 
 describe("a form that can say 'not given' (C3/C4)", () => {
   it("opens a numeric with no default EMPTY, and omits it", () => {

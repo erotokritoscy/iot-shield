@@ -11,6 +11,7 @@
  */
 import * as React from "react";
 
+import { ArtifactField } from "@/components/ArtifactField";
 import { ParamFields } from "@/components/ParamFields";
 import {
   Field,
@@ -23,6 +24,7 @@ import {
 import { Collapsible, Notice, Section } from "@/components/ui/surfaces";
 import type { EvalEntry } from "@/lib/api/client";
 import type { CorpusSummary, DetectorSummary, ModuleInfo, ParamInfo } from "@/lib/api/types";
+import { initialArtifact, tunablesOf } from "@/lib/artifact";
 import { initialValues, submittedParams, sweepable, type ParamValue, type ParamValues } from "@/lib/params";
 
 import {
@@ -53,84 +55,12 @@ interface EntryState {
   readonly clearedSweep: string | null;
 }
 
-const tunablesOf = (summary: DetectorSummary): ParamInfo[] =>
-  (summary.params ?? []).filter((param) => param.name !== summary.artifact_param);
-
-/** The param that names a cached fit, when this detector has one (ADR-0022). */
-const artifactParamOf = (summary: DetectorSummary): ParamInfo | undefined =>
-  (summary.params ?? []).find((param) => param.name === summary.artifact_param);
-
-/** The artifact ids the adapter ships, published as that param's closed vocabulary. */
-const artifactIdsOf = (summary: DetectorSummary): string[] =>
-  artifactParamOf(summary)?.choices ?? [];
-
-/**
- * Which cached fit to judge with: the ids the adapter ships, offered rather than recalled.
- *
- * The same rule every other closed vocabulary on this page already follows (ADR-0023 D9).
- * This was the one free-text box left, and the most expensive one to get wrong — an
- * unrecognised id decides whether the detector can judge at all (ADR-0035 D1).
- *
- * Falls back to free text only when an adapter declares an artifact param and enumerates
- * nothing, where a dropdown would offer no way forward. Both arms take identical props, so
- * they are written once and spread; the handler is typed structurally because a `<select>`
- * and an `<input>` disagree about their event's element type and agree about `target.value`.
- */
-function ArtifactField({
-  summary,
-  label,
-  id,
-  value,
-  onChange,
-}: {
-  readonly summary: DetectorSummary;
-  /** The artifact param's name, passed narrowed — only a detector that has one gets here. */
-  readonly label: string;
-  readonly id: string;
-  readonly value: string;
-  readonly onChange: (artifact: string) => void;
-}) {
-  const ids = artifactIdsOf(summary);
-  const shared = {
-    id,
-    "data-testid": id,
-    value,
-    onChange: (event: { target: { value: string } }) => onChange(event.target.value),
-  };
-  return (
-    <Field
-      label={label}
-      htmlFor={id}
-      hint="A committed artifact id. It supplies both the weights and the hyperparameters they were fitted with — the two travel together."
-      className="max-w-sm"
-    >
-      {ids.length > 0 ? (
-        <Select {...shared} options={ids} />
-      ) : (
-        <TextInput {...shared} placeholder="artifact id" />
-      )}
-    </Field>
-  );
-}
-
 function defaultPlan(summary: DetectorSummary): PlanState {
-  const artifactParam = artifactParamOf(summary);
-  const shipped =
-    artifactParam?.default === null || artifactParam?.default === undefined
-      ? ""
-      : String(artifactParam.default);
   return {
     mode: TRAINED,
-    // The factory default if it has one, else the first id the adapter actually ships —
-    // read from the catalogue, where a hardcoded table used to name one of the two shipped
-    // artifacts from memory (ADR-0035 D1).
-    //
-    // Preselecting here is right where `params.initialValue` deliberately refuses to: an
-    // optional param must be able to say "not given", but in TRAINED mode an artifact is
-    // *mandatory* — a blank is a reported blocker, not an absent value — and it is always
-    // submitted explicitly rather than being omitted as untouched. So the only thing a blank
-    // default buys is a page that opens broken.
-    artifact: shipped || (artifactIdsOf(summary)[0] ?? ""),
+    // `lib/artifact.ts` owns which id a form opens on and why it preselects where every other
+    // closed vocabulary does not; the Compose page reads the same rule (ADR-0036).
+    artifact: initialArtifact(summary),
     params: initialValues(tunablesOf(summary)),
   };
 }
@@ -438,7 +368,7 @@ export function useComposeEntries({
                   hint="Two or more run together in one pipeline, so their alerts can corroborate."
                 />
 
-                {item.plans.map(({ name, summary, state, plan: detectorPlan }) => (
+                {item.plans.map(({ name, summary, state }) => (
                   <Collapsible key={name} label={`${name} — hyperparameters`}>
                     {summary.artifact_param ? (
                       <div className="space-y-3">
@@ -465,9 +395,8 @@ export function useComposeEntries({
                                 menu. Without it the menu silently gains options when this
                                 radio moves, and the radio lives inside a collapsed panel. */}
                             <p className="caption">
-                              Trained weights are atomic: the artifact supplies <b>{name}</b>&apos;s
-                              hyperparameters too, so there is nothing here to edit or sweep. Switch
-                              to <i>{SCRATCH}</i> to choose them yourself.
+                              So there is nothing here to edit or sweep. Switch to <i>{SCRATCH}</i>{" "}
+                              to choose <b>{name}</b>&apos;s hyperparameters yourself.
                             </p>
                           </>
                         ) : (
@@ -491,7 +420,6 @@ export function useComposeEntries({
                         }
                       />
                     )}
-                    {detectorPlan.problem ? null : null}
                   </Collapsible>
                 ))}
 

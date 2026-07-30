@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import * as React from "react";
 
+import { ArtifactField } from "@/components/ArtifactField";
 import { ParamFields } from "@/components/ParamFields";
 import {
   Button,
@@ -23,6 +24,7 @@ import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import { readTextFile } from "@/lib/files";
 import type { ModuleInfo, ModulesResponse, SinkInfo } from "@/lib/api/types";
+import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
 import { initialValues, submittedParams, type ParamValues } from "@/lib/params";
 import { useModules } from "@/lib/queries";
 
@@ -110,8 +112,7 @@ const feeds = (detector: ModuleInfo, produced: ReadonlySet<string>): boolean =>
  * outright — which is what stops the page opening on a chain that cannot run, exactly what
  * happened when `meter_iforest` joined the registry and sorted ahead of `stub_threshold`.
  */
-const ready = (detector: ModuleInfo): boolean =>
-  detector.artifact_param === null || detector.artifact_param === undefined;
+const ready = (detector: ModuleInfo): boolean => !learnsWeights(detector);
 
 /**
  * Whether this *configured instance* will have trained state when the run builds it.
@@ -153,7 +154,7 @@ function newDetector(detectors: readonly ModuleInfo[], produced: ReadonlySet<str
         (item) => feeds(item, produced),
       )
     : detectors[0];
-  return { name: chosen?.name ?? "", params: initialValues(chosen?.params) };
+  return { name: chosen?.name ?? "", params: judgeOnlyValues(chosen) };
 }
 
 /** Live validation: the assembled spec goes to the guard on change, debounced (C9). */
@@ -324,6 +325,80 @@ function SourceCard({
           onChange={(event) => onChange({ ...row, content: event.target.value, fileName: null })}
         />
       </Field>
+    </div>
+  );
+}
+
+/**
+ * One detector instance: which adapter, and how it is configured.
+ *
+ * The mirror of `SourceCard`, extracted for the same reason — a whole-row `onChange` means the
+ * three "replace the row at this index" closures collapse into one, and a hoisted
+ * `artifactParam` const keeps its narrowing where the property path `module.artifact_param`
+ * lost it inside a callback (which is what needed an `as string` cast).
+ *
+ * Params are keyed by row *index*, never by adapter name — that is the whole reason the same
+ * adapter can appear twice with different presets (C5).
+ */
+function DetectorCard({
+  index,
+  row,
+  detectors,
+  onChange,
+}: {
+  readonly index: number;
+  readonly row: DetectorRow;
+  readonly detectors: readonly ModuleInfo[];
+  readonly onChange: (next: DetectorRow) => void;
+}) {
+  const module = detectors.find((item) => item.name === row.name);
+  // Narrowed once, as a const: `learnsWeights` is the one spelling of "does this adapter judge
+  // with a cached fit", and reading the property again inside the handler below would need a
+  // cast to re-assert what this line already proved.
+  const artifactParam = module !== undefined && learnsWeights(module) ? module.artifact_param : null;
+
+  return (
+    <div className="space-y-3 rounded-lg border border-line bg-surface p-4">
+      <Field label={`Detector ${index + 1}`} htmlFor={`det_${index}_name`}>
+        <Select
+          id={`det_${index}_name`}
+          data-testid={`det_${index}_name`}
+          options={detectors.map((item) => item.name)}
+          value={row.name}
+          onChange={(event) => {
+            const name = event.target.value;
+            onChange({ name, params: judgeOnlyValues(detectors.find((item) => item.name === name)) });
+          }}
+        />
+      </Field>
+      {artifactParam !== null && module !== undefined ? (
+        // A learning adapter gets its artifact and NO hyperparameters (ADR-0036 D1): a run never
+        // fits, so naming a knob beside an artifact is refused at construction. Inline rather
+        // than inside the collapsible, because it is the one param without which the run is
+        // refused and so must not need looking for.
+        <div className="space-y-2">
+          <ArtifactField
+            summary={module}
+            label={artifactParam}
+            id={`det_${index}_art`}
+            value={String(row.params[artifactParam] ?? "")}
+            onChange={(artifact) => onChange({ ...row, params: { [artifactParam]: artifact } })}
+          />
+          <p className="caption">
+            A run never fits: to choose hyperparameters and learn a baseline from data, use the
+            Evaluate page&apos;s fit protocol.
+          </p>
+        </div>
+      ) : (
+        <Collapsible label={`${row.name} parameters`}>
+          <ParamFields
+            params={module?.params}
+            values={row.params}
+            idPrefix={`det_${index}`}
+            onChange={(name, value) => onChange({ ...row, params: { ...row.params, [name]: value } })}
+          />
+        </Collapsible>
+      )}
     </div>
   );
 }
@@ -502,50 +577,17 @@ function ComposeForm({ catalogue }: { readonly catalogue: ModulesResponse }) {
           onChange={setDetectorCount}
         />
         <div className="space-y-3">
-          {detectors.map((row, index) => {
-            const module = detectorCatalogue.find((item) => item.name === row.name);
-            return (
-              <div key={index} className="space-y-3 rounded-lg border border-line bg-surface p-4">
-                <Field label={`Detector ${index + 1}`} htmlFor={`det_${index}_name`}>
-                  <Select
-                    id={`det_${index}_name`}
-                    data-testid={`det_${index}_name`}
-                    options={detectorCatalogue.map((item) => item.name)}
-                    value={row.name}
-                    onChange={(event) => {
-                      const name = event.target.value;
-                      const next = detectorCatalogue.find((item) => item.name === name);
-                      setDetectors((rows) =>
-                        rows.map((existing, position) =>
-                          position === index
-                            ? { name, params: initialValues(next?.params) }
-                            : existing,
-                        ),
-                      );
-                    }}
-                  />
-                </Field>
-                {/* Params are keyed by row *index*, never by adapter name — that is the whole
-                    reason the same adapter can appear twice with different presets (C5). */}
-                <Collapsible label={`${row.name} parameters`}>
-                  <ParamFields
-                    params={module?.params}
-                    values={row.params}
-                    idPrefix={`det_${index}`}
-                    onChange={(name, value) =>
-                      setDetectors((rows) =>
-                        rows.map((existing, position) =>
-                          position === index
-                            ? { ...existing, params: { ...existing.params, [name]: value } }
-                            : existing,
-                        ),
-                      )
-                    }
-                  />
-                </Collapsible>
-              </div>
-            );
-          })}
+          {detectors.map((row, index) => (
+            <DetectorCard
+              key={index}
+              index={index}
+              row={row}
+              detectors={detectorCatalogue}
+              onChange={(next) =>
+                setDetectors((rows) => rows.map((old, position) => (position === index ? next : old)))
+              }
+            />
+          ))}
         </div>
       </Section>
 

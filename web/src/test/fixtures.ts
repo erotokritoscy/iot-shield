@@ -263,6 +263,21 @@ export const modules = {
       ],
       artifact_param: "artifact",
     },
+    {
+      // A learning adapter that declares an artifact param and ships NO ids. Both real ones
+      // ship exactly one, but a deployment that removes the committed demo artifact has this
+      // shape, and it is what ADR-0035 D1's free-text fallback exists for — a dropdown over an
+      // empty vocabulary offers no way forward. It is also the only shape where Compose's "no
+      // fitted artifact" warning is still reachable, now that a shipped id preselects
+      // (ADR-0036), so it is what keeps that warning under test.
+      name: "unshipped_learner",
+      kind: "detector",
+      consumes: ["lane:telemetry"],
+      produces: ["detections"],
+      formats: [],
+      params: [param("artifact", "str", null)],
+      artifact_param: "artifact",
+    },
   ],
   alert_engines: [
     {

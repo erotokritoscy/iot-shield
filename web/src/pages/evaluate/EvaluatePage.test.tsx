@@ -305,7 +305,11 @@ describe("composing entries (E5, E6, E7)", () => {
   it("says why trained mode offers no knobs, and re-offers them in scratch mode", async () => {
     await openCompose();
     await userEvent.click(await screen.findByRole("button", { name: /team3_zscore — hyperparameters/ }));
-    expect(await screen.findByText(/Trained weights are atomic/)).toBeInTheDocument();
+    // The "an artifact carries its own hyperparameters" clause lives once, in ArtifactField's
+    // hint, because both pages that render the chooser were saying it a second time in a caption
+    // directly below it. The caption keeps only what is specific to this page.
+    expect(await screen.findByText(/the two travel together/)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing here to edit or sweep/)).toBeInTheDocument();
     expect(screen.queryByTestId("eval_e1_team3_zscore_window_size")).not.toBeInTheDocument();
     await userEvent.click(await screen.findByRole("radio", { name: SCRATCH }));
     // 60, not 0: the factory param defaults to None, so the real default has to come from
