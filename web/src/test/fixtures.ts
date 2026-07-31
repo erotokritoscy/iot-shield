@@ -1,9 +1,11 @@
 /**
- * The seeded world, mirroring `tests/dashboard/conftest.py`.
+ * The seeded world.
  *
- * Same pump-02, same T0, one detection, one HIGH alert, one malformed record — so the React
- * suite and the Python suite assert the *same story* and a divergence between the two shows
- * up as a disagreement rather than as two independent green runs (brief §8).
+ * Same pump-02, same T0, one detection, one HIGH alert, one malformed record. The shape was
+ * inherited from the Streamlit suite's `tests/dashboard/conftest.py`, so that the two suites
+ * asserted the *same story* and a divergence showed up as a disagreement rather than as two
+ * independent green runs; that suite went with the Streamlit app, so these are now simply this
+ * suite's fixtures.
  */
 export const T0 = "2026-07-07T12:00:00Z";
 

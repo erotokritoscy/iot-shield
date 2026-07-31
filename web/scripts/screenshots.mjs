@@ -1,8 +1,7 @@
 // Walk the running stack and capture the design review (brief §7's self-review loop).
 //
 //   docker compose up -d --build
-//   docker compose run --rm runner python -m iotshield.pipeline \
-//       --input=data/demo/demo_triage.csv --config=config/demo_triage.yaml
+//   docker compose run --rm runner          # config/demo.yaml, the walkthrough
 //   node web/scripts/screenshots.mjs
 //
 // Not a test: it asserts nothing beyond "the page reached this state", and it drives the

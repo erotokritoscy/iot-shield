@@ -21,8 +21,9 @@ a device the normalizer re-attributes to the peer fails that test immediately. T
 half-knew this already — ``corpus.to_stub_csv``'s docstring called itself "the inverse of that
 normalizer's fan-out" — it was simply never promoted from a comment to a concept.
 
-And because dialect multiplicity is *measured*, not speculative: six wire formats already
-exist across three lanes (stub-csv; two syslog dialects; two flow dialects; canonical JSONL).
+And because dialect multiplicity is *measured*, not speculative: seven wire formats already
+exist across three lanes (stub-csv; syslog; two flow dialects; two metering dialects;
+canonical JSONL).
 "How a pump behaves" and "which dialect it is logged in" are different questions, so adding a
 dialect is a renderer and nothing else.
 

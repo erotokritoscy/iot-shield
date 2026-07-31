@@ -17,8 +17,8 @@ const rows = (...labels: string[]): ScoreRow[] =>
   labels.map((label) => ({ spec: label, event_f1: 0.5 }));
 
 /**
- * A sweep gets a curve; anything else falls back to bars (V4) — the port of
- * `tests/dashboard/test_charts.py::TestSweepCurve`, condition for condition.
+ * A sweep gets a curve; anything else falls back to bars (V4) — ported condition for
+ * condition from the Streamlit suite's `TestSweepCurve`, which went with that app.
  *
  * The judgment being pinned: a swept hyperparameter is a *quantitative* axis, and a bar
  * chart of `team3[window_size=20]`, `…=60`, `…=120` makes the reader decode the ordering out

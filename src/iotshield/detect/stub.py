@@ -77,7 +77,7 @@ class StubThresholdDetector:
                                 # numbers into equality, so a reading of 80.00001 against a
                                 # threshold of 80.0 read "80 is above the configured
                                 # threshold of 80" — self-contradictory, in the one field
-                                # the port suite enforces and both dashboards name findings
+                                # the port suite enforces and the dashboard names findings
                                 # by (ADR-0032 D7, amendment).
                                 "explanation": (
                                     f"{event.metric or 'value'} {event.value:.12g} is above the"

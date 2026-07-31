@@ -49,7 +49,8 @@ adding CORS headers would only widen what can reach it.
 | `GET /malformed` | inputs that failed normalization | |
 | `GET /summary` | per-table counts plus the top alert | |
 
-Every list endpoint takes `limit` (1 to 10,000, default 1000) and `offset`.
+Every paged list endpoint takes `limit` (1 to 10,000, default 1000) and `offset`. `/assets` is
+the exception noted above: an inventory is a lookup table, so it comes back whole.
 
 `/health` runs an actual query rather than returning a constant, so it answers "can this
 process serve requests?" rather than "is this process alive?". A container whose database
@@ -94,8 +95,8 @@ timelines and a chart reads left to right.
 order is the ranking. Live, against a store holding both runs of the demo walkthrough:
 
 ```
-critical    81.5  10.0.0.24   Remote Services (T1021)
-high        55.7  10.0.0.24   Remote Services (T1021)
+critical    80.0  10.0.0.24   Remote Services (T1021)
+high        52.7  10.0.0.24   Remote Services (T1021)
 medium      39.6  10.0.0.11   External Remote Services (T1133)
 medium      39.6  10.0.0.11   External Remote Services (T1133)
 ```
@@ -103,7 +104,7 @@ medium      39.6  10.0.0.11   External Remote Services (T1133)
 **Assets come back id-ordered** and unpaged, because an inventory is a lookup table.
 
 Every ordering is **total**: each one ends in a unique id (`event_id`, `detection_id`,
-`alert_id`). That is not decoration. An ordering with ties lets a row move between pages as
+`alert_id`, `record_id`). That is not decoration. An ordering with ties lets a row move between pages as
 you walk them, so paging can silently skip or repeat rows. Ending on a unique key makes that
 impossible.
 
@@ -231,7 +232,7 @@ flow      rules:flow      score 1.7   vs 1
 
 That is the corroboration story from `docs/guide/alerts.md` made concrete: one alert, seven
 detections, three lanes. The alert's `detection_ids` are the lineage and this endpoint
-resolves them. Note `method` repeats and the scores do not, which is why both dashboards label
+resolves them. Note `method` repeats and the scores do not, which is why the dashboard labels
 a row by its `evidence.explanation` rather than by `method`.
 
 It 404s properly through the alert rather than returning an empty list for an unknown id:
@@ -246,16 +247,18 @@ Alert lineage is eager-loaded with `selectinload` in one batched query. Without 
 
 ## `/summary`
 
-The dashboard's polled endpoint: per-table counts plus the current top alert.
+The dashboard's KPI endpoint: per-table counts plus the current top alert.
 
 ```json
 {"counts": {"assets": 3, "events": 122, "malformed_records": 2,
             "detections": 11, "alerts": 4},
- "top_alert": {"asset_id": "10.0.0.24", "severity": "critical", "priority_score": 81.5, ...}}
+ "top_alert": {"asset_id": "10.0.0.24", "severity": "critical", "priority_score": 80.0, ...}}
 ```
 
-All five counts come back in **one** round trip, via scalar subqueries, because this is the
-endpoint something polls and five round-trips per poll is the one place they would add up.
+All five counts come back in **one** round trip, via scalar subqueries. Nothing polls it — a
+queue that re-ranks under the cursor is worse than a stale one — but it is the first thing every
+Monitor page load and every press of *Refresh data* asks for, so five round-trips there would be
+five where one will do.
 
 `counts` are global row counts. They are not comparable with a filtered list's
 `X-Total-Count`, and treating them as one is a real trap: `counts.events` is every event in
@@ -269,7 +272,7 @@ Three properties that shape what you can ask it.
 **It accumulates across runs.** There is no run identity in the read model. The walkthrough's
 two runs into one store leave **four** alerts rather than two: the gateway is judged
 identically by both, so its `39.6` appears twice, and the camera's two verdicts sit side by
-side at `81.5` and `55.7` with nothing in the model saying they describe one device twice.
+side at `80.0` and `52.7` with nothing in the model saying they describe one device twice.
 Cross-run correlation and per-run views are not built.
 
 **Assets arrive two ways.** Registered assets come from a config's `assets:` block;
@@ -278,9 +281,15 @@ criticality. You can tell them apart:
 
 ```
 ('10.0.0.11', 'medium', auto_discovered=True)
-('10.0.0.24', 'high',   auto_discovered=False)
+('10.0.0.24', 'medium', auto_discovered=True)
 ('10.0.0.31', 'medium', auto_discovered=True)
 ```
+
+All three are discovered, because the walkthrough registers nothing: the Compose page has no
+asset-registration section, so `config/demo.yaml` declines to use one either rather than publish
+numbers a clicked run cannot reproduce. Add an `assets:` block naming the camera HIGH and it
+comes back `('10.0.0.24', 'high', auto_discovered=False)` — that contrast is what this field is
+for.
 
 The third row is the sensor that behaved: it produced telemetry, raised nothing, and is in the
 inventory anyway, because discovery follows the data rather than the findings.

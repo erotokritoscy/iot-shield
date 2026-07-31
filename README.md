@@ -165,7 +165,6 @@ GPLv3 SKAB dataset is converted from a local checkout rather than redistributed 
 
 ```
 docker compose up -d                          # postgres, both APIs, the dashboard
-uv run python scripts/make_demo_data.py       # write the walkthrough's three input files
 ```
 
 | | |
@@ -178,6 +177,10 @@ The database starts empty and is filled from the dashboard: open **Operate → C
 one or more of the files in `data/demo/`, pick the modules to run, and the results appear under
 **Monitor → Triage**. Inputs are uploaded from the browser rather than read from a path on the
 server, so nothing about this flow requires a shell.
+
+Those inputs are committed, so a fresh checkout already has them and Docker is the only
+prerequisite. `uv run python scripts/make_demo_data.py` rebuilds them from the scenario declared
+at the top of that script, which you need only if you change what the demo is meant to show.
 
 The same run without a browser, for a shell or a scheduler:
 

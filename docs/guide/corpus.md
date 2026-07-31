@@ -232,12 +232,12 @@ telemetry, since every extension hit all three at once. They are now separate:
 | Module | Holds |
 |---|---|
 | `world.py` | devices, a clock, declared faults. No formats, no channels, no IPs. |
-| `port.py` | `Behaviour` (a lane's normal plus what a fault does to it) and `Renderer` (events to wire text) |
+| `port.py` | `Behaviour` (one (lane, payload) shape's normal plus what a fault does to it) and `Renderer` (events to wire text) |
 | `build.py` | simulate, render, and **derive** the answer key from what was expressed |
 | `rng.py` | one private random stream per thing, so the corpus can grow |
 | `faults.py` | a fault is a name; which lanes show it is derived |
 | `scenarios.py` | the shipped corpora, as data |
-| `telemetry.py`, `syslog.py`, `flow.py` | one behaviour and its renderers per lane |
+| `telemetry.py`, `syslog.py`, `flow.py`, `meter.py` | one behaviour and its renderers per shape — `meter.py` is a *second* telemetry-lane behaviour, which is why the registry is keyed on both axes |
 
 ### A recording is a small world, not a file
 
@@ -303,7 +303,7 @@ would hide.
 that fault kind**. `1.0` means "exactly at the alarm line" on every lane at once, and each
 behaviour converts it into its own units by multiplying the `Calibration` it declares: 20 peers
 for a fan-out, 15 ports for a port sweep, 50 MB for an exfiltration, 5 lines for a log storm, a
-value of 80 for the telemetry threshold.
+value of 80 for the telemetry threshold, and 3x an hour-of-week expectation for a meter.
 
 A single scalar was always right; leaving it **dimensioned** was not. The same number used to
 mean "30 peers" to the flow behaviour and "multiply the thermal rise by 30" to the sensor rig.
@@ -320,6 +320,14 @@ detector.
 A boundary is declared per *fault kind*, not per behaviour, because fan-out's 20 peers and the
 port scan's 15 ports are different alarm lines on one lane.
 
+A boundary may also name **no** registry parameter, and only then (ADR-0038 D5). `meter_iforest`
+fits its threshold to a false-alarm budget on each meter's own history, so there is no default
+for `intensity=1.0` to equal, and `fp_budget` cannot stand in for one — a rate is not a
+magnitude. Its boundary is quoted in units the behaviour owns, and the registry check below is
+replaced by a behavioural one: the scenario asserts the fault is actually caught at the declared
+intensity, which is the only way to validate a number in a behaviour's own units. The hatch is
+narrowed to `Fittable` detectors by a meta-test, so it cannot become the easy way out.
+
 ### The two extension points
 
 A **Behaviour** models one lane's normal, expresses the faults aimed at a device, and reports
@@ -334,9 +342,10 @@ run it through the *real* normalizer, and confirm you get back what you claimed 
 renderer that lies about its lane, writes a timestamp that will not parse, or names a device the
 normalizer re-attributes to the peer fails that test immediately.
 
-And dialect multiplicity is measured, not speculative: six wire formats already exist across
-three lanes. "How a pump behaves" and "which dialect it is logged in" are different questions,
-so adding a dialect is a renderer and nothing else.
+And dialect multiplicity is measured, not speculative: seven wire formats already exist across
+three lanes, two of them dialects of metering — a second *shape* on a lane that already had one
+rather than a fourth lane. "How a pump behaves" and "which dialect it is logged in" are
+different questions, so adding a dialect is a renderer and nothing else.
 
 `LaneBehaviour` is the base every lane shares. A behaviour declares two tables keyed by fault
 kind (what each fault does, and what boundary its magnitude is quoted against) and everything
@@ -350,13 +359,16 @@ boundaries for ['drift', 'spike', 'stuck']; every fault a lane can show must say
 magnitude is measured against
 ```
 
-The three shipped behaviours, for reference, with `compromise` appearing in all three because
-that is what makes a trimodal corpus possible:
+The four shipped behaviours, for reference, with `compromise` appearing in three of them because
+that is what makes a trimodal corpus possible — and two of them sharing the telemetry lane,
+which is the whole reason `BEHAVIOURS` is keyed on `(lane, payload)` rather than on lane alone
+(ADR-0035): a meter is a different vocabulary inside a modality that already had one.
 
 ```
-telemetry  SensorRig    compromise, drift, spike, stuck
-log        LogSource    auth_storm, compromise, error_storm
-flow       NetworkHost  compromise, exfiltration, port_sweep, scan
+telemetry          SensorRig    compromise, drift, spike, stuck
+telemetry / meter  MeterFleet   drift, spike, stuck
+log                LogSource    auth_storm, compromise, error_storm
+flow               NetworkHost  compromise, exfiltration, port_sweep, scan
 ```
 
 Before that base existed, `expresses` was `frozenset(self._handlers)` in three files,
@@ -465,7 +477,7 @@ wrote them.
 sampling rate:
 
 ```python
-"sensor":  channels=_RIG                                          # SKAB's 8 channels, 1 Hz
+"sensor":  channels=_RIG                                          # the rig's 3 process channels, 1 Hz
 "camera":  {"Temperature": (62.0, 0.9), "FrameRate": (25.0, 0.4)}, every_steps=5
 "gateway": {"CpuLoad": (38.0, 3.0), "Temperature": (58.0, 1.2)},   every_steps=30
 ```
@@ -704,7 +716,7 @@ in the corpus's order.
 $ uv run python -m iotshield.eval --corpus log_presets \
       --spec config/bench/log_severity.yaml --spec config/bench/log_auth.yaml
 
-corpus: log_presets - Two log burst shapes on separate devices, plus a clean recording
+corpus: log_presets - Two log burst shapes on separate devices, plus a clean recording (2 recordings, 2 device(s), 2 injected fault(s))
   2 case(s), 2 labelled incident(s)   fit protocol: none
 
 spec            detectors      evF1     evP     evR   ovl    ptF1  det/inc  alt/inc   cover
@@ -771,7 +783,9 @@ of 5. That is what the difficulty assertions in step 6 are for.
 
 **A wire dialect:** one `Renderer`, one line in the registry.
 
-**A lane:** one `Behaviour`, one `Renderer`, two registry lines. No fault changes.
+**A lane, or a second payload on an existing one:** one `Behaviour`, one `Renderer`, two
+registry lines. No fault changes. The registry is keyed on the `(lane, payload)` pair, so a
+metering behaviour sits beside the sensor rig on the telemetry lane rather than displacing it.
 
 **A fault shape:** a `FAULTS` entry plus a handler and a boundary in each behaviour that should
 show it.
@@ -789,12 +803,15 @@ The meta-tests in `tests/eval/generate/` then hold the new thing to every law, a
 them are *closure* checks rather than examples:
 
 - every registered renderer and behaviour joins the suite;
-- every behaviour's lane has at least one renderer, and every renderer's lane has a behaviour;
+- every behaviour's `(lane, payload)` shape has at least one renderer, and every renderer's
+  shape has a behaviour — the pair, not the lane, which is what stops a meter dialect being
+  handed the sensor rig's plain numeric readings;
 - every benchmarkable format can be generated;
 - every renderer's `source_format` is parsed by a registered normalizer, and its text round-trips;
 - every registered fault is expressed by some lane, and every expressed fault is registered;
 - every expressible fault has a boundary, and every declared boundary matches the detector
-  parameter it names in the real registry.
+  parameter it names in the real registry — or, where it names none, belongs to a `Fittable`
+  detector and is validated behaviourally instead.
 
 That last one is the one that keeps a corpus honest over time. The telemetry corpus only
 discriminates while its channel scales straddle `stub_threshold`'s default of 80. Change either
@@ -803,10 +820,11 @@ bench spec pins its own threshold and cannot see the drift.
 
 ## Edge cases and traps
 
-**A corpus is addressed by its directory name, not by the `name` in its manifest.** Discovery
-yields directory names, so `--corpus stale` works on a directory called `stale` whose manifest
-says `synthetic`, and an error raised while loading it quotes the manifest's name. Keep them
-equal; the generator and the fetcher both do.
+**A corpus answers to its directory name *or* the `name` in its manifest.** They normally agree,
+and accepting either means renaming a folder does not break a saved command line. What a
+*listing* publishes, though, is the manifest name — so a directory called `stale` whose manifest
+says `synthetic` appears as `synthetic` and is reachable under both, which is confusing rather
+than dangerous. Keep them equal; the generator and the fetcher both do.
 
 **A directory without a manifest is silently skipped, one *with* a broken manifest is not.** The
 corpus root is a place people put things and one stray folder should not break a listing, but a

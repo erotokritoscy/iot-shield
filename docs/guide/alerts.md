@@ -58,7 +58,7 @@ Run the same input through both. This is the demo walkthrough's three-lane run, 
 "Reading a queue" below takes apart factor by factor:
 
 ```
-weighted   1. [CRITICAL]  10.0.0.24 priority=81.5    2. [MEDIUM] 10.0.0.11 priority=39.6
+weighted   1. [CRITICAL]  10.0.0.24 priority=80.0    2. [MEDIUM] 10.0.0.11 priority=39.6
 stub       1. [EMERGENCY] 10.0.0.24 priority=100.0   2. [MEDIUM] 10.0.0.11 priority=38.0
 ```
 
@@ -228,20 +228,21 @@ sum past 100 when several lanes agree, so it is the only engine that can reach E
 
 The demo walkthrough makes each factor visible by running the *same* devices twice and
 changing only how many lanes are judged. `scripts/make_demo_data.py` writes its three inputs;
-the two runs are the flow capture alone, then all three files, with the camera registered as
-a high-criticality asset and the other two devices left to auto-discovery.
+the two runs are the flow capture alone, then all three files, with every device left to
+auto-discovery. The walkthrough registers nothing, because the Compose page has no field for
+it and two demos of one scenario must not print different numbers.
 
 Flow lane only, one `rules` instance:
 
 ```
-1. [HIGH]   10.0.0.24  55.7 = f(severity 2.55 x corroboration 1.00 x volume 1.15 x asset_weight 1.20 -> raw 3.52)
+1. [HIGH]   10.0.0.24  52.7 = f(severity 2.55 x corroboration 1.00 x volume 1.15 x asset_weight 1.10 -> raw 3.23)
 2. [MEDIUM] 10.0.0.11  39.6 = f(severity 2.10 x corroboration 1.00 x volume 1.00 x asset_weight 1.10 -> raw 2.31)
 ```
 
 The same capture, plus the camera's syslog and telemetry and the detectors that read them:
 
 ```
-1. [CRITICAL] 10.0.0.24  81.5 = f(severity 2.55 x corroboration 2.00 x volume 1.60 x asset_weight 1.20 -> raw 9.79)
+1. [CRITICAL] 10.0.0.24  80.0 = f(severity 2.55 x corroboration 2.00 x volume 1.60 x asset_weight 1.10 -> raw 8.98)
 2. [MEDIUM]   10.0.0.11  39.6 = f(severity 2.10 x corroboration 1.00 x volume 1.00 x asset_weight 1.10 -> raw 2.31)
 ```
 
@@ -250,16 +251,16 @@ because the strongest single finding is the same telnet rule at a margin of 2.55
 worse, more of it was seen. What moved is `corroboration`, one lane to three, which is
 1 + 0.5 per extra lane and therefore 2.00, its ceiling with today's three lanes; and `volume`,
 two distinct judgments to seven, which caps at four extra and therefore 1.60. Multiplied,
-3.52 becomes 9.79 raw, and the queue reads CRITICAL where it read HIGH.
+3.23 becomes 8.98 raw, and the queue reads CRITICAL where it read HIGH.
 
 The gateway is the control, and it is what makes the pair prove anything. Its inbound SSH
 session is a real finding on one lane, it has no corroboration to gain, and it scores 39.6 in
 both runs. A priority that rose everywhere would only show that scoring had changed.
 
-`asset_weight` is the one factor an operator sets directly, and the two devices show both
-ends of it: 1.20 for the registered high-criticality camera, 1.10 for the auto-discovered
-gateway at the MEDIUM default. Left unregistered the camera scores 52.7 and 80.0 instead, in
-the same two severity bands, which is the honest size of what registration buys.
+`asset_weight` is the one factor an operator sets directly, and the one this walkthrough
+deliberately leaves alone: both devices carry 1.10, the auto-discovered MEDIUM default.
+Register the camera HIGH from a config file and it weighs 1.20 and scores 55.7 and 81.5
+instead — the same two severity bands, which is the honest size of what registration buys.
 
 That is what "prioritisation" means here. It is not a better detector; it is an ordering over
 the same findings that spends an analyst's attention on the device several independent
@@ -391,8 +392,8 @@ dangerous one, because it does not split a step, it merges two and loses an enti
 instruction with nothing to show that it happened.
 
 The cap discloses itself. On the walkthrough's three-lane run the camera alert gathers twelve
-steps from its four rule findings, and the trim is carried as a real step so both dashboards
-render it with no UI change:
+steps from its four rule findings, and the trim is carried as a real step so the dashboard
+renders it with no UI change:
 
 ```
 Isolate the device and inspect its firmware for compromise. Review which hosts it
@@ -418,8 +419,8 @@ named after its own id, typed `"unknown"`, and given MEDIUM criticality as a sta
 default. `discovered_asset` is shared with the storage layer so the two cannot disagree
 about what discovery produces.
 
-This is visible in the walkthrough: the registered camera carries `asset_weight` 1.20 for
-HIGH, and the unregistered gateway carries 1.10 for the MEDIUM default. Seeding an asset is
+This is what the walkthrough deliberately does *not* show: nothing there is registered, so
+every device carries 1.10 for the MEDIUM default. Seeding an asset is
 the cheapest way to change a queue's order without touching any detector. Note the Compose
 page has no field for it, so a run driven entirely from the dashboard discovers every device
 at MEDIUM; registration today means a config file or a `POST /runs` body.
@@ -490,8 +491,12 @@ applies.
 | `bucket_minutes: 0` | `invalid params for alert engine 'weighted': bucket_minutes must be positive, got 0.0` |
 | `window: 5` | `invalid params for alert engine 'stub': _stub_alert_engine() got an unexpected keyword argument 'window'` |
 
-All three raise before any input is read, because a bad engine config is wrong for every
-detection in the run.
+The unknown name is caught by the compatibility guard, which runs at the top of the ingest
+phase before a single record is parsed. The other two are construction errors and land later:
+the alert engine is built inside `compute_result`, after ingest, deliberately — the guard goes
+first so a structurally broken chain is reported rather than pre-empted by a narrower failure.
+All three still precede every sink write, which is the property that matters: an engine
+misconfigured is wrong for every detection in the run, so nothing is published.
 
 ## Where to look
 

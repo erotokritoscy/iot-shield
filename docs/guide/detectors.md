@@ -60,7 +60,7 @@ detector.
 | `meter_iforest` | telemetry | `meter` | `meter_iforest` | yes | 7 + `artifact` |
 | `rules` | any (config) | follows lane | `rules:<lane>` | no | `lane`, `ruleset`, `merge_gap_minutes` |
 
-Try them. Three of the six run on the product path, in the demo walkthrough:
+Try them. Two of the six run on the product path, in the demo walkthrough:
 
 ```
 uv run python scripts/make_demo_data.py
@@ -77,7 +77,7 @@ in a config of your own. Its two runs, so you can tell whether a change broke so
 `tests/pipeline/test_runner.py::TestWalkthroughDemo` pins both rows by exact count, which is
 what stops the demo rotting quietly between rehearsals.
 
-The other three ship no demo input, and that is deliberate rather than a gap: what makes a
+The other four ship no demo input, and that is deliberate rather than a gap: what makes a
 statistical detector convincing is *labelled* data, not a five-minute story. Each has a
 committed bench spec instead, run through `uv run python -m iotshield.eval`:
 
@@ -155,7 +155,8 @@ window qualify at almost every position and describe one event.
   `gap` separates two neighbours.
 - `classify_run(length)` turns a span length into an `EventKind`: 1 is `POINT`, 2 is
   `CONTEXTUAL`, 3 or more is `COLLECTIVE`.
-- `sample_messages(events)` takes the first three non-empty messages, for evidence.
+- `sample_messages(events)` takes the non-empty messages among the first three, for evidence —
+  it caps first and filters second, so an episode opening with a message-less event yields two.
 
 ### Three ways to form an episode, and they are not interchangeable
 
@@ -201,7 +202,7 @@ exactly on the alert engine's cap of 4.0.
 
 **`explanation` is a law.** One analyst-readable sentence, from every adapter, enforced by
 `test_every_detection_explains_itself`. It is the only field every consumer can render, and
-both dashboards name findings by it. The supporting detail stays per-detector, because a
+the dashboard names findings by it. The supporting detail stays per-detector, because a
 z-score, a feature attribution and a peer count are genuinely different things.
 
 Two formatting traps that both shipped and both had to be fixed:
@@ -369,9 +370,9 @@ nowhere a client could read them and the Evaluate page carried a hardcoded TypeS
 listing one of the two.
 
 It holds **callables**, not lists, and that is the difference between the two kinds of
-vocabulary. Package resources cannot change while a process runs, so an artifact list taken at
-import stays true; a shelf the operator is invited to drop directories into cannot make that
-promise. Resolving per call means adding a rule set is creating a directory, visible on the
+vocabulary. Package resources cannot change while a process runs, so an artifact list cached on
+first use stays true for that process; a shelf the operator is invited to drop directories into
+cannot make that promise. Resolving per call means adding a rule set is creating a directory, visible on the
 next page load with no restart (ADR-0037).
 
 Live, across all six:
@@ -497,7 +498,9 @@ ValueError: notskab.csv is missing expected channels: ['Accelerometer1RMS',
 
 That is the CLI's limitation, not the adapter's. `Team3ZScoreDetector.fit(events)` learns the
 channel list from whatever telemetry it is handed, so fitting a different rig means calling
-`fit()` (route 1) and then `state_for` / `Team3Artifact` if you want to persist it. The pure
+`fit()` (route 1) and then `model_for` / `Team3Artifact` if you want to persist it. (The meter
+adapter's equivalent accessor is `state_for`; the names differ because team3's per-asset record
+is a *model* and the meter's is a *state*.) The pure
 function underneath, `train_state` (frame plus `Team3Params` in, `Team3State` out, no I/O),
 is shared by the CLI and by `fit()`, which is what guarantees the two cannot disagree about
 what fitting means.
@@ -524,7 +527,8 @@ $ cp my_rig.json src/iotshield/detect/team3/artifacts/
 
 and `artifact: my_rig` now builds, appears in `/modules` as a `choices` entry on the
 `artifact` parameter, and shows up in the dashboard's dropdown with no code change anywhere.
-The listing happens once at import, so a running process needs a restart to see a new file.
+The listing is cached the first time it is asked, so a running process needs a restart to see
+a new file.
 
 Both trainers write with `newline="\n"` explicitly. `Path.write_text` translates to
 `os.linesep`, so regenerating on Windows rewrote every line of a committed artifact as CRLF
@@ -611,9 +615,11 @@ cause it cannot see would be the same failure one level in.
 ## Presets: the cheapest new detection
 
 If your idea is "the same mechanism measuring something else", it is a preset, not an
-adapter. A `PRESETS` entry in `log_burst.py` or `flow_burst.py` is about fifteen lines and
-needs no registry change, because the entry keys become the factory's `Literal[...]` and the
-UI picks them up as a dropdown.
+adapter. A `PRESETS` entry in `log_burst.py` or `flow_burst.py` is about fifteen lines, plus
+the key in that factory's `Literal[...]` in the registry — the two are mirrored by hand, and
+`test_every_preset_adapter_declares_its_presets_as_choices` fails if they drift, because a
+preset the `Literal` does not list is unreachable from the UI even though the adapter supports
+it. Once listed, `/modules` publishes it and the compose page renders it as a dropdown option.
 
 A `flow_burst` preset supplies an aggregate, a direction filter, its own window and
 threshold, and a required enrichment:
@@ -807,7 +813,8 @@ Six parts, and the last two are the ones people forget.
 
 3. **The registry entry** in `pipeline/registry.py`. Annotate closed vocabularies as
    `Literal[...]` so `/modules` publishes them and the compose page renders a dropdown. If
-   the adapter learns, add `params_type`, `artifact_param` and `artifacts`.
+   the adapter learns, add `params_type`, `artifact_param` and a `discovered` entry for the
+   artifact param — the same channel every found-rather-than-declared vocabulary travels down.
 
 4. **Export it** from `detect/__init__.py`.
 

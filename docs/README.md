@@ -14,6 +14,14 @@ superseded gets a **new** ADR that says so, or an amendment appended to the old 
 That is the whole point of the format: you can read what somebody believed at the time and judge
 whether the reasoning still holds.
 
+The practical consequence, since it catches people: **a path or a command inside an ADR is
+evidence, not instructions.** Thirteen `config/demo*.yaml` were deleted on 2026-07-30, and a
+dozen ADRs still cite them because that is what those decisions were demonstrated against at
+the time — two, [0011](adr/0011-syslog-normalizer-integration.md) and
+[0012](adr/0012-team3-telemetry-detector-integration.md), quote a command line that no longer
+runs. Rewriting them would falsify the record to fix a copy-paste. For anything you intend to
+*run*, use `guide/` or `config/demo.yaml`.
+
 So: read a guide to work on the code. Read an ADR when a guide tells you something is a certain
 way and you want to know what the alternative was.
 
@@ -76,7 +84,9 @@ from what fitting computed, which any adapter that learns has to obey.
 parts about what ground truth is actually indexed by. Read them in order, or read the summary
 in `guide/evaluation.md` instead.
 
-**The most recent.** [0031](adr/0031-react-dashboard.md) is the React rewrite.
+**The most recent.** [0031](adr/0031-react-dashboard.md) is the React rewrite; its 2026-07-30
+amendment is where the Streamlit retirement and the collapse of thirteen demo configs into one
+are recorded, which is the largest recent change to what the repository contains.
 [0035](adr/0035-the-lane-is-not-the-whole-shape.md),
 [0036](adr/0036-a-judge-only-page-offers-no-hyperparameters.md),
 [0037](adr/0037-a-rule-set-is-named-not-pathed.md) and

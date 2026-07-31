@@ -324,8 +324,9 @@ def get_detections_by_ids(session: Session, detection_ids: Sequence[UUID]) -> li
 def count_summary(session: Session) -> dict[str, int]:
     """Per-table row counts (the /summary endpoint's KPI numbers).
 
-    One round-trip via scalar subqueries: /summary is the dashboard's polled
-    endpoint, so this is the one place recurring round-trips would add up.
+    One round-trip via scalar subqueries. Nothing polls /summary, but it is the
+    first thing every Monitor page load and every explicit refresh asks for, so
+    this is the one place recurring round-trips would add up.
     """
     tables = {
         "assets": AssetRow,

@@ -42,7 +42,7 @@ re-implement a contract rule in an adapter.
 | `flow` | `zeek-conn`, `flow-csv` | flow | whole-file |
 | `meter` | `eoa-meter-csv`, `sensipro-hourly-csv` | telemetry | whole-file |
 
-Try them. The demo inputs are **generated**, not hand-authored, so what each one contains is
+Try them. The first three are **generated**, not hand-authored, so what each one contains is
 declared in one module docstring rather than hidden in the bytes:
 
 ```
@@ -51,14 +51,15 @@ uv run python scripts/make_demo_data.py
 
 | Input | Format | What it exercises |
 |---|---|---|
-| `data/demo/camera_flow.log` | `zeek-conn` | header directives partway down the file, orientation against the home networks, a 4.2 MB flow |
+| `data/demo/camera_flow.log` | `zeek-conn` | a `#fields` directive instead of a header row, orientation against the home networks, a 4.2 MB flow |
 | `data/demo/camera_syslog.log` | `syslog` | both RFC dialects in one file, plus two lines that genuinely cannot parse |
 | `data/demo/camera_telemetry.csv` | `stub-csv` | the reference format: three devices on one clock |
-| `data/demo/demo_meter_history.csv` | `eoa-meter-csv` | a cumulative counter differenced into hourly consumption |
+| `data/demo/demo_meter_history.csv` | `eoa-meter-csv` | a cumulative counter differenced into hourly consumption — the one hand-authored file here, and the sole input to the committed meter artifact, so the generator leaves it alone |
 
 Upload one of them on the dashboard's **Operate -> Compose** page, or name it in a config of
-your own. There are no shipped demo configs: the walkthrough is driven from that page, which
-posts the file's *content* rather than a path on the server, so a run needs no YAML at all.
+your own. The walkthrough is driven from that page, which posts the file's *content* rather
+than a path on the server, so a run needs no YAML at all; `config/demo.yaml` is the same three
+sources as a config, for a shell or a scheduler, and is the only run config the repo ships.
 
 `passthrough` ships no demo input. Its input is our own `NormalizedEvent` JSONL, which only
 occurs where a partner system already emits it, so the worked example is its case in the port
@@ -111,8 +112,9 @@ appears in real syslog payloads. Splitting there turns one record into two, brea
 verbatim-`raw` law, and produces a reject that blames the operator's data for our
 parsing.
 
-Use `normalize._linewise.split_lines`, which splits on `\r\n|\r|\n` and nothing else.
-All three whole-file readers share it so they cannot disagree about where a record ends.
+Use `normalize._linewise.split_lines`, which splits on `\r\n|\r|\n` and nothing else. Both
+whole-file readers share it, and so does the line-wise loop, so no reader can disagree with
+another about where a record ends.
 
 ## Timestamps
 

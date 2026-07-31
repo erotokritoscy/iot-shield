@@ -2,8 +2,8 @@
  * Monitor's three views against seeded and empty worlds, plus the friendly empty states
  * (the state every fresh `docker compose up` starts in).
  *
- * The React counterpart of `TestTriage` / `TestAssets` / `TestDataHealth` in
- * `tests/dashboard/test_app.py` (X4).
+ * The React counterpart of the Streamlit suite's `TestTriage` / `TestAssets` /
+ * `TestDataHealth` (X4), which went with that app.
  */
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

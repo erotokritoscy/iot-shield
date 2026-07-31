@@ -266,8 +266,10 @@ warnings and the sinks actually written. If the postgres sink was among them and
 the page hands off to Triage; if it was not, it says so, because Triage reads the postgres store
 only and would otherwise look empty after a successful run.
 
-**This page is where the demo lives.** There are no demo configs any more; the walkthrough is two
-runs composed here, differing only in how many lanes they judge.
+**This page is where the demo lives.** The thirteen `config/demo*.yaml` that indexed the adapters
+one at a time are gone; `config/demo.yaml` survives as the same walkthrough without a browser,
+which is what keeps the CLI and the compose `runner` exercised on the same bytes. The demo proper
+is two runs composed here, differing only in how many lanes they judge.
 `uv run python scripts/make_demo_data.py` writes the three inputs - one compromised IP camera on
 all three lanes, a gateway being administered from outside, and a sensor that behaves. Upload
 `camera_flow.log` alone with `rules` on the flow lane, and the receipt reads 12 events, 0
@@ -434,9 +436,10 @@ one, since the two have nothing in common at runtime.
 
 Tests mock at the **network boundary** with MSW rather than stubbing the client, so the fetch
 wrapper, the zod validation and the error mapping are all exercised rather than skipped past. The
-fixtures mirror the Python dashboard suite's seeded world (`pump-02`, one detection, one HIGH alert,
-one malformed record) so the two suites assert the same story and a divergence shows up as a
-disagreement rather than as two independent green runs.
+fixtures still encode the seeded world the Python dashboard suite asserted against (`pump-02`, one
+detection, one HIGH alert, one malformed record). They were shaped so the two suites told the same
+story and a divergence surfaced as a disagreement rather than as two independent green runs; that
+suite went with the Streamlit app, so they are now simply this suite's fixtures.
 
 One test-config note that will look strange: `fileParallelism: false`. Parallel workers race on
 Vite's transform cache under Windows file locking, which surfaced as whole test *files* being
@@ -488,11 +491,14 @@ Recorded rather than fixed, because this guide is documentation and these are co
   exact count.
 - **The Compose page cannot register assets.** `PipelineSpec.assets` exists and the alert engine
   reads `Asset.criticality` as its `asset_weight` factor, but the page has no section for it, so a
-  run driven entirely from here auto-discovers every device at MEDIUM. The walkthrough's pinned
-  priorities (`tests/pipeline/test_runner.py`) register the camera HIGH and read 55.7 then 81.5;
-  composed on this page the same two runs read 52.7 then 80.0. The severity bands are identical
-  either way (HIGH, then CRITICAL), so nothing the walkthrough claims rests on it - but a number
-  on screen that disagrees with a number in the docs eventually arrives as a bug report.
+  run driven entirely from here auto-discovers every device at MEDIUM. The walkthrough is pinned
+  at what this page produces for exactly that reason: `tests/pipeline/test_runner.py::
+  TestWalkthroughDemo` registers nothing and reads 52.7 then 80.0. Declaring the camera HIGH from
+  YAML weights it 1.20 instead of 1.10 and reads 55.7 then 81.5 - a real ranking factor the UI
+  cannot reach, so the first of those two is pinned separately. The severity bands are identical
+  either way (HIGH, then CRITICAL), so nothing the walkthrough claims rests on it - and pinning
+  the page's numbers rather than YAML's is what stops a figure on screen disagreeing with a figure
+  in the docs.
 - **Alert status is read-only.** Every alert is `new`, because no endpoint mutates one. Adding
   acknowledge or dismiss is where the read plane stops being read-only, and it is a read-API change
   before it is a dashboard change.

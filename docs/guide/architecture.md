@@ -216,9 +216,10 @@ The duplicate-detector check compares what the entries *build*, not what they sa
 the factory's `80.0`. It is the only place the guard constructs anything, and it does so
 only for a name that already appears more than once.
 
-Four of these, over the demo inputs `scripts/make_demo_data.py` writes. The configs named
-below are one-off files written to provoke each case; the repo ships none, because the
-walkthrough itself is driven from the dashboard.
+Four of these, over the demo inputs `scripts/make_demo_data.py` writes. The four configs named
+below are one-off files written to provoke each case and are not in the repo — the one run
+config that ships is `config/demo.yaml`, and it is deliberately a chain the guard passes
+clean.
 
 ```
 $ uv run python -m iotshield.pipeline --config bad_format.yaml     # syslog normalizer, stub-csv source
@@ -271,7 +272,9 @@ than rows, which is what `4 detection(s) (2 distinct)` is showing.
 
 ## The registry
 
-`pipeline/registry.py` is four dictionaries mapping a config name to an `AdapterSpec`.
+`pipeline/registry.py` is four dictionaries mapping a config name to a spec. Three hold an
+`AdapterSpec`; `SINKS` holds the lighter `SinkSpec`, which pairs a factory with
+`requires_database` and no capability, for the reason above.
 
 ```python
 DETECTORS = {
@@ -312,8 +315,10 @@ which entry is wrong instead of reading a traceback from inside an adapter.
 ## Config: spec and config
 
 A run is described by a spec: a YAML file if you drive it from the CLI, the same object as
-JSON if you drive it from the Compose page or `POST /runs`. The repo ships no run configs, so
-the file below is the shape you write rather than one you can open.
+JSON if you drive it from the Compose page or `POST /runs`. `config/demo.yaml` is the one the
+repo ships — the walkthrough as a config, so the CLI and the compose `runner` stay exercised
+and print the queue the dashboard prints. The file below is the same shape, cut to two sources
+and with the `sinks` block spelled out rather than defaulted.
 
 ```yaml
 sources:                        # a list, so one run can mix modalities
@@ -422,7 +427,7 @@ with real code, are in `docs/guide/normalizers.md`, `docs/guide/detectors.md` an
 | The adapter itself: a class with the port's method shape | That port's package |
 | Its capability, as a `CAPABILITY` constant or a `capability(params)` function | The same module |
 | A registry entry | `pipeline/registry.py` |
-| A case in the port's contract suite | `tests/ports/test_<port>_port.py` |
+| A case in the port's contract suite | `tests/ports/test_<port>_port.py`, for the three capability-bearing ports; a sink's tests go in `tests/pipeline/test_sinks.py` |
 | A name in a run spec | a config file of yours, or the Compose page |
 
 Two of those are less optional than they look.
@@ -445,12 +450,12 @@ so the vocabulary is declared once.
 
 | Mechanism | What it gives you |
 | --- | --- |
-| `tests/ports/`, 135 cases | Every adapter of a port passes identical behavioural tests |
+| `tests/ports/`, 141 cases | Every adapter of a port passes identical behavioural tests |
 | `scripts/check.sh` | pytest, ruff check, ruff format, pyright. CI runs the same script on a pinned interpreter |
 | `npm run check` in `web/` | typecheck, lint, vitest, build. Its own CI job |
 | 38 ADRs in `docs/adr/` | Numbered and append-only. They record what was rejected, which is usually the more useful half |
 
-State at the time of writing: `1317 passed, 15 skipped`.
+State at the time of writing: `1250 passed, 15 skipped`.
 
 ## Further reading
 

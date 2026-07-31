@@ -450,8 +450,10 @@ def create_control_app(engine: Engine) -> FastAPI:
             # used to escape as a bare 500 with an empty body. Sinks run in config order and
             # there is no cross-store atomicity, so the caller could get that opaque 500 for a
             # run whose Postgres rows were already committed, with nothing saying so. Naming
-            # the failure and the destinations that DID complete is what makes the outcome
-            # legible instead of ambiguous (ADR-0033).
+            # the failure — quoting the sink's own error — is what makes the outcome legible
+            # instead of ambiguous (ADR-0033). Listing the destinations that DID complete
+            # would say more, and needs `execute_run` to carry them out of the failure path;
+            # today they exist only on a successful RunReport.
             raise HTTPException(
                 status_code=500,
                 detail={

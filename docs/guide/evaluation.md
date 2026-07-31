@@ -426,7 +426,7 @@ uv run python -m iotshield.eval --corpus device_trimodal \
 3 case(s), 7 labelled incident(s) across 3 fault(s)   fit protocol: none
 
 spec                  detectors               evF1   evP   evR   ovl  ptF1  det/inc alt/inc cover   det alerts fitted
-trimodal_all          stub,log_burst,flow...  0.82  0.70  1.00  0.95  0.65     4.29    3.00  1.00    30      9    0/3
+trimodal_all          stub_threshold,log_burst,f…  0.82  0.70  1.00  0.95  0.65     4.29    3.00  1.00    30      9    0/3
 trimodal_telemetry    stub_threshold          0.44  1.00  0.29  1.00  0.30     2.29    0.67  0.67    16      2    0/3
 ```
 
@@ -606,8 +606,9 @@ uv run python -m iotshield.eval --corpus device_trimodal --spec config/bench/tri
 ```
 
 A benchmark's value compounds when you can compare today's run to last week's, so the report
-is a serializable document a CI gate can key into (`cases[].event_f1`) and the dashboard's
-Evaluate mode reads exactly this file rather than launching runs of its own.
+is a serializable document a CI gate can key into (`cases[].event_f1`). The dashboard's Evaluate
+mode runs benchmarks through `POST /eval/run` and renders the report it gets back; where the
+eval router is absent it falls back to a report JSON you upload, which is this same document.
 
 Its shape is part of the contract, which is why `CaseReport` is flat rather than two nested
 metric objects. Forty-two keys per case row, and three things worth knowing about them:

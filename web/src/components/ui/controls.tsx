@@ -4,7 +4,7 @@
  * Native `<select>`, `<input>` and `<textarea>` under the token styling rather than a
  * headless listbox library: this is a dense operator console whose forms are the product
  * surface, and the platform controls bring keyboard, mobile and assistive behaviour for
- * free. See DEVIATIONS.md ("shadcn/ui without Radix").
+ * free — shadcn/ui without Radix (ADR-0031).
  */
 import { cva, type VariantProps } from "class-variance-authority";
 import { Minus, Plus } from "lucide-react";
@@ -173,7 +173,7 @@ export function RadioGroup({
  *
  * Streamlit expressed this as a number input ("How many detectors?"); a React form adds and
  * removes a row directly, which states the same 1–N bound as an action rather than as a
- * count to retype into a clamped field. See DEVIATIONS.md.
+ * count to retype into a clamped field (ADR-0031).
  */
 export function RowCount({
   label,

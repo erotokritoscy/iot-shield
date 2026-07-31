@@ -2,8 +2,8 @@
 
 JSON rather than console-only on purpose. A benchmark's value compounds when you can compare
 today's run to last week's — so the report is a serializable document CI could gate on
-("this change dropped event-F1 by 0.1"), and the dashboard's Evaluate mode reads exactly
-this file rather than launching runs of its own.
+("this change dropped event-F1 by 0.1"), and the same document the dashboard's Evaluate mode
+renders, whether it came back from ``POST /eval/run`` or was uploaded from disk.
 
 These models live here and **not** in ``contracts/``. ``contracts/`` is the *product's* core
 vocabulary — what a normalizer, detector, and alert engine agree on. A benchmark report is

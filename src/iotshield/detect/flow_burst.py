@@ -313,7 +313,7 @@ class FlowBurstDetector:
             # Thousands separators, not :g. Six significant digits switch to exponent form,
             # and `exfiltration`'s boundary is 50,000,000 — so EVERY detection that preset
             # can emit rendered as "5e+07 bytes", discarding the real figure in the one
-            # sentence an analyst reads and both dashboards name the finding by.
+            # sentence an analyst reads and the dashboard names the finding by.
             "explanation": (
                 f"{episode.peak:,.0f} {self._preset.unit} ({self._preset.describe}) in a "
                 f"{self._window.total_seconds() / 60:g}-minute window"

@@ -346,7 +346,7 @@ class Enrichment:
             # a truncated one, and on a camera alert unioned across four rules six of twelve steps
             # were dropped — including the whole exfiltration checklist for a device that had
             # just uploaded 4.2 MB. Carried as a real step so `action_steps` recovers it and
-            # both dashboards render it with no UI change (ADR-0033).
+            # the dashboard renders it with no UI change (ADR-0033).
             omitted = len(actions) - (_MAX_ACTIONS - 1)
             actions = [
                 *actions[: _MAX_ACTIONS - 1],

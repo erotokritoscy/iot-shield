@@ -122,7 +122,7 @@ export interface EvalPlane {
  * A *transport* failure is a different fact and is deliberately treated differently: the
  * Pipeline API is down or still starting, which is the situation the old page degraded
  * through rather than disappeared in. The mode stays visible and the page offers the saved
- * report (D6), preserving the CLI → file → dashboard path (E1). See DEVIATIONS.md.
+ * report (D6), preserving the CLI → file → dashboard path (E1) — ADR-0031 D5.
  */
 export function useEvalPlane(): EvalPlane {
   const query = useCorpora();

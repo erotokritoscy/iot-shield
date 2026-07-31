@@ -147,8 +147,9 @@ That held until one parameter's vocabulary stopped being fixed for the process: 
 is a file in a package and cannot change while Python runs, but a rule set is a directory on a
 shelf the deployment mounts and the operator is invited to add to. Cached at import, a new rule
 set was invisible until the container restarted, which is not a thing an operator should have to
-do to publish a rule. Introspecting six factories is cheap; being wrong about what exists is
-not.
+do to publish a rule. A full rebuild walks all four registries — fifteen factories, a signature
+introspection per parameter — and measures 0.84 ms. That is cheap; being wrong about what
+exists is not.
 
 If you add an adapter and register it, it appears here with no change to this file. That is
 the whole extension story for the API surface.
@@ -283,10 +284,11 @@ Untrained detectors are refused the same way:
 That check needs the constructed object, so it cannot live in the guard, but it is reported
 in the guard's own shape so a client handles it identically.
 
-The 500 deliberately names the failure and lists the destinations that *did* complete. Sinks
-run in config order with no cross-store atomicity, so a run can legitimately have committed
-its Postgres rows and then failed writing a file. An opaque 500 there is genuinely ambiguous
-about whether the data landed.
+The 500 names the failure rather than returning an empty body. Sinks run in config order with
+no cross-store atomicity, so a run can legitimately have committed its Postgres rows and then
+failed writing a file — which is why the message quotes the sink's own error instead of a
+generic one. *Which* destinations completed is not in the body yet; read it back from the read
+API. An opaque 500 there is genuinely ambiguous about whether the data landed.
 
 ## Where results go
 
@@ -404,8 +406,8 @@ Three things do require an edit:
 1. **A new endpoint.** Add it inside `create_control_app` with a pydantic response model.
    The model is the schema, so regenerate the dashboard's client afterwards.
 2. **A new kind of parameter metadata.** Add a field to `ParamInfo` and fill it in
-   `params_of`. Keep it one field per fact: `choices` deliberately serves two sources rather
-   than existing twice.
+   `describe_params`, which is where both catalogues' params are built. Keep it one field per
+   fact: `choices` deliberately serves two sources rather than existing twice.
 3. **A new resource a sink needs.** Add a field to `SinkResources` and wire it in
    `create_control_app`, where the deployment's handles are assembled.
 
