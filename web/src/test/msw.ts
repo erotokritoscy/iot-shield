@@ -91,9 +91,55 @@ export const authAbsentHandlers: RequestHandler[] = [
   http.all(`${PIPELINE}/auth/*`, () => HttpResponse.json({ detail: "Not Found" }, { status: 404 })),
 ];
 
+/**
+ * The Compose wizard's sample library (`/samples/`, static files beside the bundle). A small
+ * stand-in for `scripts/make_sample_data.py`'s output: one telemetry sample, one syslog sample,
+ * and one scenario over the first.
+ */
+export const SAMPLES = "http://localhost/samples";
+export const SAMPLE_CSV = "2026-08-03T09:00:00+00:00,pump-01,Temperature,91.0\n";
+export const SAMPLE_SYSLOG = "<38>1 2026-08-03T09:00:00Z gw sshd 1 - - Failed password for root\n";
+export const sampleManifest = {
+  samples: [
+    {
+      id: "pump_telemetry",
+      file: "pump_telemetry.csv",
+      title: "Overheating pump — telemetry",
+      description: "pump-01 climbs above 80 °C.",
+      normalizer: "stub",
+      source_format: "stub-csv",
+    },
+    {
+      id: "bruteforce_syslog",
+      file: "bruteforce_syslog.log",
+      title: "SSH brute force — syslog",
+      description: "Failed root passwords.",
+      normalizer: "syslog",
+      source_format: "syslog",
+    },
+  ],
+  scenarios: [
+    {
+      id: "overheating_pump",
+      title: "Overheating pump",
+      description: "A telemetry threshold.",
+      samples: ["pump_telemetry"],
+      detectors: [{ name: "stub_threshold", params: {} }],
+      alert_engine: { name: "weighted", params: { bucket_minutes: 5 } },
+      expected: { events: 1, malformed: 0, detections: 1, alerts: 1 },
+    },
+  ],
+};
+export const sampleHandlers: RequestHandler[] = [
+  http.get(`${SAMPLES}/manifest.json`, () => HttpResponse.json(sampleManifest)),
+  http.get(`${SAMPLES}/pump_telemetry.csv`, () => HttpResponse.text(SAMPLE_CSV)),
+  http.get(`${SAMPLES}/bruteforce_syslog.log`, () => HttpResponse.text(SAMPLE_SYSLOG)),
+];
+
 export const server = setupServer(
   ...seededHandlers,
   ...pipelineHandlers,
   ...evalAbsentHandlers,
   ...authAbsentHandlers,
+  ...sampleHandlers,
 );

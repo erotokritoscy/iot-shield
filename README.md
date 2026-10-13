@@ -199,10 +199,13 @@ docker compose run --rm runner python -m iotshield.auth.superadmin create --user
 `IOTSHIELD_OPEN_REGISTRATION=0 docker compose up -d` closes public registration, leaving the super
 admin as the only way to create an organization.
 
-The database starts empty and is filled from the dashboard: open **Operate → Compose**, upload
-one or more of the files in `data/demo/`, pick the modules to run, and the results appear under
-**Monitor → Triage**. Inputs are uploaded from the browser rather than read from a path on the
-server, so nothing about this flow requires a shell.
+Data is added from the dashboard: **Operate → Compose & run** is a four-step wizard (data,
+detection, alerts & output, review & run). The quickest test is a **scenario** on its first step —
+compromised camera, port scan, SSH brute force, overheating pump, a quiet control that must find
+nothing, and broken input — which fills every step with sample data and the right detectors; Review
+shows what it is tested to produce. Or pick a sample file per source, or upload your own. Results
+appear under **Monitor → Triage**. The samples live in `data/samples/` (and are served to the
+dashboard from `web/public/samples/`); `uv run python scripts/make_sample_data.py` rebuilds them.
 
 Those inputs are committed, so a fresh checkout already has them and Docker is the only
 prerequisite. `uv run python scripts/make_demo_data.py` rebuilds them from the scenario declared

@@ -1,0 +1,6 @@
+<38>1 2026-08-03T09:00:30Z 10.0.0.11 sshd 4402 - - Accepted publickey for admin from 10.0.0.4 port 51990 ssh2
+<38>1 2026-08-03T09:01:30Z 10.0.0.31 sensord 640 - - calibration check passed
+<38>1 2026-08-03T09:04:00Z 10.0.0.11 cron 5511 - - session opened for user root
+<38>1 2026-08-03T09:06:40Z 10.0.0.31 sensord 640 - - heartbeat ok
+<38>1 2026-08-03T09:11:40Z 10.0.0.11 ntpd 301 - - synchronized to 10.0.0.5, stratum 2
+<38>1 2026-08-03T09:15:00Z 10.0.0.31 sensord 640 - - heartbeat ok

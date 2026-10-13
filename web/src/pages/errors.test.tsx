@@ -6,6 +6,7 @@
  * one, the command that fixes it.
  */
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -114,6 +115,9 @@ describe("API failures", () => {
     // must be able to fix a broken read plane by running a pipeline into it.
     server.use(http.get(`${API}/health`, () => HttpResponse.error()));
     renderApp("/compose");
+    // The wizard renders and the chain can be built and checked to the end.
+    await userEvent.type(await screen.findByTestId("src_0_text"), "2026-07-07T12:00:00+00:00,p,T,1");
+    await userEvent.click(screen.getByTestId("step_4"));
     expect(await screen.findByText("Chain is compatible.")).toBeInTheDocument();
     expect(screen.queryByText("Read API unreachable")).not.toBeInTheDocument();
   });

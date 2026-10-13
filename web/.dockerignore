@@ -3,3 +3,5 @@ dist
 coverage
 .vite
 *.log
+# ...but the Compose wizard's sample inputs ARE logs, and must reach the image.
+!public/samples/*.log

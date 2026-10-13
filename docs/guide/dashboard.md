@@ -263,8 +263,35 @@ unmarked cap reads as a contradiction the operator has to resolve alone.
 
 ## Operate: Compose & run
 
-Five sections: sources, detectors, alert engine, sinks, then validate and run. It is the write plane,
-so it is also the only page in the app that changes anything.
+A four-step **wizard**: *Data → Detection → Alerts & output → Review & run*. It is the write plane,
+so it is also the only page in the app that changes anything. The wizard changes how the choices are
+presented, never what is sent: all state lives once in `ComposePage.tsx`, `pages/compose/model.ts:
+buildSpec` turns it into the same `PipelineSpec` the single-page form sent, and the same validation
+and receipt follow. The current step rides in the URL (`?step=`), clamped to the first step whose
+prerequisites are unmet; **Next** is disabled with the reason beside it (a source with no content,
+no detector or an untrained one, no sink), and the stepper only lets you jump to reachable steps.
+Detectors your sources can feed are listed first, and one nothing feeds is labelled so — offered,
+not hidden, because a deliberately silent run is still a real measurement (ADR-0038 D1).
+
+**Samples and scenarios.** `uv run python scripts/make_sample_data.py` writes a small library of
+inputs to `web/public/samples/` (served at `/samples/` beside the bundle — static files, so no new
+endpoint) and an identical copy to `data/samples/` for the CLI, plus `manifest.json`. Every source
+card offers *Use a sample file*, which sets the sample's normalizer, format, content and filename
+together. Step 1 also offers **scenarios** that fill every step and land on Review, which then shows
+what the scenario is *tested* to produce and, after the run, whether it did — but only while the
+spec and inputs are still exactly the scenario's; change anything and the promise is withdrawn.
+
+| Scenario | Inputs | Expected |
+|---|---|---|
+| Compromised camera | the three `data/demo/` files | 110 events, 2 malformed, 8 detections, 2 alerts |
+| Port scan | `portscan_flow.log` | 1 detection (`flow_burst:port_scan`), 1 alert |
+| SSH brute force | `bruteforce_syslog.log` | 1 detection (`log_burst:auth_failure`), 1 alert |
+| Overheating pump | `pump_telemetry.csv` | 4 detections (`stub_threshold`), 1 alert |
+| Quiet network (control) | three quiet files, every detector on | 0 detections — any is a false alarm |
+| Broken input | `broken_syslog.log` | 6 events, 4 malformed (see Data health) |
+
+Those numbers are not captions: `tests/test_sample_data.py` runs every scenario through the real
+pipeline and asserts them, and holds both copies of the files to what the generator writes.
 
 **Live chain validation.** The assembled spec is sent to `/runs/validate` on every change, debounced
 350 ms, and the guard's issues render inline as errors or warnings with the stage that raised them.
