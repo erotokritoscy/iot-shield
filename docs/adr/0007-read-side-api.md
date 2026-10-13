@@ -34,3 +34,10 @@ database through an API.
 - Repository gained `get_alert_by_id`, `get_detections_by_ids`, `count_summary`.
 - Auth is out of scope per the internship plan; the API must not be exposed
   beyond the compose network in this form.
+
+## Amendment (2026-10-13)
+
+"Auth is out of scope" no longer holds. ADR-0039 adds organizations, users and a session login
+enforced by this API itself (every route but `/health` answers 401 without a session when
+`IOTSHIELD_AUTH` is set), and scopes every query to the caller's organization. The API is still
+read-only: it resolves sessions but never writes them.

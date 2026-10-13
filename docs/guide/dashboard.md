@@ -44,7 +44,16 @@ Monitor browses what the pipeline produced. Operate composes a chain and trigger
 and the sidebar is the first place a new operator meets it.
 
 The routes are flat, one per view: `/`, `/assets`, `/data-health`, `/compose`, `/evaluate`, with
-anything else redirecting to Triage.
+anything else redirecting to Triage. When the deployment requires login, a fourth group,
+**Organization**, holds `/account` (everyone) and `/users` (admins), and `/login` and `/register`
+sit outside the shell. A **super admin** (ADR-0040) with no home organization gets a different sidebar altogether —
+*Platform → Organizations, Account* — because they see no organization's data: `TenantOnly`
+redirects every data page to `/admin/organizations`. One *with* a home (the seeded
+`admin@admin.com`, at home in UCY) gets the normal pages for that organization plus a Platform
+group. `SuperAdminOnly` sends anyone else away from `/admin/*`, and the organization page
+disables suspend/delete on the viewer's own home and shows super admins without role, reset or
+remove controls. The organization page holds status (suspend/reactivate), users (role, reset
+password, remove, add) and a delete that stays disabled until the organization's id is typed.
 
 ## Same origin, so no CORS anywhere
 
@@ -172,6 +181,29 @@ One flag now decides that plane end to end.
 A detail worth copying if you add a probed feature: while the probe is in flight the sidebar renders
 a fixed-height blank in the group's place. Branching on `loading` renders nothing either way, and
 then the sidebar grows under the cursor when the answer lands.
+
+## Login is probed for too
+
+The same pattern decides whether there is a login (ADR-0039). `lib/auth.tsx` asks
+`GET /pipeline/auth/me` once and reads the answer as a state, not an error:
+
+- **404**: the `/auth` router is absent (`IOTSHIELD_AUTH` unset). No login; every page is open and
+  the sidebar has no Organization group — the dashboard as it was before accounts.
+- **401**: login required, no session. `RequireAuth` sends the browser to `/login`, remembering
+  where it was going (only ever an in-app path — `safeRedirect`).
+- **200**: the user and their organization, shown at the foot of the sidebar with **Sign out**.
+- **unreachable**: let through. Monitor reads the read API, which enforces login itself, so a
+  needed login still surfaces as the first 401 — while a down Pipeline API does not lock the read
+  plane.
+
+A session can end while a page is open (expiry, or an admin removed the user), so `http.ts`
+reports any 401 from a non-`/auth` request to one handler, `SessionExpiryBridge`, which flips the
+state to logged-out. Signing in, signing out and that flip all **clear the query cache** first:
+queries are keyed by endpoint rather than by tenant, so a cache kept across users would show the
+next person the previous organization's alerts.
+
+The pages never see a token. The cookie is `HttpOnly`; the bundle only ever learns *whether* it is
+still good, by asking.
 
 ## Monitor
 

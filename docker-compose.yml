@@ -4,6 +4,17 @@
 #   docker compose up                 # postgres -> init -> APIs -> dashboard
 #   docker compose run --rm runner    # populate the DB with the walkthrough (config/demo.yaml)
 #
+# Login is ON in this stack (IOTSHIELD_AUTH, ADR-0039): open :8080, register an organization,
+# and the walkthrough's data goes into it by naming its id (shown on the Account page):
+#   IOTSHIELD_DEMO_ORG=acme-water docker compose run --rm runner
+#
+# The platform's super admin (ADR-0040) is created from the server, never the website. The
+# init step SEEDS the "UCY" organization, a super admin at home in it (admin@admin.com /
+# password unless overridden below) and the walkthrough's data into it — each only once, so
+# change that password on the Account page. More super admins, by hand:
+#   docker compose run --rm runner python -m iotshield.auth.superadmin create --username root
+# IOTSHIELD_OPEN_REGISTRATION=0 docker compose up -d   closes public registration.
+#
 # The dashboard is the React SPA on :8080 (`dashboard-web`), a pure client of
 # the same two APIs. The Streamlit app it replaced (ADR-0031) has been removed.
 #
@@ -31,6 +42,11 @@ x-app: &app
 x-db-env: &db-env
   IOTSHIELD_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-iotshield}:${POSTGRES_PASSWORD:-iotshield}@postgres:5432/${POSTGRES_DB:-iotshield}
 
+# Login and per-organization data (ADR-0039), on both APIs: each enforces it itself, because a
+# login page in front of an open API protects nothing. Off when unset (host runs, tests).
+x-auth-env: &auth-env
+  IOTSHIELD_AUTH: "1"
+
 services:
   postgres:
     image: postgres:16
@@ -49,9 +65,21 @@ services:
 
   init:
     <<: *app
-    command: ["python", "-m", "iotshield.storage.init"]
+    # Schema first, then the seed (create-only: anything that already exists is left alone).
+    command: ["sh", "-c", "python -m iotshield.storage.init && python -m iotshield.auth.seed"]
     environment:
       <<: *db-env
+      # A LOCAL-DEVELOPMENT default with well-known credentials — acceptable only because every
+      # port binds to 127.0.0.1. Override both in .env (or set them empty to seed nothing) for
+      # any stack another person can reach.
+      IOTSHIELD_SEED_SUPERADMIN_USERNAME: ${IOTSHIELD_SEED_SUPERADMIN_USERNAME-admin@admin.com}
+      IOTSHIELD_SEED_SUPERADMIN_PASSWORD: ${IOTSHIELD_SEED_SUPERADMIN_PASSWORD-password}
+      # The super admin's home organization (its id is the slug, "ucy"), and the walkthrough
+      # loaded into it while it has no events. Empty either to skip that step.
+      IOTSHIELD_SEED_ORGANIZATION: ${IOTSHIELD_SEED_ORGANIZATION-UCY}
+      IOTSHIELD_SEED_DEMO_CONFIG: ${IOTSHIELD_SEED_DEMO_CONFIG-config/demo.yaml}
+      # The demo config names a rule-detector shelf; same value the runner states.
+      IOTSHIELD_RULES_PATH: "/app/config/rules"
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,7 +89,7 @@ services:
     <<: *app
     command: ["python", "-m", "iotshield.api"]
     environment:
-      <<: *db-env
+      <<: [*db-env, *auth-env]
       IOTSHIELD_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
       IOTSHIELD_API_PORT: "8000"
     ports:
@@ -82,8 +110,11 @@ services:
     <<: *app
     command: ["python", "-m", "iotshield.api.control"]
     environment:
-      <<: *db-env
+      <<: [*db-env, *auth-env]
       IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
+      # Whether anyone may register an organization (ADR-0040). On by default; set it to 0 in
+      # the shell or .env and only the super admin can create organizations.
+      IOTSHIELD_OPEN_REGISTRATION: ${IOTSHIELD_OPEN_REGISTRATION:-1}
       IOTSHIELD_PIPELINE_API_PORT: "8100"
       # File-sink output dir (ADR-0018): bind-mounted to the host below, so a file-sink
       # run's JSONL is visible on the host and survives container recreation. A
@@ -155,6 +186,10 @@ services:
       # config/demo.yaml carries its own source paths, so no --input. Override the whole
       # command to point the runner at other data (the service has no entrypoint).
       - --config=config/demo.yaml
+      # Which organization the results belong to (ADR-0039). The runner is a trusted writer
+      # with direct DB access, so it takes the id as given (creating the org if absent) —
+      # name the one you registered, or the data lands in an org nobody can log into.
+      - --org=${IOTSHIELD_DEMO_ORG:-default}
     environment:
       <<: *db-env
       # Stated rather than left to the repo-shaped default. The default would in fact resolve

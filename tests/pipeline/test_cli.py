@@ -63,3 +63,24 @@ def test_invalid_yaml_exits_two_with_message(
     input_path, config_path = write_files(tmp_path, config_text="database_url: [unclosed\n")
     assert main(["--input", str(input_path), "--config", str(config_path)]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_org_flag_stores_the_run_under_that_organization(tmp_path: Path) -> None:
+    from iotshield.storage import make_engine, make_session_factory, repository
+
+    input_path, config_path = write_files(tmp_path)
+    args = ["--input", str(input_path), "--config", str(config_path)]
+    assert main([*args, "--org", "Acme Water"]) == 0  # a name is slugified, as on register
+    engine = make_engine(f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    with make_session_factory(engine)() as session:
+        assert len(repository.get_alerts(session, org_id="acme-water")) == 1
+        assert len(repository.get_alerts(session, org_id="default")) == 0
+    engine.dispose()
+
+
+def test_an_org_with_no_usable_name_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_path, config_path = write_files(tmp_path)
+    assert main(["--input", str(input_path), "--config", str(config_path), "--org", "!!"]) == 2
+    assert "letter or digit" in capsys.readouterr().err

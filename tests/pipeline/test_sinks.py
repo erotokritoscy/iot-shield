@@ -64,3 +64,11 @@ def test_file_sink_honors_raw_path_without_output_dir(tmp_path: Path) -> None:
 def test_postgres_sink_requires_a_session_factory() -> None:
     with pytest.raises(ValueError, match="requires a database"):
         build_postgres(SinkResources())
+
+
+def test_file_sink_writes_under_the_runs_organization(tmp_path: Path) -> None:
+    # One tenant's exports never land beside another's (ADR-0039).
+    base = tmp_path / "results"
+    build_file(SinkResources(output_dir=base, org_id="acme"), path="out.jsonl").write(_result())
+    assert (base / "acme" / "out.jsonl").exists()
+    assert not (base / "out.jsonl").exists()

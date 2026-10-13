@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from iotshield.api.control import create_control_app
 from iotshield.detect.rules.loader import RULES_PATH_ENV
-from iotshield.storage import create_schema, make_engine, make_session_factory, repository
+from iotshield.storage import (
+    DEFAULT_ORG_ID,
+    create_schema,
+    make_engine,
+    make_session_factory,
+    repository,
+)
 
 STUB_CSV = (
     "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0\n"
@@ -35,7 +41,7 @@ class ControlHarness:
 def control(tmp_path: Path) -> Iterator[ControlHarness]:
     engine = make_engine(f"sqlite:///{(tmp_path / 'control.db').as_posix()}")
     create_schema(engine)  # init owns the schema; the write API assumes it exists
-    app = create_control_app(engine)
+    app = create_control_app(engine, auth=False)
     with TestClient(app) as client:
         yield ControlHarness(client=client, session_factory=make_session_factory(engine))
     engine.dispose()
@@ -159,8 +165,8 @@ class TestRuns:
         assert body["alerts"] >= 1 and body["top_alerts"]
         # results actually landed in the database (the read API would serve these)
         with control.session_factory() as session:
-            assert len(repository.get_events(session)) == 3
-            assert len(repository.get_alerts(session)) == body["alerts"]
+            assert len(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == 3
+            assert len(repository.get_alerts(session, org_id=DEFAULT_ORG_ID)) == body["alerts"]
 
     def test_mixed_modality_run_pools_two_sources(self, control: ControlHarness) -> None:
         # One request, two sources of different formats: a telemetry CSV + a syslog line,
@@ -250,7 +256,7 @@ class TestRuns:
         bad = spec(detectors=[{"name": "log_burst", "params": {"min_count": 1}}])
         control.client.post("/runs", json={"spec": bad, "inputs": [{"content": STUB_CSV}]})
         with control.session_factory() as session:
-            assert list(repository.get_events(session)) == []
+            assert list(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == []
 
     def test_incompatible_format_is_422_with_issues(self, control: ControlHarness) -> None:
         response = control.client.post(

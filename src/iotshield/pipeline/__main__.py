@@ -8,6 +8,8 @@ from pydantic import ValidationError
 
 from iotshield.pipeline.config import load_config
 from iotshield.pipeline.runner import run_pipeline
+from iotshield.storage import DEFAULT_ORG_ID
+from iotshield.storage.accounts import slugify
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,11 +24,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Input file for a single-source config; multi-source configs name a path per source",
     )
     parser.add_argument("--config", required=True, type=Path, help="Pipeline YAML config")
+    parser.add_argument(
+        "--org",
+        default=DEFAULT_ORG_ID,
+        help=(
+            "Organization id the results are stored under (ADR-0039): the slug shown on the "
+            f"dashboard's Users page. Created if absent. Default: {DEFAULT_ORG_ID!r}"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
         config = load_config(args.config)
-        report = run_pipeline(config, args.input)
+        org_id = slugify(args.org)
+        report = run_pipeline(config, args.input, org_id=org_id)
     except (ValidationError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

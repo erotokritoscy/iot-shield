@@ -35,6 +35,18 @@ There is deliberately **no CORS**. The dashboard's nginx proxies to this service
 server-to-server, so no browser cross-origin request ever happens in this architecture and
 adding CORS headers would only widen what can reach it.
 
+## Login, and whose data you see
+
+With `IOTSHIELD_AUTH` set (the compose stack sets it), every endpoint except `/health` answers
+**401** unless the request carries a valid session cookie, and every answer is scoped to the
+caller's **organization** (ADR-0039). This service only *checks* sessions; logging in happens on
+the Pipeline API (`POST /auth/login`), and because both sit behind one origin the same cookie
+works on both. Another organization's alert by id is a **404**, exactly like an id that never
+existed, so the API never confirms what another tenant has.
+
+Unset, there is no login and one tenant, `default` — every request reads it. That is how tests
+and host runs work.
+
 ## The endpoints
 
 | | Returns | Filters |
@@ -51,6 +63,9 @@ adding CORS headers would only widen what can reach it.
 
 Every paged list endpoint takes `limit` (1 to 10,000, default 1000) and `offset`. `/assets` is
 the exception noted above: an inventory is a lookup table, so it comes back whole.
+
+Every route below `/health` answers only with the caller's organization's rows; `/assets`
+included, and `/summary`'s counts are that organization's counts.
 
 `/health` runs an actual query rather than returning a constant, so it answers "can this
 process serve requests?" rather than "is this process alive?". A container whose database

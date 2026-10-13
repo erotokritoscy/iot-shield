@@ -6,7 +6,7 @@ Two kinds, answering two different questions.
 extend this repo after handover. They describe the system as it is today, and they are meant to
 be kept current: if you change behaviour, the guide covering it is part of the change.
 
-**`adr/` answers "why is X like this".** Thirty-eight architecture decision records, numbered
+**`adr/` answers "why is X like this".** Forty architecture decision records, numbered
 and append-only. An ADR is a record of a decision at the moment it was made, including the
 options rejected and what they would have cost. They are not maintained as a description of the
 current system, and they are deliberately not edited when the world moves on. A decision that is

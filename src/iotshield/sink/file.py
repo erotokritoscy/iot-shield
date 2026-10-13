@@ -6,7 +6,9 @@ ingest. One self-contained JSON object per run (metadata + all payload arrays), 
 through the contracts' own pydantic JSON dump (timestamps -> ISO-8601, UUIDs -> str), so
 there is no bespoke serialization to drift from the contracts. When an ``output_dir`` is
 provided (server deployments), only the filename component of ``path`` is used, under that
-directory — so a caller-supplied path can never escape onto arbitrary server paths.
+directory — so a caller-supplied path can never escape onto arbitrary server paths. When the
+run also names an organization (ADR-0039), that directory is ``<output_dir>/<org_id>/``, so one
+tenant's exports never land beside another's.
 """
 
 import json
@@ -54,10 +56,14 @@ def build(resources: SinkResources, path: str = _DEFAULT_FILENAME) -> FileSink:
                 f"sink path {path!r} does not name a file; give a plain filename"
                 f" (it is written under the server's configured output directory)"
             )
-        target = resources.output_dir / filename
+        # The org id is a slug (`accounts.slugify`), so it is a safe single path component.
+        base = resources.output_dir
+        if resources.org_id is not None:
+            base = base / resources.org_id
+        target = base / filename
         # The docstring's promise as a checked property rather than a claim about the edge
         # cases of Path.name — cheap, and it cannot rot if that parsing ever changes.
-        if not target.resolve().is_relative_to(resources.output_dir.resolve()):
+        if not target.resolve().is_relative_to(base.resolve()):
             raise ValueError(f"sink path {path!r} resolves outside the output directory")
         return FileSink(target)
     # No configured base (host/CLI run): honor the path as given.

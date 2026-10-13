@@ -17,13 +17,20 @@ import {
   eventsSchema,
   healthSchema,
   malformedListSchema,
+  authOptionsSchema,
+  meSchema,
   modulesSchema,
+  noContentSchema,
+  organizationAdminInfoSchema,
+  organizationsAdminSchema,
   runSchema,
   summarySchema,
+  userInfoSchema,
+  usersSchema,
   validateSchema,
   type EvalReport,
 } from "./schemas";
-import type { Lane } from "./types";
+import type { Lane, OrgRole } from "./types";
 
 const EVENT_LIMIT = 5000;
 const DETECTION_LIMIT = 5000;
@@ -183,6 +190,122 @@ export const pipelineApi = {
       method: "POST",
       body: request,
     }),
+};
+
+/**
+ * The account routes (ADR-0039), on the Pipeline API — the plane that writes.
+ *
+ * Mounted only when the deployment sets IOTSHIELD_AUTH, absent otherwise, exactly like the
+ * eval router: `me()` answering 404 is how the dashboard learns there is no login here.
+ */
+export const authApi = {
+  me: () => apiRequest(PIPELINE_BASE, "/auth/me", { schema: meSchema }),
+
+  /** Public: whether to offer registration (IOTSHIELD_OPEN_REGISTRATION, ADR-0040). */
+  options: () => apiRequest(PIPELINE_BASE, "/auth/options", { schema: authOptionsSchema }),
+
+  login: (username: string, password: string) =>
+    apiRequest(PIPELINE_BASE, "/auth/login", {
+      schema: meSchema,
+      method: "POST",
+      body: { username, password },
+    }),
+
+  register: (organization: string, username: string, password: string) =>
+    apiRequest(PIPELINE_BASE, "/auth/register", {
+      schema: meSchema,
+      method: "POST",
+      body: { organization, username, password },
+    }),
+
+  logout: () =>
+    apiRequest(PIPELINE_BASE, "/auth/logout", { schema: noContentSchema, method: "POST" }),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiRequest(PIPELINE_BASE, "/auth/password", {
+      schema: noContentSchema,
+      method: "POST",
+      body: { current_password: currentPassword, new_password: newPassword },
+    }),
+
+  users: () => apiRequest(PIPELINE_BASE, "/auth/users", { schema: usersSchema }),
+
+  addUser: (username: string, password: string, role: OrgRole) =>
+    apiRequest(PIPELINE_BASE, "/auth/users", {
+      schema: userInfoSchema,
+      method: "POST",
+      body: { username, password, role },
+    }),
+
+  removeUser: (userId: string) =>
+    apiRequest(PIPELINE_BASE, `/auth/users/${encodeURIComponent(userId)}`, {
+      schema: noContentSchema,
+      method: "DELETE",
+    }),
+};
+
+const orgPath = (orgId: string) => `/admin/organizations/${encodeURIComponent(orgId)}`;
+const userPath = (orgId: string, userId: string) =>
+  `${orgPath(orgId)}/users/${encodeURIComponent(userId)}`;
+
+/**
+ * The super admin's routes (ADR-0040). Every one answers 403 to anybody else, so the pages
+ * that call these are only ever rendered for a super admin.
+ */
+export const adminApi = {
+  organizations: () =>
+    apiRequest(PIPELINE_BASE, "/admin/organizations", { schema: organizationsAdminSchema }),
+
+  organization: (orgId: string) =>
+    apiRequest(PIPELINE_BASE, orgPath(orgId), { schema: organizationAdminInfoSchema }),
+
+  createOrganization: (organization: string, username: string, password: string) =>
+    apiRequest(PIPELINE_BASE, "/admin/organizations", {
+      schema: organizationAdminInfoSchema,
+      method: "POST",
+      body: { organization, username, password },
+    }),
+
+  setSuspended: (orgId: string, suspended: boolean) =>
+    apiRequest(PIPELINE_BASE, `${orgPath(orgId)}/${suspended ? "suspend" : "reactivate"}`, {
+      schema: organizationAdminInfoSchema,
+      method: "POST",
+    }),
+
+  /** Irreversible. `confirm` must repeat the id; the server checks it too. */
+  deleteOrganization: (orgId: string, confirm: string) =>
+    apiRequest(PIPELINE_BASE, orgPath(orgId), {
+      schema: noContentSchema,
+      method: "DELETE",
+      query: { confirm },
+    }),
+
+  users: (orgId: string) =>
+    apiRequest(PIPELINE_BASE, `${orgPath(orgId)}/users`, { schema: usersSchema }),
+
+  addUser: (orgId: string, username: string, password: string, role: OrgRole) =>
+    apiRequest(PIPELINE_BASE, `${orgPath(orgId)}/users`, {
+      schema: userInfoSchema,
+      method: "POST",
+      body: { username, password, role },
+    }),
+
+  setRole: (orgId: string, userId: string, role: OrgRole) =>
+    apiRequest(PIPELINE_BASE, userPath(orgId, userId), {
+      schema: userInfoSchema,
+      method: "PATCH",
+      body: { role },
+    }),
+
+  resetPassword: (orgId: string, userId: string, password: string) =>
+    apiRequest(PIPELINE_BASE, `${userPath(orgId, userId)}/password`, {
+      schema: noContentSchema,
+      method: "POST",
+      body: { password },
+    }),
+
+  removeUser: (orgId: string, userId: string) =>
+    apiRequest(PIPELINE_BASE, userPath(orgId, userId), { schema: noContentSchema, method: "DELETE" }),
 };
 
 /**

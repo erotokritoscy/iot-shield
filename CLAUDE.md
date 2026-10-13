@@ -348,7 +348,38 @@ detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8080)
 docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
+IOTSHIELD_DEMO_ORG=<org-id> docker compose run --rm runner   # the walkthrough, into YOUR org
 ```
+
+**Login and organizations (ADR-0039).** `IOTSHIELD_AUTH` (compose sets it; off when unset) turns
+on a session login enforced by **both APIs**, not just the dashboard — an app-level dependency
+(`api/_auth.py`) makes every route default-deny except `/health` and the login routes, and
+`tests/api/test_auth.py` enumerates every route to hold that. Organizations register themselves;
+an org's admins add its users (two roles, admin/member). **Every data row carries `org_id`** and
+every repository function takes it as a *required* keyword, so a query that forgot its tenant is a
+`TypeError`, not another org's alerts; an asset is keyed `(org_id, asset_id)`. The tenant is a
+storage fact, not a contract field: the pipeline computes a run without knowing whose it is, and
+`SinkResources.org_id` — set from the session, or the CLI's `--org` — stamps it on the way in. With
+auth off everything is the single `default` org, as before. **The schema changed with no
+migrations**: an old database needs `docker compose down -v`.
+
+**The super admin (ADR-0040)** manages every org under `/admin` — create, suspend,
+delete-with-all-data (`?confirm=<org_id>`, server-checked), and any org's users. It **may have a
+home organization** (check constraint: `role = 'superadmin' OR org_id IS NOT NULL`): with one it
+sees that org's data like its admin; with none, `AccountDep` (the tenant dependency every data
+route needs) answers it 403. Either way it never sees *another* org's data, on routes not yet
+written too. A super admin's home org cannot be suspended or deleted, and no org route may
+remove, demote or re-key a super admin (`ProtectedAccount`) — the platform must not be able to
+lock itself out. `PrincipalDep` is "anyone logged in"
+(`/auth/me`, `/auth/password`), `SuperAdminDep` guards `/admin`. Created only from the server:
+`docker compose run --rm runner python -m iotshield.auth.superadmin create --username root` —
+there is deliberately no route that can mint one. Compose's `init` step also **seeds**
+(`python -m iotshield.auth.seed`): the `UCY` org (`IOTSHIELD_SEED_ORGANIZATION`), a super admin at
+home in it (`IOTSHIELD_SEED_SUPERADMIN_USERNAME`/`_PASSWORD`, compose-only defaults
+`admin@admin.com` / `password`), and `config/demo.yaml` run into UCY while it has no events
+(`IOTSHIELD_SEED_DEMO_CONFIG`). All create-only, so a changed password survives restarts and the
+demo loads once; unset, nothing is seeded. `IOTSHIELD_OPEN_REGISTRATION=0` closes public
+registration (`/auth/options` tells the login page).
 
 The DB location is injected via `IOTSHIELD_DATABASE_URL` (compose → Postgres),
 which overrides the config file's `database_url` (ADR-0010); the config file
@@ -563,9 +594,13 @@ src/iotshield/
                 model.py (the rule language), loader.py, library/ (the packaged rule set)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
-  storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests)
+  storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests); accounts.py = orgs/users/sessions
+  auth/         passwords.py (stdlib scrypt), superadmin.py (the CLI that creates super admins) —
+                the access-control layer the pipeline never sees (ADR-0039/0040)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
-  api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py)
+  api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py);
+                _auth.py = the login gate both share, auth.py = the /auth router, admin.py = the
+                super admin's /admin router (both Pipeline API only)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)

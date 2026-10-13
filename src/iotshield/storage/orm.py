@@ -5,13 +5,32 @@ Contracts stay persistence-ignorant; each table carries ``from_contract`` /
 (ADR-0005). Enums are stored as their wire-format strings — the contracts, not
 the database, police vocabulary. ``metadata`` columns are mapped to ``metadata_``
 attributes because SQLAlchemy reserves the ``metadata`` name.
+
+Every data row also carries ``org_id``, the organization it belongs to (ADR-0039). It is a
+*storage* fact, not a contract field: the pipeline computes a run without knowing whose it
+is, and the store stamps the tenant on the way in. So ``from_contract`` takes it as an
+argument and ``to_contract`` drops it — the projection stays lossless for the contract,
+and no adapter can see, forge or forget a tenant. An asset is keyed by ``(org_id,
+asset_id)`` because two organizations may each own a device called ``10.0.0.24``.
+
+The account tables (organizations, users, sessions) are not projections of any contract:
+they are the access-control layer the pipeline never sees.
 """
 
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import DateTime, Dialect, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Dialect,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON, TypeDecorator
@@ -69,9 +88,66 @@ class Base(DeclarativeBase):
     }
 
 
+class OrganizationRow(Base):
+    """A tenant: every data row and every user belongs to exactly one (ADR-0039)."""
+
+    __tablename__ = "organizations"
+
+    org_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # URL-safe slug
+    name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime]
+    # Suspended by the super admin (ADR-0040): its users cannot log in, its data is kept.
+    suspended: Mapped[bool] = mapped_column(default=False)
+
+
+class UserRow(Base):
+    """A login. ``username`` is unique across organizations, so login needs no org field.
+
+    A **super admin** (ADR-0040) manages every organization. It *may* have a home
+    organization, whose data it then sees like that organization's admin (the ADR's second
+    amendment); with none it sees no organization's data. Every other user must belong to
+    one — the check constraint makes that an invariant of the table, not of the code.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "role = 'superadmin' OR org_id IS NOT NULL",
+            name="ck_users_org_required_unless_superadmin",
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)  # stored lowercased
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(20))  # "admin" | "member" | "superadmin"
+    created_at: Mapped[datetime]
+
+
+class SessionRow(Base):
+    """A login session. Only the token's SHA-256 is stored, so a DB leak yields no sessions."""
+
+    __tablename__ = "sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+
+
+def _asset_fk() -> ForeignKeyConstraint:
+    # Composite: a row may only name an asset of its OWN organization. A plain FK on
+    # asset_id alone would let org A's detection point at org B's device of the same id.
+    return ForeignKeyConstraint(["org_id", "asset_id"], ["assets.org_id", "assets.asset_id"])
+
+
 class AssetRow(Base):
     __tablename__ = "assets"
 
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), primary_key=True)
     asset_id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(Text)
     asset_type: Mapped[str] = mapped_column(Text)
@@ -80,8 +156,9 @@ class AssetRow(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
     @classmethod
-    def from_contract(cls, asset: Asset) -> "AssetRow":
+    def from_contract(cls, asset: Asset, *, org_id: str) -> "AssetRow":
         return cls(
+            org_id=org_id,
             asset_id=asset.asset_id,
             name=asset.name,
             asset_type=asset.asset_type,
@@ -91,7 +168,7 @@ class AssetRow(Base):
         )
 
     @staticmethod
-    def values_of(asset: Asset) -> dict[str, Any]:
+    def values_of(asset: Asset, *, org_id: str) -> dict[str, Any]:
         """Column values for a Core insert, keyed by ATTRIBUTE name.
 
         Needed because discovery inserts through Core (ON CONFLICT DO NOTHING) rather than
@@ -100,6 +177,7 @@ class AssetRow(Base):
         is taken on a declarative class, and Core wants the attribute key, not the column.
         """
         return {
+            "org_id": org_id,
             "asset_id": asset.asset_id,
             "name": asset.name,
             "asset_type": asset.asset_type,
@@ -122,13 +200,15 @@ class AssetRow(Base):
 class EventRow(Base):
     __tablename__ = "events"
     __table_args__ = (
-        Index("ix_events_asset_ts", "asset_id", "timestamp"),  # per-asset timeline
-        Index("ix_events_lane_ts", "source_type", "timestamp"),  # lane feeds
+        Index("ix_events_asset_ts", "org_id", "asset_id", "timestamp"),  # per-asset timeline
+        Index("ix_events_lane_ts", "org_id", "source_type", "timestamp"),  # lane feeds
+        _asset_fk(),
     )
 
     event_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(64))
     timestamp: Mapped[datetime]
-    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.asset_id"))
+    asset_id: Mapped[str] = mapped_column(String)
     source_type: Mapped[str] = mapped_column(String(20))
     source_format: Mapped[str] = mapped_column(Text)
     metric: Mapped[str | None] = mapped_column(Text)
@@ -139,9 +219,10 @@ class EventRow(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
     @classmethod
-    def from_contract(cls, event: NormalizedEvent) -> "EventRow":
+    def from_contract(cls, event: NormalizedEvent, *, org_id: str) -> "EventRow":
         return cls(
             event_id=event.event_id,
+            org_id=org_id,
             timestamp=event.timestamp,
             asset_id=event.asset_id,
             source_type=event.source_type.value,
@@ -172,8 +253,10 @@ class EventRow(Base):
 
 class MalformedRow(Base):
     __tablename__ = "malformed_records"
+    __table_args__ = (Index("ix_malformed_org_created", "org_id", "created_at"),)
 
     record_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"))
     raw: Mapped[str] = mapped_column(Text)
     error: Mapped[str] = mapped_column(Text)
     source_format: Mapped[str] = mapped_column(Text)
@@ -181,9 +264,10 @@ class MalformedRow(Base):
     created_at: Mapped[datetime]
 
     @classmethod
-    def from_contract(cls, record: MalformedRecord) -> "MalformedRow":
+    def from_contract(cls, record: MalformedRecord, *, org_id: str) -> "MalformedRow":
         return cls(
             record_id=record.record_id,
+            org_id=org_id,
             raw=record.raw,
             error=record.error,
             source_format=record.source_format,
@@ -205,11 +289,14 @@ class MalformedRow(Base):
 class DetectionRow(Base):
     __tablename__ = "detections"
     __table_args__ = (
-        Index("ix_detections_asset_ws", "asset_id", "window_start"),  # correlation + drill-down
+        # correlation + drill-down
+        Index("ix_detections_asset_ws", "org_id", "asset_id", "window_start"),
+        _asset_fk(),
     )
 
     detection_id: Mapped[UUID] = mapped_column(primary_key=True)
-    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.asset_id"))
+    org_id: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str] = mapped_column(String)
     window_start: Mapped[datetime]
     window_end: Mapped[datetime]
     lane: Mapped[str] = mapped_column(String(20))
@@ -221,9 +308,10 @@ class DetectionRow(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
     @classmethod
-    def from_contract(cls, detection: DetectionResult) -> "DetectionRow":
+    def from_contract(cls, detection: DetectionResult, *, org_id: str) -> "DetectionRow":
         return cls(
             detection_id=detection.detection_id,
+            org_id=org_id,
             asset_id=detection.asset_id,
             window_start=detection.window_start,
             window_end=detection.window_end,
@@ -266,12 +354,14 @@ class AlertDetectionRow(Base):
 class AlertRow(Base):
     __tablename__ = "alerts"
     __table_args__ = (
-        Index("ix_alerts_status_priority", "status", "priority_score"),  # triage queue
-        Index("ix_alerts_created_at", "created_at"),
+        Index("ix_alerts_status_priority", "org_id", "status", "priority_score"),  # triage
+        Index("ix_alerts_created_at", "org_id", "created_at"),
+        _asset_fk(),
     )
 
     alert_id: Mapped[UUID] = mapped_column(primary_key=True)
-    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.asset_id"))
+    org_id: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str] = mapped_column(String)
     window_start: Mapped[datetime]
     window_end: Mapped[datetime]
     severity: Mapped[str] = mapped_column(String(20))
@@ -289,9 +379,10 @@ class AlertRow(Base):
     )
 
     @classmethod
-    def from_contract(cls, alert: PrioritizedAlert) -> "AlertRow":
+    def from_contract(cls, alert: PrioritizedAlert, *, org_id: str) -> "AlertRow":
         return cls(
             alert_id=alert.alert_id,
+            org_id=org_id,
             asset_id=alert.asset_id,
             window_start=alert.window_start,
             window_end=alert.window_end,

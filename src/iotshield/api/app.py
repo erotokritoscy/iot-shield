@@ -8,6 +8,10 @@ Read-only v1: the pipeline runner is the only writer (ADR-0007).
 SQLite engine and drive the app with TestClient; production passes Postgres.
 No CORS on purpose — the dashboard calls the API server-to-server, so no
 browser cross-origin request ever occurs in this architecture.
+
+Every route except ``/health`` sits behind the login gate (``_auth.authenticate``, an
+app-level dependency), and every query is scoped to the caller's organization (ADR-0039).
+With ``IOTSHIELD_AUTH`` off the caller is the single default tenant, as before.
 """
 
 from collections.abc import Callable, Iterator
@@ -20,6 +24,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 import iotshield
+from iotshield.api._auth import AccountDep, auth_enabled, authenticate
 from iotshield.contracts import (
     AlertStatus,
     Asset,
@@ -93,8 +98,9 @@ def _get_session(request: Request) -> Iterator[Session]:
 SessionDep = Annotated[Session, Depends(_get_session)]
 
 
-def _require_alert(session: Session, alert_id: UUID) -> PrioritizedAlert:
-    alert = repository.get_alert_by_id(session, alert_id)
+def _require_alert(session: Session, alert_id: UUID, *, org_id: str) -> PrioritizedAlert:
+    # Another organization's alert is a 404 like any unknown id: a 403 would confirm it exists.
+    alert = repository.get_alert_by_id(session, alert_id, org_id=org_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="alert not found")
     return alert
@@ -107,12 +113,18 @@ class Summary(BaseModel):
     top_alert: PrioritizedAlert | None
 
 
-def create_app(engine: Engine) -> FastAPI:
+def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
+    """``auth`` overrides ``IOTSHIELD_AUTH`` (tests pass it; services read the env)."""
     # The API is read-only and never creates the schema: the compose init step
     # (iotshield.storage.init) owns it, and the pipeline runner creates it for
     # standalone use. create_app assumes the tables already exist (ADR-0010).
-    app = FastAPI(title="iotshield API", version=iotshield.__version__)
+    app = FastAPI(
+        title="iotshield API",
+        version=iotshield.__version__,
+        dependencies=[Depends(authenticate)],
+    )
     app.state.session_factory = make_session_factory(engine)
+    app.state.auth_enabled = auth_enabled() if auth is None else auth
 
     @app.get("/health")
     def health(session: SessionDep) -> dict[str, str]:
@@ -120,13 +132,14 @@ def create_app(engine: Engine) -> FastAPI:
         return {"status": "ok", "version": iotshield.__version__}
 
     @app.get("/assets")
-    def assets(session: SessionDep) -> list[Asset]:
-        return repository.list_assets(session)
+    def assets(session: SessionDep, account: AccountDep) -> list[Asset]:
+        return repository.list_assets(session, org_id=account.org_id)
 
     @app.get("/events")
     def events(
         response: Response,
         session: SessionDep,
+        account: AccountDep,
         asset_id: str | None = None,
         lane: Lane | None = None,
         start: TimeParam = None,
@@ -136,13 +149,21 @@ def create_app(engine: Engine) -> FastAPI:
     ) -> list[NormalizedEvent]:
         """Events oldest-first. `end` is a CLOSED bound (see the note on TimeParam)."""
         return _paged(response, repository.get_events)(
-            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit, offset=offset
+            session,
+            org_id=account.org_id,
+            asset_id=asset_id,
+            lane=lane,
+            start=start,
+            end=end,
+            limit=limit,
+            offset=offset,
         )
 
     @app.get("/detections")
     def detections(
         response: Response,
         session: SessionDep,
+        account: AccountDep,
         asset_id: str | None = None,
         lane: Lane | None = None,
         start: TimeParam = None,
@@ -152,13 +173,21 @@ def create_app(engine: Engine) -> FastAPI:
     ) -> list[DetectionResult]:
         """Detections oldest-first. `end` is HALF-OPEN, matched on `window_start`."""
         return _paged(response, repository.get_detections)(
-            session, asset_id=asset_id, lane=lane, start=start, end=end, limit=limit, offset=offset
+            session,
+            org_id=account.org_id,
+            asset_id=asset_id,
+            lane=lane,
+            start=start,
+            end=end,
+            limit=limit,
+            offset=offset,
         )
 
     @app.get("/alerts")
     def alerts(
         response: Response,
         session: SessionDep,
+        account: AccountDep,
         status: AlertStatus | None = None,
         asset_id: str | None = None,
         start: TimeParam = None,
@@ -169,6 +198,7 @@ def create_app(engine: Engine) -> FastAPI:
         """The ranked triage queue: priority descending. `end` is HALF-OPEN on window_start."""
         return _paged(response, repository.get_alerts)(
             session,
+            org_id=account.org_id,
             status=status,
             asset_id=asset_id,
             start=start,
@@ -178,30 +208,35 @@ def create_app(engine: Engine) -> FastAPI:
         )
 
     @app.get("/alerts/{alert_id}")
-    def alert_by_id(session: SessionDep, alert_id: UUID) -> PrioritizedAlert:
-        return _require_alert(session, alert_id)
+    def alert_by_id(session: SessionDep, account: AccountDep, alert_id: UUID) -> PrioritizedAlert:
+        return _require_alert(session, alert_id, org_id=account.org_id)
 
     @app.get("/alerts/{alert_id}/detections")
-    def alert_detections(session: SessionDep, alert_id: UUID) -> list[DetectionResult]:
+    def alert_detections(
+        session: SessionDep, account: AccountDep, alert_id: UUID
+    ) -> list[DetectionResult]:
         """Drill-down: the evidence behind one alert."""
-        alert = _require_alert(session, alert_id)
-        return repository.get_detections_by_ids(session, alert.detection_ids)
+        alert = _require_alert(session, alert_id, org_id=account.org_id)
+        return repository.get_detections_by_ids(session, alert.detection_ids, org_id=account.org_id)
 
     @app.get("/malformed")
     def malformed(
         response: Response,
         session: SessionDep,
+        account: AccountDep,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[MalformedRecord]:
         """The audit view: inputs that failed normalization (never dropped)."""
-        return _paged(response, repository.list_malformed)(session, limit=limit, offset=offset)
+        return _paged(response, repository.list_malformed)(
+            session, org_id=account.org_id, limit=limit, offset=offset
+        )
 
     @app.get("/summary")
-    def summary(session: SessionDep) -> Summary:
-        top = repository.get_alerts(session, limit=1)
+    def summary(session: SessionDep, account: AccountDep) -> Summary:
+        top = repository.get_alerts(session, org_id=account.org_id, limit=1)
         return Summary(
-            counts=repository.count_summary(session),
+            counts=repository.count_summary(session, org_id=account.org_id),
             top_alert=top.items[0] if top.items else None,
         )
 

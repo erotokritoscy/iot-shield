@@ -17,7 +17,7 @@ from iotshield.contracts import (
     NormalizedEvent,
     PrioritizedAlert,
 )
-from iotshield.storage import repository
+from iotshield.storage import DEFAULT_ORG_ID, repository
 from tests.api.conftest import ApiHarness
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -79,10 +79,12 @@ def seed_incident(api: ApiHarness) -> tuple[list[DetectionResult], PrioritizedAl
                     criticality=Criticality.HIGH,
                 )
             ],
+            org_id=DEFAULT_ORG_ID,
         )
         repository.insert_events(
             session,
             [event(offset_s=0), event(offset_s=30), event(asset_id="gw-01", lane=Lane.LOG)],
+            org_id=DEFAULT_ORG_ID,
         )
         repository.insert_malformed(
             session,
@@ -94,9 +96,10 @@ def seed_incident(api: ApiHarness) -> tuple[list[DetectionResult], PrioritizedAl
                     origin="test://seed",
                 )
             ],
+            org_id=DEFAULT_ORG_ID,
         )
-        repository.insert_detections(session, detections)
-        repository.insert_alerts(session, [stored_alert])
+        repository.insert_detections(session, detections, org_id=DEFAULT_ORG_ID)
+        repository.insert_alerts(session, [stored_alert], org_id=DEFAULT_ORG_ID)
     return detections, stored_alert
 
 
@@ -148,8 +151,10 @@ class TestReads:
         seed_incident(api)
         extra = detection(asset_id="gw-01", offset_s=7200)
         with api.session_factory() as session, session.begin():
-            repository.insert_detections(session, [extra])
-            repository.insert_alerts(session, [alert([extra], priority=95.0)])
+            repository.insert_detections(session, [extra], org_id=DEFAULT_ORG_ID)
+            repository.insert_alerts(
+                session, [alert([extra], priority=95.0)], org_id=DEFAULT_ORG_ID
+            )
         scores = [a["priority_score"] for a in api.client.get("/alerts").json()]
         assert scores == sorted(scores, reverse=True)
 

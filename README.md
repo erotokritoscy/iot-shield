@@ -173,6 +173,32 @@ docker compose up -d                          # postgres, both APIs, the dashboa
 | http://localhost:8000/docs | the read API |
 | http://localhost:8100/docs | the Pipeline API |
 
+**Sign in first.** The compose stack requires a login (ADR-0039): open the dashboard, choose
+**Register it**, and create your organization — you become its admin. Every organization sees only
+its own data. To let colleagues in, open **Organization → Users** and add them with a temporary
+password; they change it under **Account**. The APIs on :8000/:8100 enforce the same login, so
+`/docs` there is browsable but its calls answer 401 until the browser holds a session.
+
+**The platform's super admin** manages every organization — creates, suspends, deletes them and
+manages their users (ADR-0040). The compose stack **seeds on first start: the `UCY` organization,
+a super admin at home in it — `admin@admin.com` / `password` — and the walkthrough's data in
+UCY**. Signed in, that account sees UCY's data like UCY's admin and manages every organization,
+but sees no other organization's data. Those are well-known local-development credentials
+(every port binds to 127.0.0.1): change the password on the **Account** page, and set
+`IOTSHIELD_SEED_SUPERADMIN_USERNAME` / `IOTSHIELD_SEED_SUPERADMIN_PASSWORD` in `.env` for any stack
+someone else can reach (empty seeds nothing; `IOTSHIELD_SEED_ORGANIZATION=` seeds a super admin
+with no home, who sees no organization's data at all). The seed only ever creates — anything that
+exists is left untouched, so a changed password survives restarts and the demo loads once. UCY
+cannot be suspended or deleted while it is the super admin's home. More super admins, from the
+server:
+
+```
+docker compose run --rm runner python -m iotshield.auth.superadmin create --username root
+```
+
+`IOTSHIELD_OPEN_REGISTRATION=0 docker compose up -d` closes public registration, leaving the super
+admin as the only way to create an organization.
+
 The database starts empty and is filled from the dashboard: open **Operate → Compose**, upload
 one or more of the files in `data/demo/`, pick the modules to run, and the results appear under
 **Monitor → Triage**. Inputs are uploaded from the browser rather than read from a path on the
@@ -185,9 +211,14 @@ at the top of that script, which you need only if you change what the demo is me
 The same run without a browser, for a shell or a scheduler:
 
 ```
-docker compose run --rm runner                                    # into Postgres
+IOTSHIELD_DEMO_ORG=acme-water docker compose run --rm runner      # into Postgres, your org
 uv run python -m iotshield.pipeline --config config/demo.yaml     # into local SQLite
 ```
+
+`IOTSHIELD_DEMO_ORG` names the organization the results belong to: its id, shown on the
+**Account** page (`Acme Water` registers as `acme-water`). Left unset, the run lands in an
+organization called `default` that nobody can log into. Off the compose stack — no
+`IOTSHIELD_AUTH` — there is no login and everything is that one `default` organization.
 
 `config/demo.yaml` is the walkthrough as a pipeline config. It reads the same three files and
 produces the same queue, which is what keeps the CLI path honest about what the dashboard does.

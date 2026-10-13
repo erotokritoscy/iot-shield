@@ -82,4 +82,18 @@ export const evalAbsentHandlers: RequestHandler[] = [
   http.get(`${PIPELINE}/eval/*`, () => HttpResponse.json({ detail: "Not Found" }, { status: 404 })),
 ];
 
-export const server = setupServer(...seededHandlers, ...pipelineHandlers, ...evalAbsentHandlers);
+/**
+ * No login: the `/auth` router was never registered, so `/auth/me` is a 404 (ADR-0039). The
+ * default world, because it is what every existing test was written against — a deployment
+ * without `IOTSHIELD_AUTH`, where the dashboard behaves exactly as it did before accounts.
+ */
+export const authAbsentHandlers: RequestHandler[] = [
+  http.all(`${PIPELINE}/auth/*`, () => HttpResponse.json({ detail: "Not Found" }, { status: 404 })),
+];
+
+export const server = setupServer(
+  ...seededHandlers,
+  ...pipelineHandlers,
+  ...evalAbsentHandlers,
+  ...authAbsentHandlers,
+);

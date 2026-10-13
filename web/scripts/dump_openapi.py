@@ -7,6 +7,8 @@ a throwaway in-memory engine (that is the whole point of ``create_app(engine)``)
 ``IOTSHIELD_EVAL_API`` is set *before* the Pipeline API is built, because the ``/eval``
 router is registered at construction rather than consulted per request (ADR-0021 D1) — so
 without it the generated types would simply be missing the Evaluate mode's whole surface.
+Both apps are built with ``auth=True`` for the same reason: the ``/auth`` router exists only
+when login is on (ADR-0039), and the dashboard must be typed against the deployment that has it.
 
 Read-only with respect to ``src/``: it imports the apps, it never modifies them.
 """
@@ -28,8 +30,8 @@ def main() -> int:
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("web/src/lib/api/openapi")
     out.mkdir(parents=True, exist_ok=True)
     for name, app in (
-        ("read", create_app(create_engine("sqlite://"))),
-        ("pipeline", create_control_app(create_engine("sqlite://"))),
+        ("read", create_app(create_engine("sqlite://"), auth=True)),
+        ("pipeline", create_control_app(create_engine("sqlite://"), auth=True)),
     ):
         target = out / f"{name}.json"
         # newline="\n": write_text otherwise translates to os.linesep, so regenerating on

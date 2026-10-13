@@ -16,7 +16,7 @@ from iotshield.contracts import (
     NormalizedEvent,
     PrioritizedAlert,
 )
-from iotshield.storage import repository
+from iotshield.storage import DEFAULT_ORG_ID, repository
 from iotshield.storage.orm import AssetRow, DetectionRow, EventRow, MalformedRow
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -74,8 +74,11 @@ class TestEventQueries:
                 event(asset_id="pump-02", lane=Lane.LOG, offset_s=1),
                 event(asset_id="gw-01", lane=Lane.TELEMETRY, offset_s=2),
             ],
+            org_id=DEFAULT_ORG_ID,
         )
-        pump_telemetry = repository.get_events(session, asset_id="pump-02", lane=Lane.TELEMETRY)
+        pump_telemetry = repository.get_events(
+            session, asset_id="pump-02", lane=Lane.TELEMETRY, org_id=DEFAULT_ORG_ID
+        )
         assert [e.asset_id for e in pump_telemetry] == ["pump-02"]
         assert pump_telemetry[0].source_type == Lane.TELEMETRY
 
@@ -85,19 +88,27 @@ class TestEventQueries:
         # Closed [start, end], not half-open: the contract recovers a detection's evidence by
         # (asset, window_start..window_end), and a point anomaly is a zero-length window, so
         # the upper bound must be inclusive or it recovers nothing (models.py DetectionResult).
-        repository.insert_events(session, [event(offset_s=s) for s in (0, 10, 20)])
-        window = repository.get_events(session, start=T0, end=T0 + timedelta(seconds=20))
+        repository.insert_events(
+            session, [event(offset_s=s) for s in (0, 10, 20)], org_id=DEFAULT_ORG_ID
+        )
+        window = repository.get_events(
+            session, start=T0, end=T0 + timedelta(seconds=20), org_id=DEFAULT_ORG_ID
+        )
         assert [e.timestamp for e in window] == [
             T0,
             T0 + timedelta(seconds=10),
             T0 + timedelta(seconds=20),
         ]
-        point = repository.get_events(session, start=T0, end=T0)  # a zero-length window
+        point = repository.get_events(
+            session, start=T0, end=T0, org_id=DEFAULT_ORG_ID
+        )  # a zero-length window
         assert [e.timestamp for e in point] == [T0]
 
     def test_limit_returns_newest_rows_oldest_first(self, session: Session) -> None:
-        repository.insert_events(session, [event(offset_s=s) for s in (20, 0, 10)])
-        newest_two = repository.get_events(session, limit=2)
+        repository.insert_events(
+            session, [event(offset_s=s) for s in (20, 0, 10)], org_id=DEFAULT_ORG_ID
+        )
+        newest_two = repository.get_events(session, limit=2, org_id=DEFAULT_ORG_ID)
         # The LIMIT keeps the NEWEST rows (offsets 10, 20), not the oldest, and
         # returns them oldest-first for the timeline.
         assert [e.timestamp for e in newest_two] == [
@@ -111,14 +122,17 @@ class TestDetectionQueries:
         repository.insert_detections(
             session,
             [detection(offset_s=10), detection(offset_s=0), detection(asset_id="gw-01")],
+            org_id=DEFAULT_ORG_ID,
         )
-        pump = repository.get_detections(session, asset_id="pump-02")
+        pump = repository.get_detections(session, asset_id="pump-02", org_id=DEFAULT_ORG_ID)
         assert [d.window_start for d in pump] == [T0, T0 + timedelta(seconds=10)]
 
     def test_window_start_range_is_half_open(self, session: Session) -> None:
-        repository.insert_detections(session, [detection(offset_s=s) for s in (0, 10, 20)])
+        repository.insert_detections(
+            session, [detection(offset_s=s) for s in (0, 10, 20)], org_id=DEFAULT_ORG_ID
+        )
         window = repository.get_detections(
-            session, start=T0, end=T0 + timedelta(seconds=20)
+            session, start=T0, end=T0 + timedelta(seconds=20), org_id=DEFAULT_ORG_ID
         )  # [start, end)
         assert [d.window_start for d in window] == [T0, T0 + timedelta(seconds=10)]
 
@@ -126,7 +140,7 @@ class TestDetectionQueries:
 class TestAlertQueries:
     def test_ranked_by_priority_and_status_filter(self, session: Session) -> None:
         d1, d2, d3 = detection(offset_s=0), detection(offset_s=1), detection(offset_s=2)
-        repository.insert_detections(session, [d1, d2, d3])
+        repository.insert_detections(session, [d1, d2, d3], org_id=DEFAULT_ORG_ID)
         repository.insert_alerts(
             session,
             [
@@ -134,31 +148,34 @@ class TestAlertQueries:
                 alert([d2], priority=90.0),
                 alert([d3], priority=70.0, status=AlertStatus.CLOSED),
             ],
+            org_id=DEFAULT_ORG_ID,
         )
-        ranked = repository.get_alerts(session)
+        ranked = repository.get_alerts(session, org_id=DEFAULT_ORG_ID)
         assert [a.priority_score for a in ranked] == [90.0, 70.0, 40.0]
-        new_only = repository.get_alerts(session, status=AlertStatus.NEW)
+        new_only = repository.get_alerts(session, status=AlertStatus.NEW, org_id=DEFAULT_ORG_ID)
         assert [a.priority_score for a in new_only] == [90.0, 40.0]
 
     def test_junction_answers_both_directions(self, session: Session) -> None:
         d1, d2 = detection(offset_s=0), detection(offset_s=1)
-        repository.insert_detections(session, [d1, d2])
+        repository.insert_detections(session, [d1, d2], org_id=DEFAULT_ORG_ID)
         stored_alert = alert([d1, d2], priority=80.0)
-        repository.insert_alerts(session, [stored_alert])
+        repository.insert_alerts(session, [stored_alert], org_id=DEFAULT_ORG_ID)
 
         # Forward: alert -> its detections.
-        (restored,) = repository.get_alerts(session)
+        (restored,) = repository.get_alerts(session, org_id=DEFAULT_ORG_ID)
         assert set(restored.detection_ids) == {d1.detection_id, d2.detection_id}
         # Reverse: detection -> the alert that covers it.
-        (found,) = repository.get_alerts(session, detection_id=d2.detection_id)
+        (found,) = repository.get_alerts(
+            session, detection_id=d2.detection_id, org_id=DEFAULT_ORG_ID
+        )
         assert found.alert_id == stored_alert.alert_id
 
     def test_dangling_lineage_rejected_by_foreign_key(self, session: Session) -> None:
         d = detection()
-        repository.insert_detections(session, [d])
+        repository.insert_detections(session, [d], org_id=DEFAULT_ORG_ID)
         ghost = alert([d], priority=50.0).model_copy(update={"detection_ids": [uuid4()]})
         with pytest.raises(IntegrityError):
-            repository.insert_alerts(session, [ghost])
+            repository.insert_alerts(session, [ghost], org_id=DEFAULT_ORG_ID)
 
 
 def test_free_form_columns_have_no_length_cap() -> None:
@@ -181,6 +198,7 @@ def test_storage_boundary_rejects_naive_datetimes(session: Session) -> None:
     session.add(
         EventRow(
             event_id=uuid4(),
+            org_id=DEFAULT_ORG_ID,
             timestamp=datetime(2026, 7, 7, 12, 0, 0),  # naive on purpose
             asset_id="pump-02",
             source_type="telemetry",

@@ -22,7 +22,7 @@ from iotshield.contracts import (
     PrioritizedAlert,
     Severity,
 )
-from iotshield.storage import repository
+from iotshield.storage import DEFAULT_ORG_ID, repository
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -36,8 +36,8 @@ def test_asset_round_trip(session: Session) -> None:
         criticality=Criticality.HIGH,
         metadata={"vendor": "SKF", "commissioned": "2024-02-08"},
     )
-    repository.upsert_assets(session, [asset])
-    assert repository.list_assets(session) == [asset]
+    repository.upsert_assets(session, [asset], org_id=DEFAULT_ORG_ID)
+    assert repository.list_assets(session, org_id=DEFAULT_ORG_ID) == [asset]
 
 
 def test_event_round_trip(session: Session) -> None:
@@ -53,8 +53,8 @@ def test_event_round_trip(session: Session) -> None:
         raw="2026-07-07T12:00:00+00:00,pump-02,Pressure,0.38",
         metadata={"line_number": 42},
     )
-    repository.insert_events(session, [event])
-    assert list(repository.get_events(session)) == [event]
+    repository.insert_events(session, [event], org_id=DEFAULT_ORG_ID)
+    assert list(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == [event]
 
 
 def test_event_timestamp_normalized_to_utc_across_round_trip(session: Session) -> None:
@@ -66,8 +66,8 @@ def test_event_timestamp_normalized_to_utc_across_round_trip(session: Session) -
         source_format="stub-csv",
         raw="r",
     )
-    repository.insert_events(session, [event])
-    (restored,) = repository.get_events(session)
+    repository.insert_events(session, [event], org_id=DEFAULT_ORG_ID)
+    (restored,) = repository.get_events(session, org_id=DEFAULT_ORG_ID)
     assert restored.timestamp == T0
     assert restored.timestamp.tzinfo == UTC
 
@@ -79,8 +79,8 @@ def test_malformed_round_trip(session: Session) -> None:
         source_format="stub-csv",
         origin="file://demo.csv",
     )
-    repository.insert_malformed(session, [record])
-    assert list(repository.list_malformed(session)) == [record]
+    repository.insert_malformed(session, [record], org_id=DEFAULT_ORG_ID)
+    assert list(repository.list_malformed(session, org_id=DEFAULT_ORG_ID)) == [record]
 
 
 def test_detection_round_trip(session: Session) -> None:
@@ -96,8 +96,8 @@ def test_detection_round_trip(session: Session) -> None:
         evidence={"top_channel": "Pressure", "channel_error": 0.8},
         metadata={"artifact": "artifacts/skab/lstm_ae.pt"},
     )
-    repository.insert_detections(session, [detection])
-    assert list(repository.get_detections(session)) == [detection]
+    repository.insert_detections(session, [detection], org_id=DEFAULT_ORG_ID)
+    assert list(repository.get_detections(session, org_id=DEFAULT_ORG_ID)) == [detection]
 
 
 def test_alert_round_trip(session: Session) -> None:
@@ -113,7 +113,7 @@ def test_alert_round_trip(session: Session) -> None:
         )
         for lane in (Lane.TELEMETRY, Lane.LOG)
     ]
-    repository.insert_detections(session, detections)
+    repository.insert_detections(session, detections, org_id=DEFAULT_ORG_ID)
     alert = PrioritizedAlert(
         asset_id="pump-02",
         window_start=T0,
@@ -127,8 +127,8 @@ def test_alert_round_trip(session: Session) -> None:
         recommended_action="Inspect pump-02.",
         status=AlertStatus.ACKNOWLEDGED,
     )
-    repository.insert_alerts(session, [alert])
-    (restored,) = repository.get_alerts(session)
+    repository.insert_alerts(session, [alert], org_id=DEFAULT_ORG_ID)
+    (restored,) = repository.get_alerts(session, org_id=DEFAULT_ORG_ID)
     # Lineage is set-like: the junction table does not preserve list order.
     assert set(restored.detection_ids) == set(alert.detection_ids)
     assert restored.model_dump(exclude={"detection_ids"}) == alert.model_dump(

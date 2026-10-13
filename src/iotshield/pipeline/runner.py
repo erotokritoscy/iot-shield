@@ -52,7 +52,13 @@ from iotshield.pipeline.registry import (
     sink_requires_database,
 )
 from iotshield.sink import RunResult, SinkResources, SourceProvenance
-from iotshield.storage import create_schema, describe_location, make_engine, make_session_factory
+from iotshield.storage import (
+    DEFAULT_ORG_ID,
+    create_schema,
+    describe_location,
+    make_engine,
+    make_session_factory,
+)
 
 TOP_ALERTS_IN_REPORT = 5
 
@@ -431,23 +437,26 @@ def _load_source_texts(
     return texts, origins
 
 
-def run_pipeline(config: PipelineConfig, input_path: Path | None = None) -> RunReport:
+def run_pipeline(
+    config: PipelineConfig, input_path: Path | None = None, *, org_id: str = DEFAULT_ORG_ID
+) -> RunReport:
     """CLI / standalone entry point: read the configured input(s) and run the pipeline.
 
     ``input_path`` supplies the content for a single-source config (the legacy ``--input``
     form); otherwise each source's ``path`` is read. Builds a ``SinkResources`` for this
     run, creating a database engine (and schema) only if a configured sink needs one — so a
     file-only run needs no database at all. The Pipeline API instead injects its own
-    long-lived engine (ADR-0015).
+    long-lived engine (ADR-0015). ``org_id`` is the organization the results are stored
+    under (ADR-0039); the CLI's ``--org`` sets it.
     """
     inputs, origins = _load_source_texts(config, input_path)
     needs_db = any(sink_requires_database(sink.name) for sink in config.sinks)
     engine = make_engine(config.database_url) if needs_db and config.database_url else None
     try:
-        resources = SinkResources()
+        resources = SinkResources(org_id=org_id)
         if engine is not None:
             create_schema(engine)
-            resources = SinkResources(session_factory=make_session_factory(engine))
+            resources = SinkResources(session_factory=make_session_factory(engine), org_id=org_id)
         return execute_run(config, inputs, origins=origins, resources=resources)
     finally:
         if engine is not None:

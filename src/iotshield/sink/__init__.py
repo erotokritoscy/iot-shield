@@ -72,10 +72,16 @@ class SinkResources:
     sink, a confined base directory for file sinks (so a caller-supplied filename cannot
     escape onto arbitrary server paths). A sink takes only what it needs and ignores the
     rest; a new sink that needs a new kind of handle adds a field here.
+
+    ``org_id`` is the organization the run belongs to (ADR-0039). It lives here, beside the
+    other deployment-decided handles, and never on ``RunResult``: the tenant is decided by
+    *who asked* for the run, not by anything the run computed, so a caller can no more choose
+    it through the spec than it can choose the database.
     """
 
     session_factory: sessionmaker[Session] | None = None
     output_dir: Path | None = None
+    org_id: str | None = None
 
 
 class ResultSink(Protocol):

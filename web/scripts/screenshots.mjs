@@ -1,8 +1,12 @@
 // Walk the running stack and capture the design review (brief §7's self-review loop).
 //
 //   docker compose up -d --build
-//   docker compose run --rm runner          # config/demo.yaml, the walkthrough
-//   node web/scripts/screenshots.mjs
+//   (register an organization at :8080, then load the walkthrough into it)
+//   IOTSHIELD_DEMO_ORG=<org-id> docker compose run --rm runner
+//   IOTSHIELD_WEB_USER=<user> IOTSHIELD_WEB_PASSWORD=<password> node web/scripts/screenshots.mjs
+//
+// The stack requires login (ADR-0039), so the walk signs in first. With no login in the
+// deployment the login page redirects straight to Triage and the credentials go unused.
 //
 // Not a test: it asserts nothing beyond "the page reached this state", and it drives the
 // REAL stack rather than MSW, which is exactly what the mocked suite cannot prove.
@@ -36,6 +40,27 @@ const theme = async (want) => {
     await page.waitForTimeout(200);
   }
 };
+
+// Sign in, capturing the login page on the way. Skipped when the deployment has no login
+// (the login page then redirects to Triage before the form ever renders).
+await page.goto(`${BASE}/login`);
+const signIn = page.getByRole("heading", { name: "Sign in" });
+const triage = page.getByRole("heading", { name: "Alert triage" });
+await signIn.or(triage).first().waitFor({ timeout: 30_000 });
+if (await signIn.isVisible()) {
+  const user = process.env.IOTSHIELD_WEB_USER;
+  const password = process.env.IOTSHIELD_WEB_PASSWORD;
+  if (!user || !password) {
+    console.error("this stack requires login: set IOTSHIELD_WEB_USER and IOTSHIELD_WEB_PASSWORD");
+    await browser.close();
+    process.exit(2);
+  }
+  await shot("00-login");
+  await page.getByLabel("Username").fill(user);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await triage.waitFor({ timeout: 30_000 });
+}
 
 // `node web/scripts/screenshots.mjs empty` right after `docker compose up -d` captures the
 // state every fresh stack starts in — the empty states are a shipped feature, not an

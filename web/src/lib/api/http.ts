@@ -31,14 +31,28 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number | undefined;
   readonly path: string;
+  /** The server's own reason (FastAPI's `detail`), without the URL `message` prefixes it with. */
+  readonly detail: string | undefined;
 
-  constructor(kind: ApiErrorKind, path: string, message: string, status?: number) {
+  constructor(kind: ApiErrorKind, path: string, message: string, status?: number, detail?: string) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.path = path;
     this.status = status;
+    this.detail = detail;
   }
+}
+
+/**
+ * The reason to show a person filling in a form: the server's own words when it gave some.
+ *
+ * `describeError` keeps the URL because an operator debugging a run wants to know which
+ * service refused; someone registering wants "that username is taken", not a path.
+ */
+export function describeRefusal(error: unknown): string {
+  if (error instanceof ApiError && error.detail) return error.detail;
+  return describeError(error);
 }
 
 /**
@@ -138,9 +152,26 @@ function detailOf(body: unknown): string | null {
   return null;
 }
 
+/**
+ * Who to tell when a session has gone (ADR-0039).
+ *
+ * A session can expire, or be revoked by an admin, while a page is open. Every request is
+ * a place that can discover it, so the discovery lives here once rather than in each page:
+ * a 401 from anything but the login routes themselves calls this, and the auth layer
+ * (`lib/auth.tsx`) answers by sending the browser to the login page. The login routes are
+ * excluded because there a 401 is the *answer* — "wrong password" — not a lost session.
+ */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+const AUTH_PREFIX = "/auth/";
+
 export interface RequestOptions<T> {
   readonly schema: ZodType<T>;
-  readonly method?: "GET" | "POST";
+  readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
   readonly body?: unknown;
   readonly query?: Record<string, string | number | boolean | undefined>;
   readonly signal?: AbortSignal;
@@ -183,12 +214,14 @@ export async function apiRequest<T>(base: string, path: string, options: Request
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith(AUTH_PREFIX)) onUnauthorized?.();
     const detail = detailOf(payload);
     throw new ApiError(
       "status",
       url,
       detail ? `${url} refused the request: ${detail}` : `${url} returned HTTP ${response.status}`,
       response.status,
+      detail ?? undefined,
     );
   }
 

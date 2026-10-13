@@ -23,11 +23,12 @@ from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 
 import iotshield
+from iotshield.api._auth import AccountDep, auth_enabled, authenticate
 from iotshield.api._eval_gate import eval_api_enabled
 from iotshield.capabilities import formats_in
 from iotshield.contracts import PrioritizedAlert
@@ -365,10 +366,20 @@ def _modules_response() -> ModulesResponse:
 # --- App ---------------------------------------------------------------------
 
 
-def create_control_app(engine: Engine) -> FastAPI:
-    """Build the Pipeline API around an injected engine (tests pass SQLite; prod Postgres)."""
-    app = FastAPI(title="iotshield Pipeline API", version=iotshield.__version__)
+def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
+    """Build the Pipeline API around an injected engine (tests pass SQLite; prod Postgres).
+
+    ``auth`` overrides ``IOTSHIELD_AUTH``. On, every route but ``/health`` and the login
+    routes needs a session, the ``/auth`` router is registered, and a run's results are
+    stored under the caller's organization (ADR-0039).
+    """
+    app = FastAPI(
+        title="iotshield Pipeline API",
+        version=iotshield.__version__,
+        dependencies=[Depends(authenticate)],
+    )
     app.state.session_factory = make_session_factory(engine)
+    app.state.auth_enabled = auth_enabled() if auth is None else auth
     # Only used to fill the run report's (unexposed) location field; the run persists
     # through the injected engine, never a caller-named database.
     app.state.database_url = engine.url.render_as_string(hide_password=False)
@@ -395,7 +406,7 @@ def create_control_app(engine: Engine) -> FastAPI:
         return ValidateResponse(ok=not has_errors(issues), issues=[_issue_info(i) for i in issues])
 
     @app.post("/runs")
-    def create_run(request: RunRequest) -> RunResponse:
+    def create_run(request: RunRequest, account: AccountDep) -> RunResponse:
         """Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
 
         The guard runs once, inside execute_run, which raises IncompatiblePipelineError on
@@ -422,6 +433,8 @@ def create_control_app(engine: Engine) -> FastAPI:
                 resources=SinkResources(
                     session_factory=app.state.session_factory,
                     output_dir=app.state.output_dir,
+                    # Who asked decides whose run it is — never anything in the request body.
+                    org_id=account.org_id,
                 ),
             )
         except IncompatiblePipelineError as exc:
@@ -471,6 +484,16 @@ def create_control_app(engine: Engine) -> FastAPI:
         from iotshield.api.evaluation import create_eval_router
 
         app.include_router(create_eval_router())
+
+    # Absent rather than guarded when auth is off, like the eval router: the dashboard reads
+    # a 404 from /auth/me as "this deployment has no login" (ADR-0039).
+    if app.state.auth_enabled:
+        from iotshield.api.admin import create_admin_router
+        from iotshield.api.auth import create_auth_router
+
+        app.include_router(create_auth_router())
+        # The super admin's organization management (ADR-0040), absent with auth off too.
+        app.include_router(create_admin_router())
 
     return app
 

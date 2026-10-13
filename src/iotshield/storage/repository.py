@@ -9,11 +9,18 @@ Time ranges are half-open (``start <= t < end``) with ONE deliberate exception:
 and evidence recovery queries (asset, window_start..window_end) — with ``< end`` such a
 detection recovered no events at all. The rule is stated per function rather than once here,
 because a blanket claim is what sent a reader to the wrong bound.
+
+**Every function takes ``org_id`` and it has no default (ADR-0039).** Tenancy is enforced
+here, at the one place SQL is written, rather than trusted to each caller remembering a
+filter: a query that forgot its tenant would return another organization's alerts and look
+perfectly healthy doing it. A required keyword makes forgetting a ``TypeError``. Lookups by
+id (an alert, an alert's detections) are scoped too, so another tenant's id is simply *not
+found* — indistinguishable from an id that never existed.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TypeVar, overload
 from uuid import UUID
 
@@ -39,6 +46,7 @@ from iotshield.storage.orm import (
     DetectionRow,
     EventRow,
     MalformedRow,
+    OrganizationRow,
 )
 
 _Row = TypeVar("_Row")
@@ -108,7 +116,21 @@ def _total(session: Session, stmt: Select[tuple[_Row]]) -> int:
     return session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
 
-def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
+def ensure_organization(session: Session, org_id: str, name: str | None = None) -> None:
+    """Create the organization row if absent; never touch an existing one.
+
+    Registration creates organizations through the auth API; this exists for the trusted
+    writers that are not registration — the CLI runner and tests — so a host run into a
+    fresh database needs no account first. Same only-fill-absence stance as asset discovery.
+    """
+    if session.get(OrganizationRow, org_id) is None:
+        session.add(
+            OrganizationRow(org_id=org_id, name=name or org_id, created_at=datetime.now(UTC))
+        )
+        session.flush()
+
+
+def _ensure_assets(session: Session, asset_ids: set[str], *, org_id: str) -> None:
     """Asset discovery (ADR-0005): stub inventory rows for ids seen in data.
 
     Only ever fills absence — a stub is inserted when no row exists; existing
@@ -123,7 +145,11 @@ def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
     if not asset_ids:
         return
     existing = set(
-        session.scalars(select(AssetRow.asset_id).where(AssetRow.asset_id.in_(asset_ids)))
+        session.scalars(
+            select(AssetRow.asset_id).where(
+                AssetRow.org_id == org_id, AssetRow.asset_id.in_(asset_ids)
+            )
+        )
     )
     missing = sorted(asset_ids - existing)
     if not missing:
@@ -135,7 +161,7 @@ def _ensure_assets(session: Session, asset_ids: set[str]) -> None:
     # engine. And because PostgresSink wraps a whole run in one transaction, losing the race
     # did not lose an asset row, it rolled back every event, detection and alert of that run.
     # A double-click on the compose page's Run button is enough to trigger it.
-    rows = [AssetRow.values_of(discovered_asset(asset_id)) for asset_id in missing]
+    rows = [AssetRow.values_of(discovered_asset(asset_id), org_id=org_id) for asset_id in missing]
     session.execute(_insert_ignoring_conflicts(session, rows))
     # No flush of the ORM unit of work is needed for these: the statement above writes them
     # directly, before the FK-dependent rows their callers add.
@@ -152,52 +178,63 @@ def _insert_ignoring_conflicts(session: Session, rows: list[dict[str, object]]) 
     """
     dialect = session.get_bind().dialect.name
     if dialect == "postgresql":
-        return pg_insert(AssetRow).values(rows).on_conflict_do_nothing(index_elements=["asset_id"])
+        return (
+            pg_insert(AssetRow)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["org_id", "asset_id"])
+        )
     if dialect == "sqlite":
         return (
-            sqlite_insert(AssetRow).values(rows).on_conflict_do_nothing(index_elements=["asset_id"])
+            sqlite_insert(AssetRow)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["org_id", "asset_id"])
         )
     return insert(AssetRow).values(rows)
 
 
-def upsert_assets(session: Session, assets: Sequence[Asset]) -> None:
+def upsert_assets(session: Session, assets: Sequence[Asset], *, org_id: str) -> None:
     """Registration: insert or update — human knowledge overwrites discovery."""
     for asset in assets:
-        session.merge(AssetRow.from_contract(asset))
+        session.merge(AssetRow.from_contract(asset, org_id=org_id))
     session.flush()
 
 
-def insert_events(session: Session, events: Sequence[NormalizedEvent]) -> None:
-    _ensure_assets(session, {event.asset_id for event in events})
-    session.add_all(EventRow.from_contract(event) for event in events)
+def insert_events(session: Session, events: Sequence[NormalizedEvent], *, org_id: str) -> None:
+    _ensure_assets(session, {event.asset_id for event in events}, org_id=org_id)
+    session.add_all(EventRow.from_contract(event, org_id=org_id) for event in events)
     session.flush()
 
 
-def insert_malformed(session: Session, records: Sequence[MalformedRecord]) -> None:
-    session.add_all(MalformedRow.from_contract(record) for record in records)
+def insert_malformed(session: Session, records: Sequence[MalformedRecord], *, org_id: str) -> None:
+    session.add_all(MalformedRow.from_contract(record, org_id=org_id) for record in records)
     session.flush()
 
 
-def insert_detections(session: Session, detections: Sequence[DetectionResult]) -> None:
-    _ensure_assets(session, {detection.asset_id for detection in detections})
-    session.add_all(DetectionRow.from_contract(detection) for detection in detections)
+def insert_detections(
+    session: Session, detections: Sequence[DetectionResult], *, org_id: str
+) -> None:
+    _ensure_assets(session, {detection.asset_id for detection in detections}, org_id=org_id)
+    session.add_all(DetectionRow.from_contract(d, org_id=org_id) for d in detections)
     session.flush()
 
 
-def insert_alerts(session: Session, alerts: Sequence[PrioritizedAlert]) -> None:
-    _ensure_assets(session, {alert.asset_id for alert in alerts})
-    session.add_all(AlertRow.from_contract(alert) for alert in alerts)
+def insert_alerts(session: Session, alerts: Sequence[PrioritizedAlert], *, org_id: str) -> None:
+    _ensure_assets(session, {alert.asset_id for alert in alerts}, org_id=org_id)
+    session.add_all(AlertRow.from_contract(alert, org_id=org_id) for alert in alerts)
     session.flush()
 
 
-def list_assets(session: Session) -> list[Asset]:
-    rows = session.scalars(select(AssetRow).order_by(AssetRow.asset_id))
+def list_assets(session: Session, *, org_id: str) -> list[Asset]:
+    rows = session.scalars(
+        select(AssetRow).where(AssetRow.org_id == org_id).order_by(AssetRow.asset_id)
+    )
     return [row.to_contract() for row in rows]
 
 
 def get_events(
     session: Session,
     *,
+    org_id: str,
     asset_id: str | None = None,
     lane: Lane | None = None,
     start: datetime | None = None,
@@ -205,7 +242,11 @@ def get_events(
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[NormalizedEvent]:
-    stmt = select(EventRow).order_by(EventRow.timestamp.desc(), EventRow.event_id.desc())
+    stmt = (
+        select(EventRow)
+        .where(EventRow.org_id == org_id)
+        .order_by(EventRow.timestamp.desc(), EventRow.event_id.desc())
+    )
     if asset_id is not None:
         stmt = stmt.where(EventRow.asset_id == asset_id)
     if lane is not None:
@@ -223,10 +264,12 @@ def get_events(
 
 
 def list_malformed(
-    session: Session, *, limit: int = 1000, offset: int = 0
+    session: Session, *, org_id: str, limit: int = 1000, offset: int = 0
 ) -> Page[MalformedRecord]:
-    stmt = select(MalformedRow).order_by(
-        MalformedRow.created_at.desc(), MalformedRow.record_id.desc()
+    stmt = (
+        select(MalformedRow)
+        .where(MalformedRow.org_id == org_id)
+        .order_by(MalformedRow.created_at.desc(), MalformedRow.record_id.desc())
     )
     rows = _oldest_first(session, stmt, limit=limit, offset=offset)
     return Page([row.to_contract() for row in rows], _total(session, stmt))
@@ -235,6 +278,7 @@ def list_malformed(
 def get_detections(
     session: Session,
     *,
+    org_id: str,
     asset_id: str | None = None,
     lane: Lane | None = None,
     start: datetime | None = None,
@@ -242,8 +286,10 @@ def get_detections(
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[DetectionResult]:
-    stmt = select(DetectionRow).order_by(
-        DetectionRow.window_start.desc(), DetectionRow.detection_id.desc()
+    stmt = (
+        select(DetectionRow)
+        .where(DetectionRow.org_id == org_id)
+        .order_by(DetectionRow.window_start.desc(), DetectionRow.detection_id.desc())
     )
     if asset_id is not None:
         stmt = stmt.where(DetectionRow.asset_id == asset_id)
@@ -260,6 +306,7 @@ def get_detections(
 def get_alerts(
     session: Session,
     *,
+    org_id: str,
     status: AlertStatus | None = None,
     detection_id: UUID | None = None,
     asset_id: str | None = None,
@@ -280,6 +327,7 @@ def get_alerts(
         # Eager-load lineage in one batched query: to_contract() reads
         # detection_links, which would otherwise lazy-load per alert (N+1).
         .options(selectinload(AlertRow.detection_links))
+        .where(AlertRow.org_id == org_id)
         .order_by(AlertRow.priority_score.desc(), AlertRow.created_at, AlertRow.alert_id)
     )
     if status is not None:
@@ -299,29 +347,31 @@ def get_alerts(
     return Page([row.to_contract() for row in rows], _total(session, stmt))
 
 
-def get_alert_by_id(session: Session, alert_id: UUID) -> PrioritizedAlert | None:
+def get_alert_by_id(session: Session, alert_id: UUID, *, org_id: str) -> PrioritizedAlert | None:
     stmt = (
         select(AlertRow)
         .options(selectinload(AlertRow.detection_links))
-        .where(AlertRow.alert_id == alert_id)
+        .where(AlertRow.alert_id == alert_id, AlertRow.org_id == org_id)
     )
     row = session.scalars(stmt).one_or_none()
     return row.to_contract() if row is not None else None
 
 
-def get_detections_by_ids(session: Session, detection_ids: Sequence[UUID]) -> list[DetectionResult]:
+def get_detections_by_ids(
+    session: Session, detection_ids: Sequence[UUID], *, org_id: str
+) -> list[DetectionResult]:
     """Resolve an alert's lineage list into its detections (drill-down)."""
     if not detection_ids:
         return []
     stmt = (
         select(DetectionRow)
-        .where(DetectionRow.detection_id.in_(detection_ids))
+        .where(DetectionRow.org_id == org_id, DetectionRow.detection_id.in_(detection_ids))
         .order_by(DetectionRow.window_start, DetectionRow.detection_id)
     )
     return [row.to_contract() for row in session.scalars(stmt)]
 
 
-def count_summary(session: Session) -> dict[str, int]:
+def count_summary(session: Session, *, org_id: str) -> dict[str, int]:
     """Per-table row counts (the /summary endpoint's KPI numbers).
 
     One round-trip via scalar subqueries. Nothing polls /summary, but it is the
@@ -337,7 +387,11 @@ def count_summary(session: Session) -> dict[str, int]:
     }
     stmt = select(
         *(
-            select(func.count()).select_from(row_type).scalar_subquery().label(name)
+            select(func.count())
+            .select_from(row_type)
+            .where(row_type.org_id == org_id)
+            .scalar_subquery()
+            .label(name)
             for name, row_type in tables.items()
         )
     )

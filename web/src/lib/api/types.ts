@@ -33,6 +33,15 @@ export type ValidateResponse = P["ValidateResponse"];
 export type RunResponse = P["RunResponse"];
 export type PipelineSpec = P["PipelineSpec"];
 
+// --- Accounts (mounted only when IOTSHIELD_AUTH is set — ADR-0039) -----------
+export type MeResponse = P["MeResponse"];
+export type UserInfo = P["UserInfo"];
+export type Role = UserInfo["role"];
+/** A role inside an organization — the super admin is not one (ADR-0040). */
+export type OrgRole = P["NewUserRequest"]["role"] & string;
+export type AuthOptions = P["AuthOptions"];
+export type OrganizationAdminInfo = P["OrganizationAdminInfo"];
+
 // --- Evaluation plane (mounted only when IOTSHIELD_EVAL_API is set) ----------
 export type CorpusSummary = P["CorpusSummary"];
 export type CorporaResponse = P["CorporaResponse"];

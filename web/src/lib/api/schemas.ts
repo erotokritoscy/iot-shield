@@ -30,11 +30,15 @@ import type {
   DetectorSummary,
   Lane,
   MalformedRecord,
+  AuthOptions,
+  MeResponse,
   ModulesResponse,
+  OrganizationAdminInfo,
   NormalizedEvent,
   PrioritizedAlert,
   RunResponse,
   Summary,
+  UserInfo,
   ValidateResponse,
 } from "./types";
 
@@ -216,6 +220,49 @@ export const runSchema = z.object({
   top_alerts: z.array(alertSchema),
 });
 export type _RunOk = Assert<Satisfies<RunResponse, z.infer<typeof runSchema>>>;
+
+// --- Accounts (ADR-0039) ------------------------------------------------------
+
+export const roleSchema = z.enum(["admin", "member", "superadmin"]);
+
+export const meSchema = z.object({
+  user_id: z.string(),
+  username: z.string(),
+  role: roleSchema,
+  /** Null exactly for the super admin, who belongs to no organization (ADR-0040). */
+  organization: z.object({ org_id: z.string(), name: z.string() }).nullable(),
+});
+export type _MeOk = Assert<Satisfies<MeResponse, z.infer<typeof meSchema>>>;
+
+export const userInfoSchema = z.object({
+  user_id: z.string(),
+  username: z.string(),
+  role: roleSchema,
+  created_at: z.string(),
+});
+export type _UserInfoOk = Assert<Satisfies<UserInfo, z.infer<typeof userInfoSchema>>>;
+export const usersSchema = z.array(userInfoSchema);
+
+/** A 204: the server said yes and nothing else. */
+export const noContentSchema = z.null();
+
+export const authOptionsSchema = z.object({ open_registration: z.boolean() });
+export type _AuthOptionsOk = Assert<Satisfies<AuthOptions, z.infer<typeof authOptionsSchema>>>;
+
+export const organizationAdminInfoSchema = z.object({
+  org_id: z.string(),
+  name: z.string(),
+  suspended: z.boolean(),
+  created_at: z.string(),
+  users: z.number(),
+  admins: z.number(),
+  events: z.number(),
+  alerts: z.number(),
+});
+export type _OrgAdminOk = Assert<
+  Satisfies<OrganizationAdminInfo, z.infer<typeof organizationAdminInfoSchema>>
+>;
+export const organizationsAdminSchema = z.array(organizationAdminInfoSchema);
 
 // --- Evaluation plane ---------------------------------------------------------
 

@@ -47,6 +47,9 @@ definition.
 | `POST /runs` | run it, return a summary | the only write path |
 | `GET /docs` | generated API docs | |
 
+With `IOTSHIELD_AUTH` set, a sixth group appears: the account routes under `/auth`, and every
+route but `/health` needs a session. See *Login and organizations* below.
+
 There is no `GET /runs/{id}`. A run has no identity here: it writes its results through its
 sinks and returns a summary, and everything else is read back from the read API. That keeps
 this service stateless, which is what lets it be restarted or scaled without coordination.
@@ -340,6 +343,67 @@ Over the limit you get:
 for seconds, which is why the nginx template in front of the dashboard sets a long
 `proxy_read_timeout` on the pipeline routes specifically. If you need long runs, use the CLI;
 an async job API is not built.
+
+## Login and organizations
+
+Off unless `IOTSHIELD_AUTH` is set (compose sets it). On, the `/auth` router is registered and
+both APIs refuse a request without a session with **401** (ADR-0039):
+
+| | | |
+|---|---|---|
+| `POST /auth/register` | `{organization, username, password}` | creates the organization and you as its admin, and logs you in. 409 if the name or username is taken |
+| `POST /auth/login` | `{username, password}` | sets the session cookie. 401 for a wrong username *or* password, worded identically |
+| `POST /auth/logout` | | ends the session server-side; works with an already-expired cookie |
+| `GET /auth/me` | | who you are and your organization (`org_id` is the slug `--org` takes) |
+| `POST /auth/password` | `{current_password, new_password}` | logs out your other sessions |
+| `GET /auth/users` | | admin only: the organization's users |
+| `POST /auth/users` | `{username, password, role}` | admin only: add a user with a temporary password |
+| `DELETE /auth/users/{id}` | | admin only; not yourself; another org's user is a 404 |
+
+The session is an `HttpOnly`, `SameSite=Strict` cookie holding a random token; the database stores
+only its SHA-256. Passwords are scrypt-hashed (`auth/passwords.py`), minimum 8 characters.
+
+**A run belongs to whoever asked.** `POST /runs` stores its results under the caller's
+organization — taken from the session, never from the request body, the same way the caller
+cannot name the database. A file sink writes under `IOTSHIELD_OUTPUT_DIR/<org_id>/`. The CLI has no
+session, so it takes `--org` (default `default`) and creates that organization if it is absent.
+
+Off, there is no `/auth` router at all (a 404, which is how the dashboard knows not to show a
+login) and every request is the admin of the one `default` organization.
+
+`GET /auth/options` (public) answers `{open_registration}`: `IOTSHIELD_OPEN_REGISTRATION=0`
+closes `POST /auth/register` with a 403, and the login page stops offering it.
+
+### The super admin's `/admin` routes
+
+A **super admin** (ADR-0040) manages every organization. It may have a **home organization**,
+whose data it then sees like that organization's admin; with none, every data route answers it
+403. It never sees another organization's data. Its home cannot be suspended or deleted, and no
+organization route can remove, demote or reset it (409/403). Compose's `init` step seeds the
+`UCY` organization, a super admin at home in it (`admin@admin.com` / `password`) and the demo
+data into UCY (`python -m iotshield.auth.seed`; create-only). Otherwise super admins are created
+only from the server:
+
+```
+python -m iotshield.auth.superadmin create --username root     # prompts for the password
+python -m iotshield.auth.superadmin set-password --username root
+python -m iotshield.auth.superadmin list
+```
+
+| | | |
+|---|---|---|
+| `GET /admin/organizations` | | every org with counts (users, admins, events, alerts) — never rows |
+| `POST /admin/organizations` | `{organization, username, password}` | an org and its first admin; works with registration closed |
+| `GET /admin/organizations/{org}` | | one org's summary |
+| `POST /admin/organizations/{org}/suspend` | | signs its users out, blocks login (403 after a correct password), keeps data |
+| `POST /admin/organizations/{org}/reactivate` | | |
+| `DELETE /admin/organizations/{org}?confirm={org}` | | the org, its users and **all its data**; `confirm` must repeat the id (400 otherwise) |
+| `GET/POST /admin/organizations/{org}/users` | | list / add (role `admin` or `member`; `superadmin` is a 422) |
+| `PATCH /admin/organizations/{org}/users/{id}` | `{role}` | demoting the last admin is a 409 |
+| `POST /admin/organizations/{org}/users/{id}/password` | `{password}` | new temporary password; signs them out |
+| `DELETE /admin/organizations/{org}/users/{id}` | | removing the last admin is a 409 |
+
+Everything under `/admin` is 403 to anyone else, organization admins included.
 
 ## The evaluation plane is absent unless you ask
 

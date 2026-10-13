@@ -26,7 +26,7 @@ from iotshield.pipeline import (
 )
 from iotshield.pipeline import runner as runner_module
 from iotshield.pipeline.compat import IncompatiblePipelineError
-from iotshield.storage import make_engine, make_session_factory, repository
+from iotshield.storage import DEFAULT_ORG_ID, make_engine, make_session_factory, repository
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -81,18 +81,26 @@ class TestEndToEnd:
         config = make_config(tmp_path)
         report = run_pipeline(config, write_input(tmp_path))
         with open_db(config) as session:
-            assert len(repository.get_events(session)) == report.events
-            assert len(repository.list_malformed(session)) == report.malformed
-            assert len(repository.get_detections(session)) == report.detections
-            assert len(repository.get_alerts(session)) == report.alerts
+            assert len(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == report.events
+            assert (
+                len(repository.list_malformed(session, org_id=DEFAULT_ORG_ID)) == report.malformed
+            )
+            assert (
+                len(repository.get_detections(session, org_id=DEFAULT_ORG_ID)) == report.detections
+            )
+            assert len(repository.get_alerts(session, org_id=DEFAULT_ORG_ID)) == report.alerts
 
     def test_alert_lineage_resolves_and_covers_all_detections(self, tmp_path: Path) -> None:
         config = make_config(tmp_path)
         run_pipeline(config, write_input(tmp_path))
         with open_db(config) as session:
-            detection_ids = {d.detection_id for d in repository.get_detections(session)}
+            detection_ids = {
+                d.detection_id for d in repository.get_detections(session, org_id=DEFAULT_ORG_ID)
+            }
             linked = [
-                d_id for alert in repository.get_alerts(session) for d_id in alert.detection_ids
+                d_id
+                for alert in repository.get_alerts(session, org_id=DEFAULT_ORG_ID)
+                for d_id in alert.detection_ids
             ]
             assert set(linked) == detection_ids  # every detection covered ...
             assert len(linked) == len(detection_ids)  # ... by exactly one alert
@@ -111,7 +119,7 @@ class TestEndToEnd:
         )
         run_pipeline(config, write_input(tmp_path))
         with open_db(config) as session:
-            assets = {a.asset_id: a for a in repository.list_assets(session)}
+            assets = {a.asset_id: a for a in repository.list_assets(session, org_id=DEFAULT_ORG_ID)}
         assert assets["pump-02"].name == "Feed pump 2"  # seeded registration kept
         assert assets["pump-02"].criticality == Criticality.HIGH
         assert assets["gw-01"].metadata == {"auto_discovered": True}  # from data
@@ -131,8 +139,8 @@ class TestEndToEnd:
             run_pipeline(config, write_input(tmp_path))
         with open_db(config) as session:
             # Atomicity: events were flushed before the crash, but never committed.
-            assert list(repository.get_events(session)) == []
-            assert list(repository.list_malformed(session)) == []
+            assert list(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == []
+            assert list(repository.list_malformed(session, org_id=DEFAULT_ORG_ID)) == []
 
     def test_report_render_is_human_readable(self, tmp_path: Path) -> None:
         report = run_pipeline(make_config(tmp_path), write_input(tmp_path))
