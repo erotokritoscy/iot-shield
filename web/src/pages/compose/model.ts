@@ -9,7 +9,7 @@ import * as React from "react";
 
 import { pipelineApi } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
-import type { ModuleInfo, ModulesResponse } from "@/lib/api/types";
+import type { ModuleInfo, ModulesResponse, PreviewResponse } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
 import { initialValues, submittedParams, type ParamValues } from "@/lib/params";
 import type { Sample, Scenario } from "@/lib/samples";
@@ -239,4 +239,78 @@ export function useValidation(spec: unknown) {
   }, [settled]);
 
   return { result, error, pending, stale: serialized !== settled };
+}
+
+/** What `/runs/preview` said of one source: how much of it its normalizer could read. */
+export interface SourcePreview {
+  readonly result: PreviewResponse | null;
+  readonly error: string | null;
+  /** A read of the current content is still on its way (or not yet sent). */
+  readonly pending: boolean;
+}
+
+const NO_PREVIEW: SourcePreview = { result: null, error: null, pending: false };
+
+/**
+ * Each source read by its own normalizer while it is being filled in, so a wrong format is
+ * reported beside the file instead of as a malformed pile after the run (ADR-0017).
+ *
+ * Debounced like `useValidation`, and remembered per (source, content): editing Source 2 does
+ * not re-read Source 1. Blank content is not sent — "needs content" already says what is
+ * wrong with it.
+ */
+export function useSourcePreviews(
+  sources: readonly unknown[],
+  contents: readonly string[],
+): readonly SourcePreview[] {
+  const keys = sources.map((source, index) => JSON.stringify([source, contents[index] ?? ""]));
+  const joined = keys.join("\u0000");
+  const [settled, setSettled] = React.useState<readonly string[]>(keys);
+  const cache = React.useRef(new Map<string, SourcePreview>());
+  const inflight = React.useRef(new Set<string>());
+  const controller = React.useRef<AbortController | null>(null);
+  const [, rerender] = React.useReducer((count: number) => count + 1, 0);
+
+  React.useEffect(() => {
+    const current = new AbortController();
+    controller.current = current;
+    return () => {
+      current.abort();
+      inflight.current.clear();
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setSettled(joined.split("\u0000")), 350);
+    return () => clearTimeout(timer);
+  }, [joined]);
+
+  React.useEffect(() => {
+    const signal = controller.current?.signal;
+    if (signal === undefined) return;
+    // Forget what no source holds any more, so the cache does not grow with every keystroke.
+    for (const key of [...cache.current.keys()]) if (!settled.includes(key)) cache.current.delete(key);
+    for (const key of new Set(settled)) {
+      const [source, content] = JSON.parse(key) as [unknown, string];
+      if (content.trim().length === 0 || cache.current.has(key) || inflight.current.has(key)) continue;
+      inflight.current.add(key);
+      pipelineApi
+        .preview(source, content, signal)
+        .then((result) => cache.current.set(key, { result, error: null, pending: false }))
+        .catch((cause: unknown) => {
+          if (!signal.aborted) cache.current.set(key, { result: null, error: describeError(cause), pending: false });
+        })
+        .finally(() => {
+          if (signal.aborted) return;
+          inflight.current.delete(key);
+          rerender();
+        });
+    }
+  }, [settled]);
+
+  return keys.map((key, index) => {
+    if ((contents[index] ?? "").trim().length === 0) return NO_PREVIEW;
+    const entry = settled[index] === key ? cache.current.get(key) : undefined;
+    return entry ?? { result: null, error: null, pending: true };
+  });
 }

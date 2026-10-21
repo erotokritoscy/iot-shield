@@ -10,6 +10,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Minus, Plus } from "lucide-react";
 import * as React from "react";
 
+import { InfoTip } from "@/components/ui/info";
 import { cn } from "@/lib/utils";
 
 const buttonStyles = cva(
@@ -42,16 +43,21 @@ interface FieldProps {
   readonly label: string;
   readonly htmlFor?: string;
   readonly hint?: React.ReactNode;
+  /** What the field expects, behind an (i) beside the label. */
+  readonly info?: React.ReactNode;
   readonly children: React.ReactNode;
   readonly className?: string;
 }
 
-export function Field({ label, htmlFor, hint, children, className }: FieldProps) {
+export function Field({ label, htmlFor, hint, info, children, className }: FieldProps) {
   return (
     <div className={cn("min-w-0", className)}>
-      <label className="field-label" htmlFor={htmlFor}>
-        {label}
-      </label>
+      <div className="mb-1 flex items-center gap-1">
+        <label className="field-label mb-0" htmlFor={htmlFor}>
+          {label}
+        </label>
+        {info ? <InfoTip label={label}>{info}</InfoTip> : null}
+      </div>
       {children}
       {hint ? <p className="caption mt-1">{hint}</p> : null}
     </div>
@@ -220,6 +226,7 @@ interface MultiSelectProps {
   readonly value: readonly string[];
   readonly onValueChange: (value: string[]) => void;
   readonly hint?: React.ReactNode;
+  readonly info?: React.ReactNode;
   /** Why an option will not do what its name suggests, keyed by option.
    *
    * An annotated option stays **selectable**. A disabled checkbox with a tooltip is the same
@@ -239,8 +246,10 @@ export function MultiSelect({
   value,
   onValueChange,
   hint,
+  info,
   notes,
 }: MultiSelectProps) {
+  const legendId = React.useId();
   const toggle = (option: string) => {
     // Preserve the *offered* order rather than click order, so a spec's label reads the
     // same however it was assembled.
@@ -250,8 +259,13 @@ export function MultiSelect({
     onValueChange([...next]);
   };
   return (
-    <fieldset className="min-w-0">
-      <legend className="field-label">{label}</legend>
+    // Named by the label's own span: the (i) has to live inside the legend (a legend must be
+    // the fieldset's first child), and its button text would otherwise join the group's name.
+    <fieldset className="min-w-0" aria-labelledby={legendId}>
+      <legend className="field-label flex items-center gap-1">
+        <span id={legendId}>{label}</span>
+        {info ? <InfoTip label={label}>{info}</InfoTip> : null}
+      </legend>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 rounded border border-line bg-surface px-3 py-2">
         {options.length === 0 ? (
           <span className="caption">Nothing to choose from.</span>

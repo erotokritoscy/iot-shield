@@ -4,7 +4,10 @@
  * Values are still validated by the guard and the contracts, so free-text entry is safe
  * here. Which of them are *submitted* is `lib/params.ts`'s job — see C4.
  */
+import type * as React from "react";
+
 import { Checkbox, Field, NumberInput, Select, TextInput } from "@/components/ui/controls";
+import { InfoTip } from "@/components/ui/info";
 import type { ParamInfo } from "@/lib/api/types";
 import { isNumeric, type ParamValue, type ParamValues } from "@/lib/params";
 
@@ -13,11 +16,14 @@ export function ParamFields({
   values,
   onChange,
   idPrefix,
+  info,
 }: {
   readonly params: readonly ParamInfo[] | null | undefined;
   readonly values: ParamValues;
   readonly onChange: (name: string, value: ParamValue) => void;
   readonly idPrefix: string;
+  /** What each param expects, shown behind an (i) beside its label. Optional per page. */
+  readonly info?: (param: ParamInfo) => React.ReactNode;
 }) {
   const list = params ?? [];
   if (list.length === 0) {
@@ -33,7 +39,7 @@ export function ParamFields({
           // than making the operator type it from memory into a free-text box, where a typo
           // surfaces only as a guard error after the fact (ADR-0023 D9).
           return (
-            <Field key={param.name} label={param.name} htmlFor={id}>
+            <Field key={param.name} label={param.name} htmlFor={id} info={info?.(param)}>
               <Select
                 id={id}
                 data-testid={id}
@@ -50,6 +56,7 @@ export function ParamFields({
               key={param.name}
               label={param.name}
               htmlFor={id}
+              info={info?.(param)}
               hint={
                 param.default === null || param.default === undefined
                   ? "optional — leave empty to let the adapter decide"
@@ -68,7 +75,7 @@ export function ParamFields({
         }
         if (param.type === "bool") {
           return (
-            <div key={param.name} className="flex items-end pb-1.5">
+            <div key={param.name} className="flex items-end gap-1 pb-1.5">
               <Checkbox
                 id={id}
                 data-testid={id}
@@ -76,11 +83,16 @@ export function ParamFields({
                 checked={value === true}
                 onChange={(event) => onChange(param.name, event.target.checked)}
               />
+              {info ? (
+                <InfoTip label={param.name} className="mb-0.5">
+                  {info(param)}
+                </InfoTip>
+              ) : null}
             </div>
           );
         }
         return (
-          <Field key={param.name} label={param.name} htmlFor={id}>
+          <Field key={param.name} label={param.name} htmlFor={id} info={info?.(param)}>
             <TextInput
               id={id}
               data-testid={id}

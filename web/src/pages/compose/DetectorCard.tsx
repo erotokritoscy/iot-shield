@@ -1,9 +1,11 @@
 import { ArtifactField } from "@/components/ArtifactField";
 import { ParamFields } from "@/components/ParamFields";
 import { Button, Field, Select } from "@/components/ui/controls";
+import { InfoLines } from "@/components/ui/info";
 import { Collapsible } from "@/components/ui/surfaces";
 import type { ModuleInfo } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
+import { ADAPTER_HELP, FIELD_HELP, paramHelp } from "@/pages/compose/help";
 import { feeds, missingInputs, type DetectorRow } from "@/pages/compose/model";
 
 /**
@@ -45,7 +47,12 @@ export function DetectorCard({
   return (
     <div className="space-y-3 rounded-lg border border-line bg-surface p-4">
       <div className="flex items-end gap-3">
-        <Field label={`Detector ${index + 1}`} htmlFor={`det_${index}_name`} className="flex-1">
+        <Field
+          label={`Detector ${index + 1}`}
+          htmlFor={`det_${index}_name`}
+          className="flex-1"
+          info={<InfoLines lines={[FIELD_HELP.detector, ADAPTER_HELP[`detector:${row.name}`]]} />}
+        >
           <Select
             id={`det_${index}_name`}
             data-testid={`det_${index}_name`}
@@ -83,6 +90,7 @@ export function DetectorCard({
             summary={module}
             label={artifactParam}
             id={`det_${index}_art`}
+            info={FIELD_HELP.artifact}
             value={String(row.params[artifactParam] ?? "")}
             onChange={(artifact) => onChange({ ...row, params: { [artifactParam]: artifact } })}
           />
@@ -97,6 +105,7 @@ export function DetectorCard({
             params={module?.params}
             values={row.params}
             idPrefix={`det_${index}`}
+            info={(param) => paramHelp("detector", row.name, param)}
             onChange={(name, value) => onChange({ ...row, params: { ...row.params, [name]: value } })}
           />
         </Collapsible>

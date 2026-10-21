@@ -23,6 +23,7 @@ import {
   noContentSchema,
   organizationAdminInfoSchema,
   organizationsAdminSchema,
+  previewSchema,
   runSchema,
   summarySchema,
   userInfoSchema,
@@ -160,6 +161,15 @@ export const pipelineApi = {
       schema: validateSchema,
       method: "POST",
       body: { spec },
+      ...(signal ? { signal } : {}),
+    }),
+
+  /** Read one source with its normalizer only: nothing is detected or stored. */
+  preview: (source: unknown, content: string, signal?: AbortSignal) =>
+    apiRequest(PIPELINE_BASE, "/runs/preview", {
+      schema: previewSchema,
+      method: "POST",
+      body: { source, content },
       ...(signal ? { signal } : {}),
     }),
 

@@ -39,6 +39,7 @@ import type {
   RunResponse,
   Summary,
   UserInfo,
+  PreviewResponse,
   ValidateResponse,
 } from "./types";
 
@@ -209,6 +210,15 @@ export const validateSchema = z.object({
   issues: z.array(z.object({ level: z.string(), stage: z.string(), message: z.string() })),
 });
 export type _ValidateOk = Assert<Satisfies<ValidateResponse, z.infer<typeof validateSchema>>>;
+
+/** One source read by its normalizer alone — the compose page's "wrong format?" check. */
+export const previewSchema = z.object({
+  events: z.number(),
+  malformed: z.number(),
+  level: z.enum(["empty", "clean", "some_rejected", "mostly_rejected", "unreadable"]),
+  rejected: z.array(z.object({ line: z.number().nullable(), raw: z.string(), error: z.string() })),
+});
+export type _PreviewOk = Assert<Satisfies<PreviewResponse, z.infer<typeof previewSchema>>>;
 
 export const runSchema = z.object({
   events: z.number(),

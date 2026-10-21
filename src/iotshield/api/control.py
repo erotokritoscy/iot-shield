@@ -31,14 +31,14 @@ import iotshield
 from iotshield.api._auth import AccountDep, auth_enabled, authenticate
 from iotshield.api._eval_gate import eval_api_enabled
 from iotshield.capabilities import formats_in
-from iotshield.contracts import PrioritizedAlert
+from iotshield.contracts import MalformedRecord, PrioritizedAlert
 from iotshield.pipeline.compat import (
     CompatIssue,
     IncompatiblePipelineError,
     check_compatibility,
     has_errors,
 )
-from iotshield.pipeline.config import PipelineSpec, config_from_spec
+from iotshield.pipeline.config import PipelineSpec, SourceSpec, config_from_spec
 from iotshield.pipeline.registry import (
     ALERT_ENGINES,
     DETECTORS,
@@ -48,7 +48,7 @@ from iotshield.pipeline.registry import (
     SinkSpec,
     config_parameters,
 )
-from iotshield.pipeline.runner import RunReport, execute_run
+from iotshield.pipeline.runner import RejectionLevel, RunReport, execute_run, preview_source
 from iotshield.sink import SinkResources
 from iotshield.storage import (
     database_url_from_env,
@@ -166,6 +166,59 @@ class RunRequest(BaseModel):
     spec: PipelineSpec
     inputs: list[SourceInput] = Field(
         min_length=1, description="One raw input per source in spec.sources (same order)"
+    )
+
+
+PREVIEW_REJECTS_SHOWN = 3
+
+
+class PreviewRequest(BaseModel):
+    """One source and its content, read by its normalizer alone — nothing is judged or stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: SourceSpec
+    content: str = Field(
+        max_length=MAX_SOURCE_CHARS,
+        description=f"The source's raw content, at most {MAX_SOURCE_CHARS:,} characters",
+    )
+
+
+class RejectedLine(BaseModel):
+    line: int | None = Field(description="1-based line number in the content, when it can be found")
+    raw: str = Field(description="The rejected record, truncated to 200 characters")
+    error: str
+
+
+class PreviewResponse(BaseModel):
+    """How much of one source its normalizer could read (ADR-0017, before the run)."""
+
+    events: int
+    malformed: int
+    level: RejectionLevel
+    rejected: list[RejectedLine] = Field(
+        description=f"The first {PREVIEW_REJECTS_SHOWN} rejected records, in input order"
+    )
+
+
+def _preview_response(
+    content: str, events: int, malformed: Sequence[MalformedRecord], level: RejectionLevel
+) -> PreviewResponse:
+    # A MalformedRecord carries its line verbatim but not where it was; finding it again is
+    # what lets the page say "line 7" rather than only quoting it.
+    line_of: dict[str, int] = {}
+    for number, line in enumerate(content.splitlines(), start=1):
+        line_of.setdefault(line.strip(), number)
+    return PreviewResponse(
+        events=events,
+        malformed=len(malformed),
+        level=level,
+        rejected=[
+            RejectedLine(
+                line=line_of.get(record.raw.strip()), raw=record.raw[:200], error=record.error
+            )
+            for record in malformed[:PREVIEW_REJECTS_SHOWN]
+        ],
     )
 
 
@@ -404,6 +457,21 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         config = config_from_spec(request.spec, app.state.database_url)
         issues = check_compatibility(config)
         return ValidateResponse(ok=not has_errors(issues), issues=[_issue_info(i) for i in issues])
+
+    @app.post("/runs/preview")
+    def preview_run_source(request: PreviewRequest) -> PreviewResponse:
+        """Read one source with its normalizer only, so a wrong format shows before the run.
+
+        Nothing is detected or stored. 422 when the normalizer cannot even be asked: an
+        unknown name, bad params, or a format it does not read.
+        """
+        try:
+            preview = preview_source(request.source, request.content)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail={"message": str(exc), "issues": []}
+            ) from exc
+        return _preview_response(request.content, preview.events, preview.malformed, preview.level)
 
     @app.post("/runs")
     def create_run(request: RunRequest, account: AccountDep) -> RunResponse:

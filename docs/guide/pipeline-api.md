@@ -13,7 +13,7 @@ There are two HTTP services in this repo and the split is deliberate.
 
 | | Serves | Writes | Guide |
 |---|---|---|---|
-| Pipeline API | `/modules`, `/runs/validate`, `/runs` | yes | this one |
+| Pipeline API | `/modules`, `/runs/validate`, `/runs/preview`, `/runs` | yes | this one |
 | Read API | `/alerts`, `/events`, `/detections`, ... | never | `docs/guide/read-api.md` |
 
 A run is the expensive, slow, occasionally crashing part of this system. Keeping it in a
@@ -37,17 +37,18 @@ a pydantic model the OpenAPI schema is generated from the same types the handler
 The dashboard's TypeScript client is generated from that schema, so the wire format has one
 definition.
 
-## The five endpoints
+## The six endpoints
 
 | | | |
 |---|---|---|
 | `GET /health` | liveness plus a real `SELECT 1` | proves the database is reachable, not just that the process is up |
 | `GET /modules` | the adapter catalogue | what a UI builds its menus from |
 | `POST /runs/validate` | the compatibility guard, no execution | live feedback while somebody edits a config |
+| `POST /runs/preview` | one source read by its normalizer, nothing judged or stored | "is this file in the format I said?" |
 | `POST /runs` | run it, return a summary | the only write path |
 | `GET /docs` | generated API docs | |
 
-With `IOTSHIELD_AUTH` set, a sixth group appears: the account routes under `/auth`, and every
+With `IOTSHIELD_AUTH` set, a seventh group appears: the account routes under `/auth`, and every
 route but `/health` needs a session. See *Login and organizations* below.
 
 There is no `GET /runs/{id}`. A run has no identity here: it writes its results through its
@@ -215,6 +216,44 @@ a bad parameter *value* passes validation: `min_count: 1` is a perfectly well-ty
 and only the adapter's constructor knows it is nonsense. So `validate` legitimately returns
 `ok: true` for a spec that `POST /runs` then refuses. That is not a bug in either one; they
 answer different questions.
+
+## `POST /runs/preview`: can this file be read
+
+The guard above reads the chain's *shape* — which normalizer, which format — and never the
+records, so a CSV handed to the syslog normalizer passes it and becomes a pile of malformed
+records after the run. This endpoint closes that gap for one source: it builds the source's
+normalizer exactly as a run does and reads the content with it. Nothing is detected, nothing is
+stored.
+
+```json
+{"source": {"normalizer": "syslog", "source_format": "syslog"},
+ "content": "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0\n..."}
+```
+
+```json
+{"events": 0, "malformed": 3, "level": "unreadable",
+ "rejected": [{"line": 1, "raw": "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0",
+               "error": "unrecognized syslog line (neither RFC3164 nor RFC5424)"}]}
+```
+
+`level` is one verdict from `pipeline/runner.py: rejection_level`, the same function behind the
+run's own "rejected N% of input" warning (ADR-0017), so the preview and the run cannot disagree
+about where the line is:
+
+| `level` | means |
+|---|---|
+| `clean` | every record read |
+| `some_rejected` | a few rejects, under half: an ordinary feed with corrupt lines |
+| `mostly_rejected` | half or more rejected: probably the wrong normalizer or format |
+| `unreadable` | not one record read: almost certainly the wrong normalizer, format or file |
+| `empty` | nothing to read (only blank lines, or a single meter reading) |
+
+`rejected` quotes the first three rejects with the line they were found on. A normalizer that
+cannot even be asked — an unknown name, bad params, a format it does not read — is a 422 with
+the reason in `detail.message`. The content limit is the same as one source of a run.
+
+The Compose page calls this for every source as it is filled in, and refuses to leave step 1
+while a source is `unreadable`.
 
 ## `POST /runs`: run it
 
@@ -412,7 +451,7 @@ a truthy value. Unset, they are not registered at all:
 
 ```
 GET /eval/detectors        -> 404
-app routes: /docs, /health, /modules, /openapi.json, /redoc, /runs, /runs/validate
+app routes: /docs, /health, /modules, /openapi.json, /redoc, /runs, /runs/preview, /runs/validate
 ```
 
 Absent rather than guarded, which is a stronger property: there is no route to probe, no

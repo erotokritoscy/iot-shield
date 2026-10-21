@@ -15,6 +15,8 @@
  * they are written once and spread; the handler is typed structurally because a `<select>` and
  * an `<input>` disagree about their event's element type and agree about `target.value`.
  */
+import type * as React from "react";
+
 import { Field, Select, TextInput } from "@/components/ui/controls";
 import { artifactIdsOf, type Artifacted } from "@/lib/artifact";
 
@@ -24,6 +26,7 @@ export function ArtifactField({
   id,
   value,
   onChange,
+  info,
 }: {
   readonly summary: Artifacted;
   /** The artifact param's name, passed narrowed — only a detector that has one gets here. */
@@ -31,6 +34,7 @@ export function ArtifactField({
   readonly id: string;
   readonly value: string;
   readonly onChange: (artifact: string) => void;
+  readonly info?: React.ReactNode;
 }) {
   const ids = artifactIdsOf(summary);
   const shared = {
@@ -43,6 +47,7 @@ export function ArtifactField({
     <Field
       label={label}
       htmlFor={id}
+      info={info}
       hint="A committed artifact id. It supplies both the weights and the hyperparameters they were fitted with — the two travel together."
       className="max-w-sm"
     >

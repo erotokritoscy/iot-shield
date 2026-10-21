@@ -85,6 +85,45 @@
         }
       }
     },
+    "/runs/preview": {
+      "post": {
+        "summary": "Preview Run Source",
+        "description": "Read one source with its normalizer only, so a wrong format shows before the run.\n\nNothing is detected or stored. 422 when the normalizer cannot even be asked: an\nunknown name, bad params, or a format it does not read.",
+        "operationId": "preview_run_source_runs_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs": {
       "post": {
         "summary": "Create Run",
@@ -673,7 +712,7 @@
           "admin"
         ],
         "summary": "Suspend",
-        "description": "Block the organization's logins and sign its users out. Nothing is deleted.",
+        "description": "Block the organization's logins and sign its users out. Nothing is deleted.\n\nA super admin's home organization cannot be suspended (409): it would lock them out.",
         "operationId": "suspend_admin_organizations__org_id__suspend_post",
         "parameters": [
           {
@@ -2377,6 +2416,67 @@
         "title": "PipelineSpec",
         "description": "The operator-chosen shape of a run: which adapters, over what input source(s), to where.\n\nDeliberately excludes ``database_url`` \u2014 *where the database lives* is a deployment\ndecision, not an operator one (a tenant must never point a run at an arbitrary\ndatabase). The Pipeline API accepts a ``PipelineSpec`` and the server supplies\n``database_url`` from its environment; the CLI's ``load_config`` produces a full\n``PipelineConfig`` directly. ``sinks`` *is* operator-chosen (which stores/deliveries\nto fan the result out to); the Postgres sink among them is what reads ``database_url``.\n\n``sources`` is the multi-source ingest list (ADR-0019). A pre-validator desugars the\nlegacy single-source form (top-level ``source_format``/``normalizer``) into a one-element\n``sources`` list, so every config and spec written before multi-source keeps working."
       },
+      "PreviewRequest": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SourceSpec"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 4000000,
+            "title": "Content",
+            "description": "The source's raw content, at most 4,000,000 characters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "content"
+        ],
+        "title": "PreviewRequest",
+        "description": "One source and its content, read by its normalizer alone \u2014 nothing is judged or stored."
+      },
+      "PreviewResponse": {
+        "properties": {
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "malformed": {
+            "type": "integer",
+            "title": "Malformed"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "empty",
+              "clean",
+              "some_rejected",
+              "mostly_rejected",
+              "unreadable"
+            ],
+            "title": "Level"
+          },
+          "rejected": {
+            "items": {
+              "$ref": "#/components/schemas/RejectedLine"
+            },
+            "type": "array",
+            "title": "Rejected",
+            "description": "The first 3 rejected records, in input order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "events",
+          "malformed",
+          "level",
+          "rejected"
+        ],
+        "title": "PreviewResponse",
+        "description": "How much of one source its normalizer could read (ADR-0017, before the run)."
+      },
       "PrioritizedAlert": {
         "properties": {
           "window_start": {
@@ -2495,6 +2595,38 @@
           "password"
         ],
         "title": "RegisterRequest"
+      },
+      "RejectedLine": {
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line",
+            "description": "1-based line number in the content, when it can be found"
+          },
+          "raw": {
+            "type": "string",
+            "title": "Raw",
+            "description": "The rejected record, truncated to 200 characters"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "line",
+          "raw",
+          "error"
+        ],
+        "title": "RejectedLine"
       },
       "RoleChangeRequest": {
         "properties": {

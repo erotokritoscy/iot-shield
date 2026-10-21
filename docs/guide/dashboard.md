@@ -273,11 +273,42 @@ no detector or an untrained one, no sink), and the stepper only lets you jump to
 Detectors your sources can feed are listed first, and one nothing feeds is labelled so — offered,
 not hidden, because a deliberately silent run is still a real measurement (ADR-0038 D1).
 
+**Step 1 is a wizard of sources** (`pages/compose/SourceCard.tsx`). The sources are its steps —
+Source 1, Source 2, … in a row with a status each (✓, *needs content*, *wrong format?*, *has an error*), then
+**+ Add source** — and only the selected source is on screen, never stacked. That source is one
+card with every field at once (sample, normalizer and format, parameters, upload or paste), and at
+its foot the first five lines that will be read and the chain check's findings whose `stage` is
+`sources[i]`. **Next: Source N** moves on, or **Add another source** on the last one. Moving between
+sources never blocks **Next** — content does, as before — so the wizard changes how sources are
+asked for, never what is sent.
+
+**A file in the wrong format is caught on its source.** The chain check reads the spec's shape,
+never the records, so each source is also read by its own normalizer through `POST /runs/preview`
+(`compose/model.ts: useSourcePreviews`, debounced like validation and remembered per source and
+content, so editing one source does not re-read the others). The verdict is the run's own
+ADR-0017 reject rate, shown at the foot of the card with the first rejected lines by number:
+*unreadable* (not one record read) is an error titled **Wrong format?**, marks the tab and **blocks
+Next**, because such a run would produce only malformed records; *mostly unreadable* (half or
+more) is a warning; a few rejects are a note that they will land on Data health; a clean read says
+**Ready** with the count. A check that itself failed is a warning and blocks nothing.
+
+**Every field has an (i).** Each label on steps 1–3 — source, detector, engine and sink fields,
+and every adapter parameter — carries an (i) (`components/ui/info.tsx: InfoTip`) explaining what
+it expects. It opens on hover or keyboard focus, a click pins it (so it works on a phone), and
+Escape or a click elsewhere closes it; it sits beside the `<label>`, so the control's accessible
+name is unchanged. The copy lives in one table, `pages/compose/help.ts`, because `/modules`
+publishes a param's name, type, default and choices but no prose: the *meaning* of each param is
+keyed there by adapter, and `paramHelp` appends the default (or "Optional."). A param the table has
+not caught up with still gets an (i) stating its type — so adding a param to an adapter should add
+a line there too. The Normalizer and format (i)s describe the selected format's wire shape. The
+Evaluate page does not use it yet.
+
 **Samples and scenarios.** `uv run python scripts/make_sample_data.py` writes a small library of
 inputs to `web/public/samples/` (served at `/samples/` beside the bundle — static files, so no new
 endpoint) and an identical copy to `data/samples/` for the CLI, plus `manifest.json`. Every source
 card offers *Use a sample file*, which sets the sample's normalizer, format, content and filename
-together. Step 1 also offers **scenarios** that fill every step and land on Review, which then shows
+together. Step 1 also offers **scenarios** — each card shows its title only, with the description and what it
+holds (sources, detectors, expected alerts) behind an (i) — that fill every step and land on Review, which then shows
 what the scenario is *tested* to produce and, after the run, whether it did — but only while the
 spec and inputs are still exactly the scenario's; change anything and the promise is withdrawn.
 
@@ -578,6 +609,7 @@ Recorded rather than fixed, because this guide is documentation and these are co
 | The queue and the alert inspector | `web/src/pages/TriagePage.tsx` |
 | Enrichment's read path in TypeScript | `web/src/lib/evidence.ts` |
 | Compose: preselection, live validation, the untrained warning | `web/src/pages/ComposePage.tsx` |
+| Compose: the (i) text behind every field | `web/src/pages/compose/help.ts` |
 | The walkthrough's three inputs, and the scenario they encode | `scripts/make_demo_data.py` |
 | Artifact vs hyperparameters, shared by both pages that choose weights | `web/src/lib/artifact.ts` |
 | Parameter widgets from published declarations | `web/src/lib/params.ts` |

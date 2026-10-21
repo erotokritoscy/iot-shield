@@ -154,6 +154,69 @@ class TestValidate:
         assert any(i["level"] == "error" for i in body["issues"])
 
 
+def preview(control: ControlHarness, content: str, **source: Any) -> Any:
+    body = {
+        "source": {"normalizer": "stub", "source_format": "stub-csv"} | source,
+        "content": content,
+    }
+    return control.client.post("/runs/preview", json=body)
+
+
+class TestPreview:
+    """One source read by its normalizer alone, so a wrong format shows before the run."""
+
+    def test_a_matching_file_is_clean(self, control: ControlHarness) -> None:
+        body = preview(control, STUB_CSV).json()
+        assert body == {"events": 3, "malformed": 0, "level": "clean", "rejected": []}
+
+    def test_csv_given_to_syslog_is_unreadable_with_lines_and_reasons(
+        self, control: ControlHarness
+    ) -> None:
+        body = preview(control, STUB_CSV, normalizer="syslog", source_format="syslog").json()
+        assert body["level"] == "unreadable"
+        assert (body["events"], body["malformed"]) == (0, 3)
+        first = body["rejected"][0]
+        assert first["line"] == 1
+        assert first["raw"].startswith("2026-07-07T12:00:00+00:00,pump-02")
+        assert "syslog" in first["error"]
+
+    def test_a_few_bad_lines_are_reported_by_line_number(self, control: ControlHarness) -> None:
+        content = STUB_CSV + "not,a,reading\n" + STUB_CSV.replace("12:0", "13:0")
+        body = preview(control, content).json()
+        assert body["level"] == "some_rejected"
+        assert (body["events"], body["malformed"]) == (6, 1)
+        assert [r["line"] for r in body["rejected"]] == [4]
+
+    def test_at_most_three_rejects_are_quoted(self, control: ControlHarness) -> None:
+        body = preview(control, "junk-a\njunk-b\njunk-c\njunk-d\n").json()
+        assert body["malformed"] == 4
+        assert [r["line"] for r in body["rejected"]] == [1, 2, 3]
+
+    def test_blank_content_is_empty(self, control: ControlHarness) -> None:
+        assert preview(control, "\n\n").json()["level"] == "empty"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"normalizer": "nope"},
+            {"source_format": "syslog"},  # the stub normalizer does not read syslog
+            {"params": {"bogus": 1}},
+        ],
+    )
+    def test_a_normalizer_that_cannot_be_asked_is_a_422(
+        self, control: ControlHarness, source: dict[str, Any]
+    ) -> None:
+        response = preview(control, STUB_CSV, **source)
+        assert response.status_code == 422
+        assert response.json()["detail"]["message"]
+
+    def test_nothing_is_stored(self, control: ControlHarness) -> None:
+        preview(control, STUB_CSV)
+        with control.session_factory() as session:
+            assert list(repository.get_events(session, org_id=DEFAULT_ORG_ID)) == []
+            assert list(repository.list_malformed(session, org_id=DEFAULT_ORG_ID)) == []
+
+
 class TestRuns:
     def test_run_persists_and_returns_summary(self, control: ControlHarness) -> None:
         response = control.client.post(

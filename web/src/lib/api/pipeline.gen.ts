@@ -61,6 +61,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Run Source
+         * @description Read one source with its normalizer only, so a wrong format shows before the run.
+         *
+         *     Nothing is detected or stored. 422 when the normalizer cannot even be asked: an
+         *     unknown name, bad params, or a format it does not read.
+         */
+        post: operations["preview_run_source_runs_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs": {
         parameters: {
             query?: never;
@@ -381,6 +404,8 @@ export interface paths {
         /**
          * Suspend
          * @description Block the organization's logins and sign its users out. Nothing is deleted.
+         *
+         *     A super admin's home organization cannot be suspended (409): it would lock them out.
          */
         post: operations["suspend_admin_organizations__org_id__suspend_post"];
         delete?: never;
@@ -1128,6 +1153,38 @@ export interface components {
             sinks?: components["schemas"]["SinkConfig"][];
         };
         /**
+         * PreviewRequest
+         * @description One source and its content, read by its normalizer alone — nothing is judged or stored.
+         */
+        PreviewRequest: {
+            source: components["schemas"]["SourceSpec"];
+            /**
+             * Content
+             * @description The source's raw content, at most 4,000,000 characters
+             */
+            content: string;
+        };
+        /**
+         * PreviewResponse
+         * @description How much of one source its normalizer could read (ADR-0017, before the run).
+         */
+        PreviewResponse: {
+            /** Events */
+            events: number;
+            /** Malformed */
+            malformed: number;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "empty" | "clean" | "some_rejected" | "mostly_rejected" | "unreadable";
+            /**
+             * Rejected
+             * @description The first 3 rejected records, in input order
+             */
+            rejected: components["schemas"]["RejectedLine"][];
+        };
+        /**
          * PrioritizedAlert
          * @description The analyst-facing decision: ranked, labeled, explained.
          *
@@ -1190,6 +1247,21 @@ export interface components {
             username: string;
             /** Password */
             password: string;
+        };
+        /** RejectedLine */
+        RejectedLine: {
+            /**
+             * Line
+             * @description 1-based line number in the content, when it can be found
+             */
+            line: number | null;
+            /**
+             * Raw
+             * @description The rejected record, truncated to 200 characters
+             */
+            raw: string;
+            /** Error */
+            error: string;
         };
         /** RoleChangeRequest */
         RoleChangeRequest: {
@@ -1455,6 +1527,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_run_source_runs_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewResponse"];
                 };
             };
             /** @description Validation Error */

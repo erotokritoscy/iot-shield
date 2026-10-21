@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from iotshield.contracts import (
     Asset,
@@ -42,6 +43,7 @@ from iotshield.pipeline.config import (
     PipelineConfig,
     PipelineSpec,
     SinkConfig,
+    SourceSpec,
     config_fingerprint,
 )
 from iotshield.pipeline.registry import (
@@ -136,6 +138,56 @@ def resolve_assets(seeded: Sequence[Asset], events: Sequence[NormalizedEvent]) -
     return list(resolved.values())
 
 
+RejectionLevel = Literal["empty", "clean", "some_rejected", "mostly_rejected", "unreadable"]
+
+
+def rejection_level(events: int, malformed: int) -> RejectionLevel:
+    """How much of one source its normalizer rejected — the ADR-0017 signal, as a verdict.
+
+    ``unreadable`` (nothing read at all) and ``mostly_rejected`` (at or above
+    ``_MALFORMED_WARN_RATE``) both mean "probably the wrong normalizer or format";
+    ``some_rejected`` is the healthy feed with a few corrupt lines. ``empty`` is input that
+    yielded neither, e.g. only blank lines. One function, so the run's warning and the
+    compose page's preview cannot disagree about where the line is.
+    """
+    total = events + malformed
+    if total == 0:
+        return "empty"
+    if events == 0:
+        return "unreadable"
+    if malformed / total >= _MALFORMED_WARN_RATE:
+        return "mostly_rejected"
+    return "some_rejected" if malformed > 0 else "clean"
+
+
+@dataclass(frozen=True)
+class SourcePreview:
+    """One source normalized on its own, for a verdict before the run (no detectors, no sinks)."""
+
+    events: int
+    malformed: list[MalformedRecord]
+    level: RejectionLevel
+
+
+def preview_source(source: SourceSpec, text: str, *, origin: str = "preview") -> SourcePreview:
+    """Normalize one source's text and say how much of it was readable.
+
+    The compose page asks this while a source is being filled in, so "wrong format" is
+    reported beside the file rather than as a malformed pile after the run. It is the run's
+    own ingest step for one source — the same normalizer, built the same way — so there is
+    no rival format-sniffer to disagree with the run (ADR-0017). Raises ``ValueError`` for
+    an unknown normalizer, bad params, or a format the normalizer does not read.
+    """
+    result = build_normalizer(source.normalizer, source.params).normalize(
+        text, source_format=source.source_format, origin=origin
+    )
+    return SourcePreview(
+        events=len(result.events),
+        malformed=result.malformed,
+        level=rejection_level(len(result.events), len(result.malformed)),
+    )
+
+
 def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str | None:
     """Flag a source where most input failed to parse — usually the wrong normalizer.
 
@@ -146,9 +198,9 @@ def _high_malformed_warning(normalizer: str, events: int, malformed: int) -> str
     normalizer's own reject count, so there is no rival format-sniffer to disagree
     with it (ADR-0017). Returns None when there is nothing to say.
     """
-    total = events + malformed
-    if total == 0 or malformed / total < _MALFORMED_WARN_RATE:
+    if rejection_level(events, malformed) not in ("unreadable", "mostly_rejected"):
         return None
+    total = events + malformed
     pct = round(100 * malformed / total)
     return (
         f"the {normalizer!r} normalizer rejected {pct}% of input "

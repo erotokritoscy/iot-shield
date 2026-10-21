@@ -30,6 +30,8 @@ export type SinkInfo = P["SinkInfo"];
 export type ModulesResponse = P["ModulesResponse"];
 export type IssueInfo = P["IssueInfo"];
 export type ValidateResponse = P["ValidateResponse"];
+export type PreviewResponse = P["PreviewResponse"];
+export type RejectedLine = P["RejectedLine"];
 export type RunResponse = P["RunResponse"];
 export type PipelineSpec = P["PipelineSpec"];
 

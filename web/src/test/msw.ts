@@ -39,10 +39,11 @@ export const emptyHandlers: RequestHandler[] = [
 ];
 
 /** Whatever the last run POSTed — the request body a parity test asserts against (C4). */
-export const captured: { runBody: unknown; validateBody: unknown; evalBody: unknown } = {
+export const captured: { runBody: unknown; validateBody: unknown; evalBody: unknown; previewBodies: unknown[] } = {
   runBody: null,
   validateBody: null,
   evalBody: null,
+  previewBodies: [],
 };
 
 export const pipelineHandlers: RequestHandler[] = [
@@ -51,6 +52,13 @@ export const pipelineHandlers: RequestHandler[] = [
   http.post(`${PIPELINE}/runs/validate`, async ({ request }) => {
     captured.validateBody = await request.json();
     return HttpResponse.json({ ok: true, issues: [] });
+  }),
+  // Every source reads cleanly unless a test says otherwise: one record per non-blank line.
+  http.post(`${PIPELINE}/runs/preview`, async ({ request }) => {
+    const body = (await request.json()) as { content: string };
+    captured.previewBodies.push(body);
+    const events = body.content.split("\n").filter((line) => line.trim()).length;
+    return HttpResponse.json({ events, malformed: 0, level: "clean", rejected: [] });
   }),
   http.post(`${PIPELINE}/runs`, async ({ request }) => {
     captured.runBody = await request.json();

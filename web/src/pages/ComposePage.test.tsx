@@ -6,11 +6,12 @@
  * on screen by construction. The wizard must change none of it — every original assertion is
  * kept, reached by walking the steps instead of scrolling.
  */
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { captured, SAMPLE_CSV } from "@/test/msw";
+import { captured, PIPELINE, SAMPLE_CSV, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
 const CSV = "2026-07-07T12:00:00+00:00,pump-02,Pressure,96.0";
@@ -27,8 +28,9 @@ interface RunBody {
 
 async function openCompose(): Promise<void> {
   renderApp("/compose");
-  await screen.findByTestId("src_0_norm");
+  await screen.findByTestId("src_0_text");
 }
+
 
 /** Jump with the stepper. Only reachable steps are enabled, which is itself under test. */
 async function toStep(step: 1 | 2 | 3 | 4): Promise<void> {
@@ -51,6 +53,50 @@ async function runFromReview(): Promise<RunBody> {
   await screen.findByText("Run complete.");
   return captured.runBody as RunBody;
 }
+
+/** Every form label on screen with no (i) beside it — empty when every field explains itself. */
+function unexplained(): string[] {
+  return [...document.querySelectorAll(".field-label")]
+    .filter((label) => label.parentElement?.querySelector('button[aria-label^="About "]') == null)
+    .map((label) => label.textContent ?? "");
+}
+
+/** Open every "<adapter> parameters" disclosure, so the param fields are on screen too. */
+async function expandParams(): Promise<void> {
+  for (const button of screen.queryAllByRole("button", { name: /parameters$/, expanded: false })) {
+    await userEvent.click(button);
+  }
+}
+
+describe("Compose & run — every field has an (i)", () => {
+  it("explains every field on steps 1–3", async () => {
+    await openCompose();
+    await expandParams();
+    expect(unexplained()).toEqual([]);
+    await userEvent.selectOptions(screen.getByTestId("src_0_norm"), "flow");
+    expect(screen.getByRole("button", { name: "About Normalizer" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Input format" })).toBeInTheDocument();
+    expect(unexplained()).toEqual([]);
+    await userEvent.selectOptions(screen.getByTestId("src_0_norm"), "stub");
+
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await toStep(2);
+    await expandParams();
+    expect(screen.getByRole("button", { name: "About threshold" })).toBeInTheDocument();
+    expect(unexplained()).toEqual([]);
+
+    await toStep(3);
+    await expandParams();
+    expect(screen.getByRole("button", { name: "About Sinks" })).toBeInTheDocument();
+    expect(unexplained()).toEqual([]);
+  });
+
+  it("tells the user what the chosen format looks like", async () => {
+    await openCompose();
+    await userEvent.click(screen.getByRole("button", { name: "About Normalizer" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("timestamp,asset_id,metric,value");
+  });
+});
 
 describe("Compose & run — the wizard", () => {
   beforeEach(() => {
@@ -84,8 +130,8 @@ describe("Compose & run — the wizard", () => {
     // The normalizer is chosen by the format it declares, not by its name: `flow` sorts
     // before `stub`, so a name-ordered default would open on a flow chain fed telemetry CSV.
     await openCompose();
-    expect((screen.getByTestId("src_0_norm") as HTMLSelectElement).value).toBe("stub");
     await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    expect((screen.getByTestId("src_0_norm") as HTMLSelectElement).value).toBe("stub");
     await toStep(2);
     // `meter_iforest` sorts first and is *untrained* until an artifact is named.
     expect((screen.getByTestId("det_0_name") as HTMLSelectElement).value).toBe("stub_threshold");
@@ -253,6 +299,192 @@ describe("Compose & run — the wizard", () => {
   });
 });
 
+describe("Compose & run — the source wizard", () => {
+  beforeEach(() => {
+    captured.runBody = null;
+  });
+
+  it("shows every field of a source on one card, with a preview of what will be read", async () => {
+    await openCompose();
+    expect(screen.getByTestId("src_0_tab")).toHaveAttribute("aria-current", "step");
+    const card = screen.getByTestId("src_0_card");
+    for (const id of ["src_0_norm", "src_0_file", "src_0_text"]) expect(within(card).getByTestId(id)).toBeInTheDocument();
+    expect(within(card).queryByTestId("src_0_preview")).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByTestId("src_0_text"), `${CSV}\n${CSV}`);
+    expect(within(card).getByTestId("src_0_preview")).toHaveTextContent("pump-02,Pressure,96.0");
+    expect(await within(card).findByText("Ready: stub reads 2 of 2 records.")).toBeInTheDocument();
+    // The last source offers a new one, not a "next" that does not exist.
+    expect(screen.getByTestId("src_0_add_next")).toBeInTheDocument();
+    expect(screen.queryByTestId("src_0_next_source")).not.toBeInTheDocument();
+  });
+
+  it("shows one source at a time: a new source replaces the first on screen", async () => {
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await userEvent.click(screen.getByTestId("compose_src_add"));
+
+    expect(screen.queryByTestId("src_0_card")).not.toBeInTheDocument();
+    expect(screen.getByTestId("src_1_card")).toBeInTheDocument();
+    expect(screen.getByTestId("src_1_tab")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("source-1");
+    expect(screen.getByTestId("src_1_tab")).toHaveTextContent("needs content");
+
+    // Back to Source 1 through its step: what it held is still there.
+    await userEvent.click(screen.getByTestId("src_0_tab"));
+    expect(screen.getByTestId("src_0_text")).toHaveValue(CSV);
+    expect(screen.queryByTestId("src_1_card")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("src_0_next_source"));
+    expect(screen.getByTestId("src_1_card")).toBeInTheDocument();
+  });
+
+  it("shows the chain check's finding about this source on its card and its tab", async () => {
+    server.use(
+      http.post(`${PIPELINE}/runs/validate`, () =>
+        HttpResponse.json({
+          ok: false,
+          issues: [{ level: "error", stage: "sources[0]", message: "no normalizer accepts format 'x'" }],
+        }),
+      ),
+    );
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    expect(await screen.findByText("no normalizer accepts format 'x'")).toBeInTheDocument();
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("has an error");
+  });
+
+  it("adds a second source from the card, gates Next on it, and sends both in order", async () => {
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await userEvent.click(screen.getByTestId("src_0_add_next"));
+    expect(screen.getByTestId("src_1_tab")).toHaveAttribute("aria-current", "step");
+    // The new, empty source holds the step back, exactly like the first one did.
+    expect(screen.getByText(/Source 2 needs content/)).toBeInTheDocument();
+    expect(screen.getByTestId("wizard_next")).toBeDisabled();
+
+    await userEvent.upload(screen.getByTestId("src_1_file"), new File([CSV], "second.csv", { type: "text/csv" }));
+    await waitFor(() => expect(screen.getByTestId("wizard_next")).toBeEnabled());
+    await toStep(2);
+    const body = await runFromReview();
+    expect(body.inputs).toEqual([
+      { content: CSV, origin: "source-1" },
+      { content: CSV, origin: "second.csv" },
+    ]);
+  });
+
+  it("removes a source from the middle, keeping the others", async () => {
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), "a");
+    await userEvent.click(screen.getByTestId("compose_src_add"));
+    await userEvent.type(screen.getByTestId("src_1_text"), "b");
+    await userEvent.click(screen.getByTestId("compose_src_add"));
+    await userEvent.type(screen.getByTestId("src_2_text"), "c");
+
+    await userEvent.click(screen.getByTestId("src_1_tab"));
+    await userEvent.click(screen.getByTestId("src_1_remove"));
+    expect(screen.queryByTestId("src_2_tab")).not.toBeInTheDocument();
+    expect(screen.getByTestId("src_0_text")).toHaveValue("a");
+    await userEvent.click(screen.getByTestId("src_1_tab"));
+    expect(screen.getByTestId("src_1_text")).toHaveValue("c");
+  });
+});
+
+/** `/runs/preview` answering every source with this verdict. */
+function previewSays(result: {
+  events: number;
+  malformed: number;
+  level: "empty" | "clean" | "some_rejected" | "mostly_rejected" | "unreadable";
+  rejected?: { line: number | null; raw: string; error: string }[];
+}): void {
+  server.use(http.post(`${PIPELINE}/runs/preview`, () => HttpResponse.json({ rejected: [], ...result })));
+}
+
+describe("Compose & run — a file in the wrong format", () => {
+  beforeEach(() => {
+    captured.previewBodies = [];
+  });
+
+  it("asks the source's own normalizer to read it, and nothing else", async () => {
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    await screen.findByText("Ready: stub reads 1 of 1 records.");
+    expect(captured.previewBodies.at(-1)).toEqual({
+      source: { normalizer: "stub", source_format: "stub-csv", params: {} },
+      content: CSV,
+    });
+  });
+
+  it("calls a file nothing can be read of an error, by line, and blocks Next", async () => {
+    previewSays({
+      events: 0,
+      malformed: 2,
+      level: "unreadable",
+      rejected: [
+        { line: 1, raw: "<34>1 2026-07-07T12:00:00Z host-a app", error: "expected 4 fields, got 1" },
+        { line: 2, raw: "<34>1 2026-07-07T12:01:00Z host-a app", error: "expected 4 fields, got 1" },
+      ],
+    });
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), "syslog line");
+
+    const error = await screen.findByTestId("src_0_read_error");
+    expect(error).toHaveTextContent("Wrong format?");
+    expect(error).toHaveTextContent("stub (stub-csv) could not read any of the 2 records");
+    expect(within(error).getByTestId("src_0_rejected")).toHaveTextContent("Line 1: expected 4 fields, got 1");
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("wrong format?");
+    expect(screen.getByText(/Source 1 cannot be read by stub/)).toBeInTheDocument();
+    expect(screen.getByTestId("wizard_next")).toBeDisabled();
+    expect(screen.getByTestId("step_2")).toBeDisabled();
+    expect(screen.queryByText(/^Ready:/)).not.toBeInTheDocument();
+  });
+
+  it("warns, without blocking, when most of a file cannot be read", async () => {
+    previewSays({
+      events: 1,
+      malformed: 4,
+      level: "mostly_rejected",
+      rejected: [{ line: 2, raw: "junk", error: "expected 4 fields, got 1" }],
+    });
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+
+    const warning = await screen.findByTestId("src_0_read_warning");
+    expect(warning).toHaveTextContent("could read only 1 of 5 records");
+    expect(warning).toHaveTextContent("…and 3 more.");
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("mostly unreadable");
+    await waitFor(() => expect(screen.getByTestId("wizard_next")).toBeEnabled());
+  });
+
+  it("notes a few bad lines and still says the source is ready", async () => {
+    previewSays({
+      events: 9,
+      malformed: 1,
+      level: "some_rejected",
+      rejected: [{ line: 4, raw: "not,a,reading", error: "expected 4 fields, got 3" }],
+    });
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+
+    const note = await screen.findByTestId("src_0_read_note");
+    expect(note).toHaveTextContent("9 of 10 records read; 1 cannot be read");
+    expect(note).toHaveTextContent("Line 4: expected 4 fields, got 3");
+    expect(await screen.findByText("Ready: stub reads 9 of 10 records.")).toBeInTheDocument();
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("source-1");
+  });
+
+  it("says when the check itself failed, without blocking", async () => {
+    server.use(
+      http.post(`${PIPELINE}/runs/preview`, () =>
+        HttpResponse.json({ detail: { message: "unknown normalizer 'x'", issues: [] } }, { status: 422 }),
+      ),
+    );
+    await openCompose();
+    await userEvent.type(screen.getByTestId("src_0_text"), CSV);
+    expect(await screen.findByText(/Could not check what stub \(stub-csv\) can read/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("wizard_next")).toBeEnabled());
+  });
+});
+
 describe("Compose & run — samples and scenarios", () => {
   beforeEach(() => {
     captured.runBody = null;
@@ -261,10 +493,19 @@ describe("Compose & run — samples and scenarios", () => {
   it("loads a sample file with its own normalizer and filename", async () => {
     await openCompose();
     await userEvent.selectOptions(await screen.findByTestId("src_0_sample"), "bruteforce_syslog");
-    await waitFor(() => expect(screen.getByTestId("src_0_norm")).toHaveValue("syslog"));
-    expect(screen.getByText("Failed root passwords.")).toBeInTheDocument();
+    expect(await screen.findByText("Failed root passwords.")).toBeInTheDocument();
     expect(screen.getByText(/1 lines\s+loaded from/)).toBeInTheDocument();
     expect(screen.getByTestId("wizard_next")).toBeEnabled();
+    expect(screen.getByTestId("src_0_norm")).toHaveValue("syslog");
+  });
+
+  it("shows a scenario by its title, with its description behind the (i)", async () => {
+    await openCompose();
+    const card = (await screen.findByTestId("scenario_overheating_pump")).parentElement as HTMLElement;
+    expect(within(card).getByText("Overheating pump")).toBeInTheDocument();
+    expect(within(card).queryByRole("tooltip")).toBeNull();
+    await userEvent.click(within(card).getByRole("button", { name: "About Overheating pump" }));
+    expect(within(card).getByRole("tooltip")).toHaveTextContent(/expects 1 alert/);
   });
 
   it("applies a scenario to every step, lands on Review, and confirms the result", async () => {

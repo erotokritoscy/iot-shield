@@ -26,6 +26,7 @@ from iotshield.pipeline import (
 )
 from iotshield.pipeline import runner as runner_module
 from iotshield.pipeline.compat import IncompatiblePipelineError
+from iotshield.pipeline.config import SourceSpec
 from iotshield.storage import DEFAULT_ORG_ID, make_engine, make_session_factory, repository
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -387,6 +388,35 @@ class TestMalformedRateWarning:
         assert (warning is not None) == warns
         if warning is not None:
             assert "stub" in warning and "may not match" in warning
+
+
+class TestRejectionLevel:
+    """The verdict the compose page's preview shows; the run's warning uses the same line."""
+
+    @pytest.mark.parametrize(
+        "events,malformed,level",
+        [
+            (0, 0, "empty"),
+            (10, 0, "clean"),
+            (10, 3, "some_rejected"),
+            (1, 1, "mostly_rejected"),
+            (1, 3, "mostly_rejected"),
+            (0, 5, "unreadable"),
+        ],
+    )
+    def test_levels(self, events: int, malformed: int, level: str) -> None:
+        assert runner_module.rejection_level(events, malformed) == level
+
+    def test_preview_reads_one_source_with_its_own_normalizer(self) -> None:
+        source = SourceSpec(normalizer="syslog", source_format="syslog")
+        csv = "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0\n" * 3
+        preview = runner_module.preview_source(source, csv)
+        assert preview.events == 0 and len(preview.malformed) == 3
+        assert preview.level == "unreadable"
+
+    def test_preview_refuses_a_format_the_normalizer_does_not_read(self) -> None:
+        with pytest.raises(ValueError, match="syslog"):
+            runner_module.preview_source(SourceSpec(normalizer="stub", source_format="syslog"), "x")
 
 
 def _event(asset_id: str) -> NormalizedEvent:
