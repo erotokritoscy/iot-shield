@@ -49,3 +49,6 @@ data/eval/skab_*/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# IDE settings (JetBrains), per developer
+.idea/
