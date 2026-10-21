@@ -31,7 +31,7 @@ import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import type { ModulesResponse, SinkInfo } from "@/lib/api/types";
 import { initialValues, type ParamValues } from "@/lib/params";
-import { useModules } from "@/lib/queries";
+import { useConnections, useDataSources, useModules } from "@/lib/queries";
 import { fetchManifest, fetchSampleText, type SampleManifest, type Scenario } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { DetectorCard } from "@/pages/compose/DetectorCard";
@@ -189,6 +189,8 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
   const engines = React.useMemo(() => byName(catalogue.alert_engines), [catalogue]);
   const sinks = React.useMemo(() => byName(catalogue.sinks), [catalogue]);
   const manifest = useQuery({ queryKey: samplesKey, queryFn: fetchManifest, staleTime: Infinity });
+  const dataSources = useDataSources();
+  const connections = useConnections();
   const library: SampleManifest = manifest.data ?? { samples: [], scenarios: [] };
 
   // Preselection happens exactly once, when this component mounts with the catalogue.
@@ -382,6 +384,8 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
                 row={activeSource}
                 normalizers={normalizers}
                 samples={library.samples}
+                dataSources={dataSources.data ?? []}
+                connections={connections.data ?? []}
                 issues={sourceIssues(active)}
                 checking={settling}
                 preview={previews[active] ?? { result: null, error: null, pending: false }}

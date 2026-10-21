@@ -163,6 +163,286 @@
         }
       }
     },
+    "/data-sources": {
+      "get": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "List Sources",
+        "description": "This organization's data sources, IT before OT, then by name.",
+        "operationId": "list_sources_data_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DataSourceInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Sources Data Sources Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "Add Source",
+        "operationId": "add_source_data_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/data-sources/connections": {
+      "get": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "List Connections",
+        "description": "The declared databases this organization may pull from (ADR-0042).",
+        "operationId": "list_connections_data_sources_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectionInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Connections Data Sources Connections Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/data-sources/{source_id}/devices": {
+      "get": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "Source Devices",
+        "description": "What a pull from this source can be narrowed to (meters, hosts); query string =\nthe connector's params, e.g. ``?utility=water``.",
+        "operationId": "source_devices_data_sources__source_id__devices_get",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "title": "Response Source Devices Data Sources  Source Id  Devices Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/data-sources/{source_id}/pull": {
+      "post": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "Pull Source",
+        "description": "A date range of this source's database, as text for its normalizer. Read-only.",
+        "operationId": "pull_source_data_sources__source_id__pull_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/data-sources/{source_id}": {
+      "put": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "Change Source",
+        "operationId": "change_source_data_sources__source_id__put",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "data sources"
+        ],
+        "summary": "Remove Source",
+        "operationId": "remove_source_data_sources__source_id__delete",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/eval/corpora": {
       "get": {
         "tags": [
@@ -1638,6 +1918,53 @@
         "title": "CaseTimeline",
         "description": "Where the faults, detections and alerts actually fell, for one case.\n\nThe data behind the timeline chart, and the only part of a report that is about *shape*\nrather than *score*. It answers the question a table cannot: a detector with\n``det/inc 300`` is fragmenting, but you only *see* what that costs an analyst when the\nthree lanes are drawn against one clock.\n\nOff by default (``include_timeline``): the report's other job is to be a small, diffable\nartifact a CI gate reads, and spans would dominate it."
       },
+      "ConnectionInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "connector": {
+            "type": "string",
+            "title": "Connector"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "normalizer": {
+            "type": "string",
+            "title": "Normalizer"
+          },
+          "source_format": {
+            "type": "string",
+            "title": "Source Format"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/ParamInfo"
+            },
+            "type": "array",
+            "title": "Params"
+          },
+          "has_devices": {
+            "type": "boolean",
+            "title": "Has Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "connector",
+          "description",
+          "normalizer",
+          "source_format",
+          "params",
+          "has_devices"
+        ],
+        "title": "ConnectionInfo",
+        "description": "A database this organization may pull from, and what a pull from it yields."
+      },
       "CorporaResponse": {
         "properties": {
           "root": {
@@ -1742,6 +2069,162 @@
         "title": "Criticality",
         "description": "How much an asset matters \u2014 feeds the prioritizer's device weight."
       },
+      "DataSourceInfo": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "IT",
+              "OT"
+            ],
+            "title": "Type"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "normalizer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalizer"
+          },
+          "source_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Format"
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "name",
+          "type",
+          "description",
+          "normalizer",
+          "source_format",
+          "connection",
+          "created_at"
+        ],
+        "title": "DataSourceInfo"
+      },
+      "DataSourceRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "IT",
+              "OT"
+            ],
+            "title": "Type"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "normalizer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalizer"
+          },
+          "source_format": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Format"
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection",
+            "description": "A connection declared on the server; its connector decides the reader"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "DataSourceRequest",
+        "description": "A data source as an admin writes it. Blank optional text means \"not set\"."
+      },
       "DetectorConfig": {
         "properties": {
           "name": {
@@ -1815,6 +2298,24 @@
         ],
         "title": "DetectorSummary",
         "description": "A benchmarkable detector. ``fittable`` tells the UI whether fit protocols apply.\n\n``lanes`` is *decoded* server-side into bare ``Lane`` values, mirroring\n``ModuleInfo.formats``: capability tokens render to wire form only at the API boundary,\nso a client never has to know the ``lane:`` prefix scheme (``capabilities.py``). Plural\nbecause ``consumes`` is a set \u2014 a detector may legitimately consume more than one lane,\nand picking one arbitrarily would misreport it.\n\n``params`` and ``artifact_param`` are the ADR-0022 declaration, carried here so the\nEvaluate page needs *one* call rather than joining this against ``/modules``: which\nhyperparameters exist (with real defaults, so a form can prefill them), and which\nparam \u2014 if any \u2014 names a cached fit. A UI reads the latter to offer \"use trained\nweights\" and \"fit from scratch with my own hyperparameters\" as two exclusive modes,\ninstead of letting someone combine them and hit the atomicity error."
+      },
+      "DeviceInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "DeviceInfo"
       },
       "EvalRunRequest": {
         "properties": {
@@ -2567,6 +3068,69 @@
         ],
         "title": "PrioritizedAlert",
         "description": "The analyst-facing decision: ranked, labeled, explained.\n\n``detection_ids`` is the lineage; more than one entry means corroboration.\nEvery detection bucket becomes an alert \u2014 ranking, not a hidden gate,\ndecides what analysts look at first (ADR-0003 D3)."
+      },
+      "PullRequest": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "First day, inclusive, in the source's own clock"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "Last day, inclusive"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "The connector's pull params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "PullRequest"
+      },
+      "PullResponse": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "normalizer": {
+            "type": "string",
+            "title": "Normalizer"
+          },
+          "source_format": {
+            "type": "string",
+            "title": "Source Format"
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "normalizer",
+          "source_format",
+          "rows",
+          "origin"
+        ],
+        "title": "PullResponse",
+        "description": "A window of the source, as text its normalizer reads \u2014 ready to be a run's input."
       },
       "RegisterRequest": {
         "properties": {

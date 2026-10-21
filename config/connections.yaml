@@ -1,0 +1,32 @@
+# The source databases a data source may pull from (ADR-0042). Read by the Pipeline API on
+# every request, so an edit here takes effect without a restart.
+#
+# Declared here, never in a request: a data source names a connection, not a host. Passwords
+# are NOT in this file — `password_env` names the environment variable that holds each one
+# (set in .env; see .env.example). `organizations` lists who may pull; "*" means everyone.
+#
+# Every session is opened read-only with a query timeout (connect/connections.py).
+#
+# `host.docker.internal` is the machine running Docker: the two databases below are the
+# SensiPro and Biology projects' own compose stacks, publishing their ports on the host.
+
+connections:
+  sensipro:
+    connector: sensipro          # ~/projects/sensipro: `docker compose up -d sensiprodb`
+    driver: postgresql
+    host: host.docker.internal
+    port: 5433
+    database: sensipro
+    user: grafana
+    password_env: SENSIPRO_DB_PASSWORD
+    organizations: [ucy]
+
+  biology:
+    connector: biology           # ~/projects/biology: `docker compose up -d db`
+    driver: mysql
+    host: host.docker.internal
+    port: 3307
+    database: laravel
+    user: root
+    password_env: BIOLOGY_DB_PASSWORD
+    organizations: [ucy]

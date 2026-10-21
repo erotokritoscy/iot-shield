@@ -16,13 +16,14 @@ import { Button, Field, Select, Textarea } from "@/components/ui/controls";
 import { InfoLines } from "@/components/ui/info";
 import { Collapsible, Notice, Spinner } from "@/components/ui/surfaces";
 import { describeError } from "@/lib/api/http";
-import type { ModuleInfo, PreviewResponse } from "@/lib/api/types";
+import type { ConnectionInfo, DataSourceInfo, ModuleInfo, PreviewResponse, PullResponse } from "@/lib/api/types";
 import { readTextFile } from "@/lib/files";
 import { initialValues } from "@/lib/params";
 import { fetchSampleText, type Sample } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { ADAPTER_HELP, FIELD_HELP, FORMAT_HELP, paramHelp } from "@/pages/compose/help";
 import { MAX_UPLOAD_BYTES, sourceFromSample, type SourcePreview, type SourceRow } from "@/pages/compose/model";
+import { PullPanel } from "@/pages/compose/PullPanel";
 
 const NO_SAMPLE = "";
 const PREVIEW_LINES = 5;
@@ -131,6 +132,8 @@ export function SourceCard({
   row,
   normalizers,
   samples,
+  dataSources = [],
+  connections = [],
   issues,
   checking,
   preview,
@@ -143,6 +146,10 @@ export function SourceCard({
   readonly row: SourceRow;
   readonly normalizers: readonly ModuleInfo[];
   readonly samples: readonly Sample[];
+  /** The organization's data sources; picking one fills in how its data is read. */
+  readonly dataSources?: readonly DataSourceInfo[];
+  /** The source databases this organization may pull from (ADR-0042). */
+  readonly connections?: readonly ConnectionInfo[];
   readonly issues: readonly SourceIssue[];
   /** The chain check is still settling, so `issues` may describe an older edit. */
   readonly checking: boolean;
@@ -169,6 +176,44 @@ export function SourceCard({
       normalizer: name,
       format: next?.formats[0] ?? "",
       params: initialValues(next?.params),
+      // Reading it some other way means it is no longer read as that data source says.
+      dataSource: null,
+    });
+  };
+
+  const chosenSource = dataSources.find((source) => source.source_id === row.dataSource);
+  const connection = connections.find((item) => item.name === chosenSource?.connection);
+  const pickDataSource = (sourceId: string) => {
+    const source = dataSources.find((item) => item.source_id === sourceId);
+    if (source === undefined) {
+      onChange({ ...row, dataSource: null });
+      return;
+    }
+    const reader = normalizers.find((item) => item.name === source.normalizer);
+    onChange(
+      reader && source.source_format
+        ? {
+            ...row,
+            dataSource: source.source_id,
+            normalizer: reader.name,
+            format: source.source_format,
+            params: initialValues(reader.params),
+          }
+        : { ...row, dataSource: source.source_id },
+    );
+  };
+
+  // A pull fills the source as an uploaded file would, in the format its connector writes.
+  const onPulled = (pulled: PullResponse) => {
+    setFileError(null);
+    const reader = normalizers.find((item) => item.name === pulled.normalizer);
+    onChange({
+      ...row,
+      normalizer: pulled.normalizer,
+      format: pulled.source_format,
+      params: row.normalizer === pulled.normalizer ? row.params : initialValues(reader?.params),
+      content: pulled.content,
+      fileName: pulled.origin,
     });
   };
 
@@ -222,6 +267,44 @@ export function SourceCard({
           </Button>
         ) : null}
       </div>
+
+      {dataSources.length > 0 ? (
+        <Field
+          label="Data source"
+          htmlFor={`src_${index}_source`}
+          info={FIELD_HELP.dataSource}
+          hint={
+            chosenSource
+              ? chosenSource.normalizer
+                ? `${chosenSource.type} · read by ${chosenSource.normalizer} (${chosenSource.source_format})` +
+                  (chosenSource.connection ? " · pull it below, or upload / paste." : ".")
+                : `${chosenSource.type} · no normalizer set for it — choose one below.`
+              : "Optional: which of your data sources this is."
+          }
+        >
+          <Select
+            id={`src_${index}_source`}
+            data-testid={`src_${index}_source`}
+            options={[NO_SAMPLE, ...dataSources.map((source) => source.source_id)]}
+            labelFor={(id) => {
+              const source = dataSources.find((item) => item.source_id === id);
+              return source ? `${source.type} · ${source.name}` : "— none —";
+            }}
+            value={chosenSource?.source_id ?? NO_SAMPLE}
+            onChange={(event) => pickDataSource(event.target.value)}
+          />
+        </Field>
+      ) : null}
+
+      {chosenSource && connection ? (
+        <PullPanel
+          key={chosenSource.source_id}
+          index={index}
+          source={chosenSource}
+          connection={connection}
+          onPulled={onPulled}
+        />
+      ) : null}
 
       {samples.length > 0 ? (
         <Field

@@ -318,6 +318,25 @@ def describe_params(
     return params
 
 
+def model_params(model: type[BaseModel]) -> list[ParamInfo]:
+    """A pydantic params model's fields as the catalogue's ``ParamInfo``.
+
+    For a surface with no factory to introspect — a connector's pull parameters (ADR-0042) are
+    a model and nothing else. Reading the fields directly also avoids the synthesized
+    signature, whose default for a ``default_factory`` field is a pydantic sentinel.
+    """
+    return [
+        ParamInfo(
+            name=name,
+            type=_type_name(field.annotation),
+            default=None if field.is_required() else field.get_default(call_default_factory=True),
+            required=field.is_required(),
+            choices=_literal_choices(field.annotation),
+        )
+        for name, field in model.model_fields.items()
+    ]
+
+
 def params_of(spec: AdapterSpec[Any]) -> list[ParamInfo]:
     """The configuration surface of a registered adapter, as both catalogues publish it.
 
@@ -543,6 +562,13 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
                 },
             ) from exc
         return _run_response(report)
+
+    # An organization's register of its IT and OT data sources (ADR-0041). Always mounted:
+    # with auth off it is the default organization's, like every other route here. Imported
+    # here because it reuses this module's ParamInfo and source-size limit.
+    from iotshield.api.data_sources import create_data_sources_router
+
+    app.include_router(create_data_sources_router())
 
     # The evaluation plane is opt-in and *absent* otherwise: no route to reach or probe in a
     # product deployment, rather than a guard inside a live handler (ADR-0021 D1). Imported

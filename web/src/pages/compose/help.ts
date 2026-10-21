@@ -10,6 +10,14 @@
 import type { ParamInfo } from "@/lib/api/types";
 
 export const FIELD_HELP = {
+  dataSource:
+    "One of your organization's data sources (Operate → Data sources). Picking one fills in the normalizer and format it is read with; you still upload or paste its data.",
+  pullFrom:
+    "The first day to pull, in the source's own clock (SensiPro: Cyprus time; Biology: UTC). Included.",
+  pullTo:
+    "The last day to pull, included. One pull covers at most 92 days and 100,000 rows; a larger window is refused with its size, never cut short.",
+  pullDevices:
+    "Narrow the pull to some meters or hosts. Pick several with Ctrl/⌘-click; pick none to pull every one. The filter box only changes what is listed.",
   sample:
     "A small ready-made input file from the sample library. Picking one fills in the content, the normalizer and the format together, so they always match.",
   normalizer:
@@ -49,6 +57,8 @@ export const ADAPTER_HELP: Readonly<Record<string, string>> = {
   "detector:log_burst": "log_burst flags too many matching log lines in a short window.",
   "detector:flow_burst": "flow_burst flags a device contacting too many hosts or ports, or sending too much data, too fast.",
   "detector:meter_iforest": "meter_iforest flags unusual hourly consumption on a utility meter (needs meter data).",
+  "detector:meter_quality":
+    "meter_quality flags SensiPro's meter data-quality anomalies: a meter that stopped reporting (heartbeat) and an hour over a fixed limit (high). Needs meter data. Zero, negative, backwards and unreadable counters are refused earlier, at ingest, and listed on Data health.",
   "detector:rules": "rules matches authored signatures of known-bad behaviour — one match is enough, no rate needed.",
   "alert_engine:stub": "stub gives every alert a simple template score — the reference engine.",
   "alert_engine:weighted":
@@ -91,11 +101,19 @@ const PARAM_HELP: Readonly<Record<string, string>> = {
     "Detections on the same device within this many minutes are grouped into one alert. Larger means fewer, bigger alerts.",
   "alert_engine:weighted.bucket_minutes":
     "Detections on the same device within this many minutes are grouped into one alert. Larger means fewer, bigger alerts.",
+  "detector:meter_quality.high_kwh":
+    "An electricity meter's hourly consumption above this many kWh is flagged as high. 35 is SensiPro's own number, which its script applied to minutes-apart raw readings — per hour it is much stricter, so raise it for large consumers.",
+  "detector:meter_quality.high_m3":
+    "A water meter's hourly consumption above this many m³ is flagged as high. 0.075 is SensiPro's own number, which its script applied to minutes-apart raw readings — per hour it is much stricter, so raise it for large consumers.",
+  "detector:meter_quality.max_silence_hours":
+    "Readings further apart than this many hours are flagged as a heartbeat (the meter went silent). Hourly meters report 1 h apart, and one missed reading leaves 3 h, so 2 catches a single miss.",
+  "connector:sensipro.utility":
+    "Which meters to pull: electricity (kWh) or water (m³). Each pull is one utility, because the meter detector judges each on its own scale.",
   "sink:file.path":
     "The output file's name. Only the name is used — it is always written inside the server's results directory, never anywhere else.",
 };
 
-export type AdapterKind = "normalizer" | "detector" | "alert_engine" | "sink";
+export type AdapterKind = "normalizer" | "detector" | "alert_engine" | "sink" | "connector";
 
 function typeText(param: ParamInfo): string {
   if (param.choices && param.choices.length > 0) return `one of ${param.choices.join(", ")}`;

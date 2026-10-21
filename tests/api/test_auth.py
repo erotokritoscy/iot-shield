@@ -32,7 +32,11 @@ def _routes(app: FastAPI) -> list[tuple[str, str]]:
 
 
 def _concrete(path: str) -> str:
-    return path.replace("{alert_id}", str(uuid4())).replace("{user_id}", str(uuid4()))
+    return (
+        path.replace("{alert_id}", str(uuid4()))
+        .replace("{user_id}", str(uuid4()))
+        .replace("{source_id}", str(uuid4()))
+    )
 
 
 class TestTheGateIsDefaultDeny:

@@ -12,7 +12,11 @@ import { LoginPage } from "@/pages/auth/LoginPage";
 import { RegisterPage } from "@/pages/auth/RegisterPage";
 import { ComposePage } from "@/pages/ComposePage";
 import { DataHealthPage } from "@/pages/DataHealthPage";
+import { DataSourcesPage } from "@/pages/DataSourcesPage";
 import { EvaluatePage } from "@/pages/evaluate/EvaluatePage";
+import { ItOverviewPage } from "@/pages/overview/ItOverviewPage";
+import { MeterPage } from "@/pages/overview/MeterPage";
+import { OtOverviewPage } from "@/pages/overview/OtOverviewPage";
 import { TriagePage } from "@/pages/TriagePage";
 import { UsersPage } from "@/pages/UsersPage";
 
@@ -49,8 +53,12 @@ export function AppRoutes() {
               <Route path="/" element={<TriagePage />} />
               <Route path="/assets" element={<AssetsPage />} />
               <Route path="/data-health" element={<DataHealthPage />} />
+              <Route path="/overview/it" element={<ItOverviewPage />} />
+              <Route path="/overview/ot" element={<OtOverviewPage />} />
+              <Route path="/overview/ot/meter/:assetId" element={<MeterPage />} />
             </Route>
             <Route path="/compose" element={<ComposePage />} />
+            <Route path="/data-sources" element={<DataSourcesPage />} />
             <Route path="/evaluate" element={<EvaluatePage />} />
             <Route path="/users" element={<UsersPage />} />
           </Route>

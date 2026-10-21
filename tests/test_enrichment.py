@@ -160,11 +160,13 @@ def test_action_steps_inverts_action_text_for_every_shipped_claim() -> None:
     """
     from iotshield.detect.flow_burst import PRESETS as FLOW_PRESETS
     from iotshield.detect.log_burst import PRESETS as LOG_PRESETS
+    from iotshield.detect.meter_quality import ENRICHMENT as METER_QUALITY
     from iotshield.detect.rules.loader import load_ruleset
 
     shipped = [rule.enrichment for rule in load_ruleset()]
     shipped += [preset.enrichment for preset in (*LOG_PRESETS.values(), *FLOW_PRESETS.values())]
-    assert len(shipped) >= 11, "expected the six packaged rules and the five presets"
+    shipped += list(METER_QUALITY.values())
+    assert len(shipped) >= 13, "expected the six packaged rules, five presets, two meter checks"
 
     for enrichment in shipped:
         assert enrichment.suggested_actions, f"{enrichment.origin} suggests nothing"

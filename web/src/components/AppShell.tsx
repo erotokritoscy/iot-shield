@@ -26,9 +26,14 @@ const MONITOR: NavItem[] = [
   { to: "/", label: "Triage" },
   { to: "/assets", label: "Assets & telemetry" },
   { to: "/data-health", label: "Data health" },
+  { to: "/overview/it", label: "IT overview" },
+  { to: "/overview/ot", label: "OT overview" },
 ];
 
-const OPERATE: NavItem[] = [{ to: "/compose", label: "Compose & run" }];
+const OPERATE: NavItem[] = [
+  { to: "/compose", label: "Compose & run" },
+  { to: "/data-sources", label: "Data sources" },
+];
 const EVALUATE: NavItem[] = [{ to: "/evaluate", label: "Benchmarks" }];
 const ACCOUNT: NavItem = { to: "/account", label: "Account" };
 const USERS: NavItem = { to: "/users", label: "Users" };

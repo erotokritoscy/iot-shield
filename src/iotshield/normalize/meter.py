@@ -94,8 +94,10 @@ from iotshield.meter import (
     UNIT_BY_TYPE,
     MeterReading,
     MeterType,
+    QualityIssue,
     consumption_message,
     metric_for,
+    tag_reject,
 )
 from iotshield.normalize._linewise import split_lines
 from iotshield.normalize.port import NormalizeResult
@@ -407,26 +409,55 @@ class MeterNormalizer:
         if isinstance(cached, str):
             raise MeterParseError(cached)
 
+        meter_id = _clean(parts[layout.meter_id_at])
+        if meter_id is None:
+            raise MeterParseError(f"{dialect.meter_id_column} is missing")
+
+        # The counter's rejects carry SensiPro's quality type (ADR-0043) and the meter-hour
+        # they belong to (ADR-0044), so Data health and the OT overview can count and place
+        # them as SensiPro's own anomaly records did. The meter id is read first for that.
         counter_text = _clean(parts[layout.counter_at])
         if counter_text is None:
-            raise MeterParseError(f"{dialect.counter_column} is missing")
+            raise MeterParseError(
+                tag_reject(
+                    QualityIssue.VALUE_ERROR,
+                    f"{dialect.counter_column} is missing",
+                    meter=meter_id,
+                    at=cached,
+                )
+            )
         try:
             # Some exports use a comma decimal separator (they are the ';'-delimited ones);
             # accept it rather than reading "89,91" as the integer 8991.
             counter = float(counter_text.replace(",", "."))
         except (ValueError, OverflowError) as exc:
             raise MeterParseError(
-                f"{dialect.counter_column} is not a usable number: {counter_text!r}"
+                tag_reject(
+                    QualityIssue.VALUE_ERROR,
+                    f"{dialect.counter_column} is not a usable number: {counter_text!r}",
+                    meter=meter_id,
+                    at=cached,
+                )
             ) from exc
         if not math.isfinite(counter):
-            raise MeterParseError(f"{dialect.counter_column} is not finite: {counter_text!r}")
+            raise MeterParseError(
+                tag_reject(
+                    QualityIssue.VALUE_ERROR,
+                    f"{dialect.counter_column} is not finite: {counter_text!r}",
+                    meter=meter_id,
+                    at=cached,
+                )
+            )
         if counter < 0:
             # A cumulative utility counter cannot be negative; a negative one is corrupt.
-            raise MeterParseError(f"{dialect.counter_column} is negative: {counter_text!r}")
-
-        meter_id = _clean(parts[layout.meter_id_at])
-        if meter_id is None:
-            raise MeterParseError(f"{dialect.meter_id_column} is missing")
+            raise MeterParseError(
+                tag_reject(
+                    QualityIssue.NEGATIVE,
+                    f"{dialect.counter_column} is negative: {counter_text!r}",
+                    meter=meter_id,
+                    at=cached,
+                )
+            )
 
         return _Reading(
             timestamp=cached,
@@ -542,12 +573,19 @@ def _closed_intervals(
             if reading.timestamp - previous.timestamp != INTERVAL:
                 continue
             if reading.counter < previous.counter:
-                # Real data, but consumption across a counter reset is undefined.
+                # Real data, but consumption across a counter reset is undefined. SensiPro
+                # names a fall to zero `zero` and any other fall `small` (ADR-0043).
+                issue = QualityIssue.ZERO if reading.counter == 0 else QualityIssue.SMALL
                 reject(
                     reading.line,
-                    "cumulative counter decreased "
-                    f"({previous.counter} -> {reading.counter}): a rollback or meter "
-                    "change, so consumption for this interval is undefined",
+                    tag_reject(
+                        issue,
+                        "cumulative counter decreased "
+                        f"({previous.counter} -> {reading.counter}): a rollback or meter "
+                        "change, so consumption for this interval is undefined",
+                        meter=reading.meter_id,
+                        at=reading.timestamp,
+                    ),
                 )
             else:
                 closed_any = True

@@ -11,11 +11,16 @@ import {
   assetsSchema,
   benchSpecsSchema,
   corporaSchema,
+  connectionsSchema,
+  dataSourceSchema,
+  dataSourcesSchema,
+  devicesSchema,
   detectionsSchema,
   detectorSummariesSchema,
   evaluationReportSchema,
   eventsSchema,
   healthSchema,
+  itOverviewSchema,
   malformedListSchema,
   authOptionsSchema,
   meSchema,
@@ -23,7 +28,10 @@ import {
   noContentSchema,
   organizationAdminInfoSchema,
   organizationsAdminSchema,
+  otOverviewSchema,
   previewSchema,
+  pullSchema,
+  qualityRecordsSchema,
   runSchema,
   summarySchema,
   userInfoSchema,
@@ -31,12 +39,22 @@ import {
   validateSchema,
   type EvalReport,
 } from "./schemas";
-import type { Lane, OrgRole } from "./types";
+import type { DataSourceRequest, Lane, OrgRole, PullRequest } from "./types";
 
 const EVENT_LIMIT = 5000;
 const DETECTION_LIMIT = 5000;
 const ALERT_LIMIT = 1000;
 const MALFORMED_LIMIT = 1000;
+/** Anomaly records shown at once: the route's own ceiling is 1,000. */
+const RECORDS_LIMIT = 500;
+/** Flows listed at once on the IT overview; the charts count all of them server-side. */
+const FLOWS_LIMIT = 500;
+
+/** A range of whole UTC days, both inclusive, as `YYYY-MM-DD`. */
+export interface DayRange {
+  readonly start: string;
+  readonly end: string;
+}
 
 /**
  * The server's own ceiling on `limit` (`api/app.py: LimitParam`, `le=10_000`).
@@ -128,6 +146,47 @@ export const readApi = {
     cappedList(MALFORMED_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/malformed", { schema: malformedListSchema, query: { limit } }),
     ),
+
+  // --- The IT and OT overviews (ADR-0044): counted on the server, whole UTC days ---------
+
+  itOverview: (range: DayRange, bucket: "day" | "hour" = "day") =>
+    apiRequest(READ_BASE, "/overview/it", { schema: itOverviewSchema, query: { ...range, bucket } }),
+
+  otOverview: (range: DayRange, options: { assetId?: string; bucket?: "day" | "hour" } = {}) =>
+    apiRequest(READ_BASE, "/overview/ot", {
+      schema: otOverviewSchema,
+      query: { ...range, asset_id: options.assetId, bucket: options.bucket },
+    }),
+
+  otRecords: (range: DayRange, options: { assetId?: string; issue?: string } = {}) =>
+    cappedList(RECORDS_LIMIT, (limit) =>
+      apiRequest(READ_BASE, "/overview/ot/records", {
+        schema: qualityRecordsSchema,
+        query: { ...range, asset_id: options.assetId, issue: options.issue, limit },
+      }),
+    ),
+
+  /** The flow events of a range of UTC days, newest last — the IT overview's table. */
+  flows: (range: DayRange) =>
+    cappedList(FLOWS_LIMIT, (limit) =>
+      apiRequest(READ_BASE, "/events", {
+        schema: eventsSchema,
+        query: { lane: "flow", start: `${range.start}T00:00:00Z`, end: `${range.end}T23:59:59.999999Z`, limit },
+      }),
+    ),
+
+  /** One meter's hourly consumption events for one UTC day. */
+  meterDay: (assetId: string, day: string) =>
+    apiRequest(READ_BASE, "/events", {
+      schema: eventsSchema,
+      query: {
+        asset_id: assetId,
+        lane: "telemetry",
+        start: `${day}T00:00:00Z`,
+        end: `${day}T23:59:59Z`,
+        limit: 200,
+      },
+    }),
 };
 
 /** One input source's raw payload, aligned to `spec.sources` by position. */
@@ -252,6 +311,37 @@ export const authApi = {
       schema: noContentSchema,
       method: "DELETE",
     }),
+};
+
+const sourcePath = (sourceId: string) => `/data-sources/${encodeURIComponent(sourceId)}`;
+
+/** The organization's IT/OT data sources (ADR-0041): anyone lists, admins write. */
+export const dataSourcesApi = {
+  list: () => apiRequest(PIPELINE_BASE, "/data-sources", { schema: dataSourcesSchema }),
+
+  add: (body: DataSourceRequest) =>
+    apiRequest(PIPELINE_BASE, "/data-sources", { schema: dataSourceSchema, method: "POST", body }),
+
+  update: (sourceId: string, body: DataSourceRequest) =>
+    apiRequest(PIPELINE_BASE, sourcePath(sourceId), { schema: dataSourceSchema, method: "PUT", body }),
+
+  remove: (sourceId: string) =>
+    apiRequest(PIPELINE_BASE, sourcePath(sourceId), { schema: noContentSchema, method: "DELETE" }),
+
+  /** The source databases this organization may pull from (ADR-0042). */
+  connections: () => apiRequest(PIPELINE_BASE, "/data-sources/connections", { schema: connectionsSchema }),
+
+  /** What a pull can be narrowed to (meters, hosts); `params` filter it, e.g. the utility. */
+  devices: (sourceId: string, params: Record<string, string>) => {
+    const query = new URLSearchParams(params).toString();
+    return apiRequest(PIPELINE_BASE, `${sourcePath(sourceId)}/devices${query ? `?${query}` : ""}`, {
+      schema: devicesSchema,
+    });
+  },
+
+  /** A date range of the source's database, as text its normalizer reads. */
+  pull: (sourceId: string, body: PullRequest) =>
+    apiRequest(PIPELINE_BASE, `${sourcePath(sourceId)}/pull`, { schema: pullSchema, method: "POST", body }),
 };
 
 const orgPath = (orgId: string) => `/admin/organizations/${encodeURIComponent(orgId)}`;

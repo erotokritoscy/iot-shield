@@ -589,6 +589,287 @@
           }
         }
       }
+    },
+    "/overview/it": {
+      "get": {
+        "tags": [
+          "overview"
+        ],
+        "summary": "It Overview",
+        "description": "Flows and flow-lane detections over a range of days.",
+        "operationId": "it_overview_overview_it_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "First UTC day, inclusive",
+              "title": "Start"
+            },
+            "description": "First UTC day, inclusive"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Last UTC day, inclusive",
+              "title": "End"
+            },
+            "description": "Last UTC day, inclusive"
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "day",
+                "hour"
+              ],
+              "type": "string",
+              "default": "day",
+              "title": "Bucket"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItOverview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/overview/ot": {
+      "get": {
+        "tags": [
+          "overview"
+        ],
+        "summary": "Ot Overview",
+        "description": "SensiPro's six meter anomaly types over a range of days (ADR-0043/0044).",
+        "operationId": "ot_overview_overview_ot_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "First UTC day, inclusive",
+              "title": "Start"
+            },
+            "description": "First UTC day, inclusive"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Last UTC day, inclusive",
+              "title": "End"
+            },
+            "description": "Last UTC day, inclusive"
+          },
+          {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One meter only",
+              "title": "Asset Id"
+            },
+            "description": "One meter only"
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "day",
+                "hour"
+              ],
+              "type": "string",
+              "default": "day",
+              "title": "Bucket"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OtOverview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/overview/ot/records": {
+      "get": {
+        "tags": [
+          "overview"
+        ],
+        "summary": "Ot Records",
+        "description": "The anomalies themselves, oldest first; ``X-Total-Count`` says how many matched.",
+        "operationId": "ot_records_overview_ot_records_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "First UTC day, inclusive",
+              "title": "Start"
+            },
+            "description": "First UTC day, inclusive"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Last UTC day, inclusive",
+              "title": "End"
+            },
+            "description": "Last UTC day, inclusive"
+          },
+          {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One meter only",
+              "title": "Asset Id"
+            },
+            "description": "One meter only"
+          },
+          {
+            "name": "issue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/QualityIssue"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Issue"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QualityRecordInfo"
+                  },
+                  "title": "Response Ot Records Overview Ot Records Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -675,6 +956,24 @@
         ],
         "title": "Criticality",
         "description": "How much an asset matters \u2014 feeds the prioritizer's device weight."
+      },
+      "DayCount": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "title": "Day"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "count"
+        ],
+        "title": "DayCount"
       },
       "DetectionResult": {
         "properties": {
@@ -773,6 +1072,116 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "IssueCount": {
+        "properties": {
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          },
+          "category": {
+            "type": "integer",
+            "title": "Category"
+          },
+          "subcategory": {
+            "type": "integer",
+            "title": "Subcategory"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "issue",
+          "category",
+          "subcategory",
+          "count"
+        ],
+        "title": "IssueCount"
+      },
+      "ItOverview": {
+        "properties": {
+          "flows": {
+            "type": "integer",
+            "title": "Flows"
+          },
+          "flagged": {
+            "type": "integer",
+            "title": "Flagged"
+          },
+          "per_day": {
+            "items": {
+              "$ref": "#/components/schemas/DayCount"
+            },
+            "type": "array",
+            "title": "Per Day"
+          },
+          "per_method": {
+            "items": {
+              "$ref": "#/components/schemas/MethodCount"
+            },
+            "type": "array",
+            "title": "Per Method"
+          },
+          "latest_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Day"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/ItPoint"
+            },
+            "type": "array",
+            "title": "Series"
+          }
+        },
+        "type": "object",
+        "required": [
+          "flows",
+          "flagged",
+          "per_day",
+          "per_method",
+          "latest_day",
+          "series"
+        ],
+        "title": "ItOverview"
+      },
+      "ItPoint": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "title": "Bucket"
+          },
+          "flows": {
+            "type": "integer",
+            "title": "Flows"
+          },
+          "flagged": {
+            "type": "integer",
+            "title": "Flagged"
+          },
+          "detections": {
+            "type": "integer",
+            "title": "Detections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket",
+          "flows",
+          "flagged",
+          "detections"
+        ],
+        "title": "ItPoint"
+      },
       "Lane": {
         "type": "string",
         "enum": [
@@ -828,6 +1237,65 @@
         ],
         "title": "MalformedRecord",
         "description": "An input record that failed normalization \u2014 captured, never dropped (ADR-0004).\n\nNormalization is the trust boundary: unparseable input is expected, frequent,\nand disproportionately suspicious, so failure is modeled as data, not as logs."
+      },
+      "MeterCount": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "count"
+        ],
+        "title": "MeterCount"
+      },
+      "MeterPoint": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "title": "Bucket"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket",
+          "asset_id",
+          "count"
+        ],
+        "title": "MeterPoint"
+      },
+      "MethodCount": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "count"
+        ],
+        "title": "MethodCount"
       },
       "NormalizedEvent": {
         "properties": {
@@ -915,6 +1383,73 @@
         ],
         "title": "NormalizedEvent",
         "description": "One normalized observation: the shared envelope every raw record becomes.\n\nOne numeric value per event (ADR-0003 D1): a multivariate reading fans out\ninto one event per metric; detector adapters pivot back as needed."
+      },
+      "OtOverview": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "unplaced": {
+            "type": "integer",
+            "title": "Unplaced"
+          },
+          "per_type": {
+            "items": {
+              "$ref": "#/components/schemas/IssueCount"
+            },
+            "type": "array",
+            "title": "Per Type"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/SeriesPoint"
+            },
+            "type": "array",
+            "title": "Series"
+          },
+          "per_meter": {
+            "items": {
+              "$ref": "#/components/schemas/MeterCount"
+            },
+            "type": "array",
+            "title": "Per Meter"
+          },
+          "meters": {
+            "type": "integer",
+            "title": "Meters"
+          },
+          "meter_series": {
+            "items": {
+              "$ref": "#/components/schemas/MeterPoint"
+            },
+            "type": "array",
+            "title": "Meter Series"
+          },
+          "latest_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Day"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "unplaced",
+          "per_type",
+          "series",
+          "per_meter",
+          "meters",
+          "meter_series",
+          "latest_day"
+        ],
+        "title": "OtOverview"
       },
       "PrioritizedAlert": {
         "properties": {
@@ -1006,6 +1541,94 @@
         ],
         "title": "PrioritizedAlert",
         "description": "The analyst-facing decision: ranked, labeled, explained.\n\n``detection_ids`` is the lineage; more than one entry means corroboration.\nEvery detection bucket becomes an alert \u2014 ranking, not a hidden gate,\ndecides what analysts look at first (ADR-0003 D3)."
+      },
+      "QualityIssue": {
+        "type": "string",
+        "enum": [
+          "heartbeat",
+          "valueError",
+          "zero",
+          "negative",
+          "high",
+          "small"
+        ],
+        "title": "QualityIssue",
+        "description": "SensiPro's six meter data-quality anomaly types (its ``anomalyclass`` table, ADR-0043).\n\nNamed exactly as SensiPro names them, so a chart can sit beside the prototype's and say\nthe same words. They are found in two places, because iotshield already refused four of\nthem at ingest before this vocabulary existed (ADR-0030):\n\n- **at ingest**, by the meter normalizer, as a tagged ``MalformedRecord`` (``tag_reject``):\n  ``valueError`` (an unreadable counter), ``negative``, ``zero`` and ``small`` (the\n  counter fell to zero, or went backwards) \u2014 consumption across them is undefined;\n- **by the ``meter_quality`` detector**, as a detection: ``heartbeat`` (the meter went\n  silent) and ``high`` (an hour's consumption over a fixed limit)."
+      },
+      "QualityRecordInfo": {
+        "properties": {
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "detection",
+              "reject"
+            ],
+            "title": "Source"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "issue",
+          "source",
+          "asset_id",
+          "at",
+          "detail"
+        ],
+        "title": "QualityRecordInfo"
+      },
+      "SeriesPoint": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "title": "Bucket"
+          },
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket",
+          "issue",
+          "count"
+        ],
+        "title": "SeriesPoint"
       },
       "Severity": {
         "type": "string",

@@ -11,7 +11,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from iotshield.meter import METADATA_KEY, MeterReading, MeterType
+from iotshield.meter import (
+    METADATA_KEY,
+    MeterReading,
+    MeterType,
+    QualityIssue,
+    reject_issue,
+    tag_reject,
+)
 from iotshield.normalize.meter import DIALECTS, MeterNormalizer
 
 ORIGIN = "test://meter"
@@ -256,3 +263,56 @@ def test_a_gappy_but_valid_meter_earns_no_cadence_complaint() -> None:
 def test_every_dialect_declares_a_distinct_format() -> None:
     assert set(DIALECTS) == {EOA, SENSIPRO}
     assert len({dialect.name for dialect in DIALECTS.values()}) == len(DIALECTS)
+
+
+class TestQualityTags:
+    """Rejects say which of SensiPro's anomaly types they are (ADR-0043)."""
+
+    def sensipro(self, *rows: tuple[str, str]) -> str:
+        lines = ["device_id,from_timestamp,last_value,unit"]
+        lines += [f"SP-1,{stamp},{counter},kWh" for stamp, counter in rows]
+        return "\n".join(lines) + "\n"
+
+    @pytest.mark.parametrize(
+        ("counter", "issue"),
+        [
+            ("-1.0", QualityIssue.NEGATIVE),
+            ("lots", QualityIssue.VALUE_ERROR),
+            ("", QualityIssue.VALUE_ERROR),
+        ],
+    )
+    def test_an_unusable_counter_names_its_type(self, counter: str, issue: QualityIssue) -> None:
+        result = normalize(self.sensipro(("2026-07-07 00:00:00", counter)), SENSIPRO)
+        (rejected,) = result.malformed
+        assert reject_issue(rejected.error) is issue
+        assert rejected.error.startswith(f"[{issue.value}] ")
+
+    @pytest.mark.parametrize(
+        ("after", "issue"), [("0", QualityIssue.ZERO), ("90.0", QualityIssue.SMALL)]
+    )
+    def test_a_counter_that_falls_names_its_type(self, after: str, issue: QualityIssue) -> None:
+        # A closed interval first, so the fall is the only reject (a meter with none would
+        # also earn the separate cadence report).
+        text = self.sensipro(
+            ("2026-07-07 00:00:00", "99.0"),
+            ("2026-07-07 01:00:00", "100.0"),
+            ("2026-07-07 02:00:00", after),
+        )
+        (rejected,) = normalize(text, SENSIPRO).malformed
+        assert reject_issue(rejected.error) is issue
+        assert "decreased" in rejected.error  # the reason itself is unchanged
+
+    def test_other_rejects_carry_no_type(self) -> None:
+        text = self.sensipro(("2026-07-07 00:00:00", "1.0"), ("2026-07-07 00:00:00", "2.0"))
+        (rejected,) = normalize(text, SENSIPRO).malformed
+        assert "duplicate timestamp" in rejected.error
+        assert reject_issue(rejected.error) is None
+
+
+def test_reject_issue_reads_only_its_own_tag() -> None:
+    assert reject_issue("[high] whatever") is QualityIssue.HIGH
+    assert reject_issue("[nonsense] whatever") is None
+    assert reject_issue("counter is negative: [zero] ") is None
+    assert tag_reject(QualityIssue.SMALL, "x") == "[small] x"
+    assert QualityIssue.HEARTBEAT.sensipro_code == (1, 0)
+    assert QualityIssue.SMALL.sensipro_code == (2, 4)

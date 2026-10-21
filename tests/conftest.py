@@ -2,6 +2,9 @@
 
 import pytest
 
+# The connector tests' two stand-in databases (ADR-0042), shared by tests/connect and tests/api.
+pytest_plugins = ["tests.connect_world"]
+
 _IOTSHIELD_ENV_VARS = (
     "IOTSHIELD_DATABASE_URL",
     "IOTSHIELD_API_HOST",
@@ -24,3 +27,6 @@ def _hermetic_iotshield_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Tests that exercise the override set the var explicitly afterwards.
     for var in _IOTSHIELD_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # No test reads the deployment's real connections file (config/connections.yaml); one
+    # that wants connections declares its own.
+    monkeypatch.setenv("IOTSHIELD_CONNECTIONS_PATH", "/nonexistent/connections.yaml")

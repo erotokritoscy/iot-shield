@@ -36,7 +36,9 @@ passthrough column; this module is the same agreement expressed as event metadat
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from math import isfinite
 from typing import Any
@@ -60,6 +62,86 @@ class MeterType(StrEnum):
 
     WATER = "water"
     ELECTRICITY = "electricity"
+
+
+class QualityIssue(StrEnum):
+    """SensiPro's six meter data-quality anomaly types (its ``anomalyclass`` table, ADR-0043).
+
+    Named exactly as SensiPro names them, so a chart can sit beside the prototype's and say
+    the same words. They are found in two places, because iotshield already refused four of
+    them at ingest before this vocabulary existed (ADR-0030):
+
+    - **at ingest**, by the meter normalizer, as a tagged ``MalformedRecord`` (``tag_reject``):
+      ``valueError`` (an unreadable counter), ``negative``, ``zero`` and ``small`` (the
+      counter fell to zero, or went backwards) — consumption across them is undefined;
+    - **by the ``meter_quality`` detector**, as a detection: ``heartbeat`` (the meter went
+      silent) and ``high`` (an hour's consumption over a fixed limit).
+    """
+
+    HEARTBEAT = "heartbeat"
+    VALUE_ERROR = "valueError"
+    ZERO = "zero"
+    NEGATIVE = "negative"
+    HIGH = "high"
+    SMALL = "small"
+
+    @property
+    def sensipro_code(self) -> tuple[int, int]:
+        """``(category, subcategory)`` in SensiPro's ``anomalyclass``."""
+        return _SENSIPRO_CODES[self]
+
+
+_SENSIPRO_CODES: dict[QualityIssue, tuple[int, int]] = {
+    QualityIssue.HEARTBEAT: (1, 0),
+    QualityIssue.VALUE_ERROR: (2, 0),
+    QualityIssue.ZERO: (2, 1),
+    QualityIssue.NEGATIVE: (2, 2),
+    QualityIssue.HIGH: (2, 3),
+    QualityIssue.SMALL: (2, 4),
+}
+
+_TAG = re.compile(r"^\[(\w+)\] (?:meter (\S+) at (\S+): )?")
+
+
+def tag_reject(
+    issue: QualityIssue, message: str, *, meter: str | None = None, at: datetime | None = None
+) -> str:
+    """A reject reason that says which quality issue it is, and of which meter-hour.
+
+    ``MalformedRecord`` carries its reason as one string and no asset or reading time, and
+    changing the contract for a label is not worth an ADR of its own, so the label is a fixed
+    prefix: ``[zero] meter e1 at 2023-07-01T05:00:00+00:00: <reason>``. The meter and time
+    are what let the OT overview place a reject on a meter and a day (ADR-0044); they are
+    left out when the row did not yield them. ``reject_issue``/``reject_subject`` read it
+    back, and the read API's overview is the only other reader.
+    """
+    subject = ""
+    if meter is not None and at is not None and " " not in meter:
+        subject = f"meter {meter} at {at.isoformat()}: "
+    return f"[{issue.value}] {subject}{message}"
+
+
+def reject_issue(error: str) -> QualityIssue | None:
+    """The quality issue a tagged reject names, or None for any other reject."""
+    match = _TAG.match(error)
+    if match is None:
+        return None
+    try:
+        return QualityIssue(match.group(1))
+    except ValueError:
+        return None
+
+
+def reject_subject(error: str) -> tuple[str, datetime] | None:
+    """The ``(meter, UTC reading time)`` a tagged reject names, when it names one."""
+    match = _TAG.match(error)
+    if match is None or match.group(2) is None:
+        return None
+    try:
+        at = datetime.fromisoformat(match.group(3))
+    except ValueError:
+        return None
+    return (match.group(2), at) if at.tzinfo is not None else None
 
 
 UNIT_BY_TYPE: dict[MeterType, str] = {

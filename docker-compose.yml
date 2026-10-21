@@ -137,12 +137,23 @@ services:
       # and never a path, so this variable is the only thing that decides which directories a
       # run can read rules from.
       IOTSHIELD_RULES_PATH: "/app/config/rules"
+      # The source databases a data source may pull from (ADR-0042): declared in this file,
+      # bind-mounted read-only, so editing it needs no rebuild. The passwords stay out of it —
+      # each entry names one of these variables, which come from .env (see .env.example).
+      IOTSHIELD_CONNECTIONS_PATH: "/app/config/connections.yaml"
+      SENSIPRO_DB_PASSWORD: ${SENSIPRO_DB_PASSWORD:-}
+      BIOLOGY_DB_PASSWORD: ${BIOLOGY_DB_PASSWORD:-}
+    # The SensiPro and Biology databases are other compose stacks publishing on the host;
+    # this name is how a container reaches the host on Linux (Docker Desktop has it built in).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8100:8100"
     volumes:
       - ./results:/app/results
       - ./data/eval:/app/data/eval:ro
       - ./config/rules:/app/config/rules:ro
+      - ./config/connections.yaml:/app/config/connections.yaml:ro
     depends_on:
       init:
         condition: service_completed_successfully

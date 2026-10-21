@@ -12,7 +12,7 @@
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import { pipelineApi, readApi } from "./api/client";
+import { dataSourcesApi, pipelineApi, readApi, type DayRange } from "./api/client";
 import { isPlaneAbsent, isUnreachable } from "./api/http";
 import type { Lane } from "./api/types";
 
@@ -36,7 +36,18 @@ export const keys = {
     ["read", "detections", assetId, lane ?? "all"] as const,
   alertDetections: (alertId: string) => ["read", "alert-detections", alertId] as const,
   malformed: ["read", "malformed"] as const,
+  itOverview: (range: DayRange, bucket: string) => ["read", "overview", "it", range.start, range.end, bucket] as const,
+  otOverview: (range: DayRange, assetId: string | undefined, bucket: string) =>
+    ["read", "overview", "ot", range.start, range.end, assetId ?? "all", bucket] as const,
+  otRecords: (range: DayRange, assetId: string | undefined, issue: string | undefined) =>
+    ["read", "overview", "ot-records", range.start, range.end, assetId ?? "all", issue ?? "all"] as const,
+  meterDay: (assetId: string, day: string) => ["read", "meter-day", assetId, day] as const,
+  flows: (range: DayRange) => ["read", "flows", range.start, range.end] as const,
   modules: ["pipeline", "modules"] as const,
+  dataSources: ["pipeline", "data-sources"] as const,
+  connections: ["pipeline", "data-sources", "connections"] as const,
+  devices: (sourceId: string, params: Record<string, string>) =>
+    ["pipeline", "data-sources", sourceId, "devices", params] as const,
   evalCorpora: ["pipeline", "eval", "corpora"] as const,
   evalDetectors: ["pipeline", "eval", "detectors"] as const,
   evalSpecs: ["pipeline", "eval", "specs"] as const,
@@ -79,6 +90,35 @@ export const useAlertDetections = (alertId: string | undefined) =>
 
 export const useModules = (enabled = true) =>
   useQuery({ queryKey: keys.modules, queryFn: () => pipelineApi.modules(), enabled });
+
+export const useItOverview = (range: DayRange, bucket: "day" | "hour" = "day") =>
+  useQuery({ queryKey: keys.itOverview(range, bucket), queryFn: () => readApi.itOverview(range, bucket) });
+
+export const useOtOverview = (range: DayRange, assetId?: string, bucket: "day" | "hour" = "day") =>
+  useQuery({
+    queryKey: keys.otOverview(range, assetId, bucket),
+    queryFn: () => readApi.otOverview(range, { ...(assetId ? { assetId } : {}), bucket }),
+  });
+
+export const useOtRecords = (range: DayRange, assetId?: string, issue?: string) =>
+  useQuery({
+    queryKey: keys.otRecords(range, assetId, issue),
+    queryFn: () => readApi.otRecords(range, { ...(assetId ? { assetId } : {}), ...(issue ? { issue } : {}) }),
+  });
+
+export const useFlows = (range: DayRange) =>
+  useQuery({ queryKey: keys.flows(range), queryFn: () => readApi.flows(range) });
+
+export const useMeterDay = (assetId: string, day: string) =>
+  useQuery({ queryKey: keys.meterDay(assetId, day), queryFn: () => readApi.meterDay(assetId, day) });
+
+/** The organization's IT/OT data sources (ADR-0041). */
+export const useDataSources = (enabled = true) =>
+  useQuery({ queryKey: keys.dataSources, queryFn: () => dataSourcesApi.list(), enabled });
+
+/** The source databases this organization may pull from (ADR-0042). */
+export const useConnections = (enabled = true) =>
+  useQuery({ queryKey: keys.connections, queryFn: () => dataSourcesApi.connections(), enabled });
 
 export const useEvalDetectors = (enabled = true) =>
   useQuery({ queryKey: keys.evalDetectors, queryFn: () => pipelineApi.evalDetectors(), enabled });

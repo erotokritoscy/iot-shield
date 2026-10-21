@@ -14,7 +14,9 @@ and no adapter can see, forge or forget a tenant. An asset is keyed by ``(org_id
 asset_id)`` because two organizations may each own a device called ``10.0.0.24``.
 
 The account tables (organizations, users, sessions) are not projections of any contract:
-they are the access-control layer the pipeline never sees.
+they are the access-control layer the pipeline never sees. Neither is ``data_sources``: an
+organization's register of where its data comes from (ADR-0041), which the pipeline never
+reads either.
 """
 
 from datetime import UTC, datetime
@@ -30,6 +32,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -136,6 +139,32 @@ class SessionRow(Base):
     )
     created_at: Mapped[datetime]
     expires_at: Mapped[datetime]
+
+
+class DataSourceRow(Base):
+    """One place an organization's data comes from, typed IT or OT (ADR-0041).
+
+    A register, not a pipeline input: a run still names its normalizer and format itself.
+    ``normalizer``/``source_format`` record how this source's data is read, so a form can
+    fill them in; both may be blank for a source whose reader is not decided yet.
+    """
+
+    __tablename__ = "data_sources"
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_data_sources_org_name"),
+        CheckConstraint("type IN ('IT', 'OT')", name="ck_data_sources_type"),
+    )
+
+    source_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    type: Mapped[str] = mapped_column(String(2))  # "IT" | "OT"
+    description: Mapped[str | None] = mapped_column(Text)
+    normalizer: Mapped[str | None] = mapped_column(String(64))
+    source_format: Mapped[str | None] = mapped_column(String(64))
+    # A connection declared in config/connections.yaml, by name (ADR-0042); never a host.
+    connection: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime]
 
 
 def _asset_fk() -> ForeignKeyConstraint:

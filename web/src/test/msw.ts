@@ -49,6 +49,8 @@ export const captured: { runBody: unknown; validateBody: unknown; evalBody: unkn
 export const pipelineHandlers: RequestHandler[] = [
   http.get(`${PIPELINE}/health`, () => HttpResponse.json({ status: "ok", version: "test" })),
   http.get(`${PIPELINE}/modules`, () => HttpResponse.json(seed.modules)),
+  http.get(`${PIPELINE}/data-sources`, () => HttpResponse.json([])),
+  http.get(`${PIPELINE}/data-sources/connections`, () => HttpResponse.json([])),
   http.post(`${PIPELINE}/runs/validate`, async ({ request }) => {
     captured.validateBody = await request.json();
     return HttpResponse.json({ ok: true, issues: [] });

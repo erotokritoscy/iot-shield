@@ -52,6 +52,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from iotshield.normalize.flow import CICFLOWMETER_CSV as _CICFLOWMETER_CSV
 from iotshield.normalize.flow import FLOW_CSV as _FLOW_CSV
 from iotshield.normalize.flow import ZEEK_CONN as _ZEEK_CONN
 from iotshield.normalize.meter import EOA_METER_CSV as _EOA_METER_CSV
@@ -137,6 +138,10 @@ NOT_STORED: frozenset[str] = frozenset(
         # exists to measure, so the *only* corpus it could express is one that tests nothing
         # upstream of the detector (ADR-0025's adapter validates an envelope; it parses nothing).
         _PASSTHROUGH,
+        # A third flow dialect. The FLOW shape is already storable through flow-csv and Zeek;
+        # CICFlowMeter adds only its column names, IANA protocol numbers and microsecond
+        # durations, which the round-trip tests in tests/normalize cover without a corpus.
+        _CICFLOWMETER_CSV.name,
     }
 )
 """Formats a normalizer consumes that a *bundle* deliberately does not hold.

@@ -172,6 +172,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/overview/it": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * It Overview
+         * @description Flows and flow-lane detections over a range of days.
+         */
+        get: operations["it_overview_overview_it_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview/ot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ot Overview
+         * @description SensiPro's six meter anomaly types over a range of days (ADR-0043/0044).
+         */
+        get: operations["ot_overview_overview_ot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview/ot/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ot Records
+         * @description The anomalies themselves, oldest first; ``X-Total-Count`` says how many matched.
+         */
+        get: operations["ot_records_overview_ot_records_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -220,6 +280,13 @@ export interface components {
          * @enum {string}
          */
         Criticality: "low" | "medium" | "high" | "critical";
+        /** DayCount */
+        DayCount: {
+            /** Day */
+            day: string;
+            /** Count */
+            count: number;
+        };
         /**
          * DetectionResult
          * @description A detector's positive judgment about an asset over a time window.
@@ -280,6 +347,43 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** IssueCount */
+        IssueCount: {
+            /** Issue */
+            issue: string;
+            /** Category */
+            category: number;
+            /** Subcategory */
+            subcategory: number;
+            /** Count */
+            count: number;
+        };
+        /** ItOverview */
+        ItOverview: {
+            /** Flows */
+            flows: number;
+            /** Flagged */
+            flagged: number;
+            /** Per Day */
+            per_day: components["schemas"]["DayCount"][];
+            /** Per Method */
+            per_method: components["schemas"]["MethodCount"][];
+            /** Latest Day */
+            latest_day: string | null;
+            /** Series */
+            series: components["schemas"]["ItPoint"][];
+        };
+        /** ItPoint */
+        ItPoint: {
+            /** Bucket */
+            bucket: string;
+            /** Flows */
+            flows: number;
+            /** Flagged */
+            flagged: number;
+            /** Detections */
+            detections: number;
+        };
         /**
          * Lane
          * @description Detection modality — which specialist lane an event or detection belongs to.
@@ -321,6 +425,29 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+        };
+        /** MeterCount */
+        MeterCount: {
+            /** Asset Id */
+            asset_id: string;
+            /** Count */
+            count: number;
+        };
+        /** MeterPoint */
+        MeterPoint: {
+            /** Bucket */
+            bucket: string;
+            /** Asset Id */
+            asset_id: string;
+            /** Count */
+            count: number;
+        };
+        /** MethodCount */
+        MethodCount: {
+            /** Method */
+            method: string;
+            /** Count */
+            count: number;
         };
         /**
          * NormalizedEvent
@@ -368,6 +495,25 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             };
+        };
+        /** OtOverview */
+        OtOverview: {
+            /** Total */
+            total: number;
+            /** Unplaced */
+            unplaced: number;
+            /** Per Type */
+            per_type: components["schemas"]["IssueCount"][];
+            /** Series */
+            series: components["schemas"]["SeriesPoint"][];
+            /** Per Meter */
+            per_meter: components["schemas"]["MeterCount"][];
+            /** Meters */
+            meters: number;
+            /** Meter Series */
+            meter_series: components["schemas"]["MeterPoint"][];
+            /** Latest Day */
+            latest_day: string | null;
         };
         /**
          * PrioritizedAlert
@@ -423,6 +569,47 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+        };
+        /**
+         * QualityIssue
+         * @description SensiPro's six meter data-quality anomaly types (its ``anomalyclass`` table, ADR-0043).
+         *
+         *     Named exactly as SensiPro names them, so a chart can sit beside the prototype's and say
+         *     the same words. They are found in two places, because iotshield already refused four of
+         *     them at ingest before this vocabulary existed (ADR-0030):
+         *
+         *     - **at ingest**, by the meter normalizer, as a tagged ``MalformedRecord`` (``tag_reject``):
+         *       ``valueError`` (an unreadable counter), ``negative``, ``zero`` and ``small`` (the
+         *       counter fell to zero, or went backwards) — consumption across them is undefined;
+         *     - **by the ``meter_quality`` detector**, as a detection: ``heartbeat`` (the meter went
+         *       silent) and ``high`` (an hour's consumption over a fixed limit).
+         * @enum {string}
+         */
+        QualityIssue: "heartbeat" | "valueError" | "zero" | "negative" | "high" | "small";
+        /** QualityRecordInfo */
+        QualityRecordInfo: {
+            /** Issue */
+            issue: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "detection" | "reject";
+            /** Asset Id */
+            asset_id: string | null;
+            /** At */
+            at: string | null;
+            /** Detail */
+            detail: string;
+        };
+        /** SeriesPoint */
+        SeriesPoint: {
+            /** Bucket */
+            bucket: string;
+            /** Issue */
+            issue: string;
+            /** Count */
+            count: number;
         };
         /**
          * Severity
@@ -727,6 +914,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Summary"];
+                };
+            };
+        };
+    };
+    it_overview_overview_it_get: {
+        parameters: {
+            query: {
+                /** @description First UTC day, inclusive */
+                start: string;
+                /** @description Last UTC day, inclusive */
+                end: string;
+                bucket?: "day" | "hour";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ot_overview_overview_ot_get: {
+        parameters: {
+            query: {
+                /** @description First UTC day, inclusive */
+                start: string;
+                /** @description Last UTC day, inclusive */
+                end: string;
+                /** @description One meter only */
+                asset_id?: string | null;
+                bucket?: "day" | "hour";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OtOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ot_records_overview_ot_records_get: {
+        parameters: {
+            query: {
+                /** @description First UTC day, inclusive */
+                start: string;
+                /** @description Last UTC day, inclusive */
+                end: string;
+                /** @description One meter only */
+                asset_id?: string | null;
+                issue?: components["schemas"]["QualityIssue"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityRecordInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

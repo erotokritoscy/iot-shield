@@ -171,7 +171,7 @@ const AUTH_PREFIX = "/auth/";
 
 export interface RequestOptions<T> {
   readonly schema: ZodType<T>;
-  readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
+  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body?: unknown;
   readonly query?: Record<string, string | number | boolean | undefined>;
   readonly signal?: AbortSignal;

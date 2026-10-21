@@ -34,6 +34,7 @@ from iotshield.storage.orm import (
     AlertDetectionRow,
     AlertRow,
     AssetRow,
+    DataSourceRow,
     DetectionRow,
     EventRow,
     MalformedRow,
@@ -469,9 +470,9 @@ def delete_organization(session: Session, org_id: str) -> bool:
 
     Children before parents, explicitly, in the order the foreign keys require: the alert ->
     detection links, alerts, detections, events and malformed records, then the assets they
-    reference, then sessions, users and the organization itself. Not left to ``ON DELETE
-    CASCADE``, which SQLite only honours with a per-connection pragma — "deleted everything"
-    must not depend on how a connection was opened.
+    reference, then sessions, users, data sources and the organization itself. Not left to
+    ``ON DELETE CASCADE``, which SQLite only honours with a per-connection pragma — "deleted
+    everything" must not depend on how a connection was opened.
     """
     if session.get(OrganizationRow, org_id) is None:
         return False
@@ -483,6 +484,7 @@ def delete_organization(session: Session, org_id: str) -> bool:
     members = select(UserRow.user_id).where(UserRow.org_id == org_id)
     session.execute(delete(SessionRow).where(SessionRow.user_id.in_(members)))
     session.execute(delete(UserRow).where(UserRow.org_id == org_id))
+    session.execute(delete(DataSourceRow).where(DataSourceRow.org_id == org_id))
     session.execute(delete(OrganizationRow).where(OrganizationRow.org_id == org_id))
     session.flush()
     return True

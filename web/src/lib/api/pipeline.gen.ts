@@ -108,6 +108,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/data-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sources
+         * @description This organization's data sources, IT before OT, then by name.
+         */
+        get: operations["list_sources_data_sources_get"];
+        put?: never;
+        /** Add Source */
+        post: operations["add_source_data_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/data-sources/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Connections
+         * @description The declared databases this organization may pull from (ADR-0042).
+         */
+        get: operations["list_connections_data_sources_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/data-sources/{source_id}/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Source Devices
+         * @description What a pull from this source can be narrowed to (meters, hosts); query string =
+         *     the connector's params, e.g. ``?utility=water``.
+         */
+        get: operations["source_devices_data_sources__source_id__devices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/data-sources/{source_id}/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull Source
+         * @description A date range of this source's database, as text for its normalizer. Read-only.
+         */
+        post: operations["pull_source_data_sources__source_id__pull_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/data-sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change Source */
+        put: operations["change_source_data_sources__source_id__put"];
+        post?: never;
+        /** Remove Source */
+        delete: operations["remove_source_data_sources__source_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/eval/corpora": {
         parameters: {
             query?: never;
@@ -756,6 +856,26 @@ export interface components {
              */
             truncated: boolean;
         };
+        /**
+         * ConnectionInfo
+         * @description A database this organization may pull from, and what a pull from it yields.
+         */
+        ConnectionInfo: {
+            /** Name */
+            name: string;
+            /** Connector */
+            connector: string;
+            /** Description */
+            description: string;
+            /** Normalizer */
+            normalizer: string;
+            /** Source Format */
+            source_format: string;
+            /** Params */
+            params: components["schemas"]["ParamInfo"][];
+            /** Has Devices */
+            has_devices: boolean;
+        };
         /** CorporaResponse */
         CorporaResponse: {
             /** Root */
@@ -813,6 +933,55 @@ export interface components {
          * @enum {string}
          */
         Criticality: "low" | "medium" | "high" | "critical";
+        /** DataSourceInfo */
+        DataSourceInfo: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "IT" | "OT";
+            /** Description */
+            description: string | null;
+            /** Normalizer */
+            normalizer: string | null;
+            /** Source Format */
+            source_format: string | null;
+            /** Connection */
+            connection: string | null;
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * DataSourceRequest
+         * @description A data source as an admin writes it. Blank optional text means "not set".
+         */
+        DataSourceRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "IT" | "OT";
+            /** Description */
+            description?: string | null;
+            /** Normalizer */
+            normalizer?: string | null;
+            /** Source Format */
+            source_format?: string | null;
+            /**
+             * Connection
+             * @description A connection declared on the server; its connector decides the reader
+             */
+            connection?: string | null;
+        };
         /** DetectorConfig */
         DetectorConfig: {
             /** Name */
@@ -855,6 +1024,13 @@ export interface components {
             params?: components["schemas"]["ParamInfo"][];
             /** Artifact Param */
             artifact_param?: string | null;
+        };
+        /** DeviceInfo */
+        DeviceInfo: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
         };
         /** EvalRunRequest */
         EvalRunRequest: {
@@ -1239,6 +1415,44 @@ export interface components {
              */
             created_at?: string;
         };
+        /** PullRequest */
+        PullRequest: {
+            /**
+             * Start
+             * Format: date
+             * @description First day, inclusive, in the source's own clock
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Last day, inclusive
+             */
+            end: string;
+            /**
+             * Params
+             * @description The connector's pull params
+             */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * PullResponse
+         * @description A window of the source, as text its normalizer reads — ready to be a run's input.
+         */
+        PullResponse: {
+            /** Content */
+            content: string;
+            /** Normalizer */
+            normalizer: string;
+            /** Source Format */
+            source_format: string;
+            /** Rows */
+            rows: number;
+            /** Origin */
+            origin: string;
+        };
         /** RegisterRequest */
         RegisterRequest: {
             /** Organization */
@@ -1594,6 +1808,209 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sources_data_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataSourceInfo"][];
+                };
+            };
+        };
+    };
+    add_source_data_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DataSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataSourceInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_connections_data_sources_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionInfo"][];
+                };
+            };
+        };
+    };
+    source_devices_data_sources__source_id__devices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pull_source_data_sources__source_id__pull_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PullRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_source_data_sources__source_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DataSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataSourceInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_source_data_sources__source_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

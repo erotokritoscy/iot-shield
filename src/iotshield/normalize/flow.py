@@ -20,7 +20,7 @@ already compares a source's format against a set of accepted ``FormatToken``s. T
 first normalizer to accept more than one, which also lights up the orchestration UI's
 never-before-exercised multi-format branch.
 
-Two dialects ship:
+Three dialects ship:
 
 - ``zeek-conn`` — Zeek's ``conn.log``: the de-facto standard in network security
   monitoring and the format a real deployment most plausibly already has. TSV with
@@ -28,6 +28,12 @@ Two dialects ship:
 - ``flow-csv`` — a small canonical header-driven CSV, ISO-8601 timestamps. The FLOW
   lane's equivalent of ``stub-csv``: the dumb, permanent reference dialect the port suite
   runs against, and something any exporter can be coaxed into producing.
+- ``cicflowmeter-csv`` — the CSV the ``cicflowmeter`` tool writes from a pcap, ~80 feature
+  columns of which the 5-tuple and four counters are read. The format the Biology capture
+  pipeline stores (tshark -> cicflowmeter -> MySQL ``packets``), which the ``biology``
+  connector re-renders (ADR-0042). Three quirks, all declared on the dialect: the protocol is
+  an IANA *number* (17, not ``udp``), the duration is in *microseconds*, and the timestamp is
+  naive wall-clock that the capture host wrote in UTC.
 
 Provenance (rewrite, not wrap — golden rule 3). team1-lognorm has the only flow parsing in
 the reference set: ``logNorm/iotlog/parsers/zeek_parser.py`` (the ``#separator``/``#fields``
@@ -85,6 +91,25 @@ def _parse_iso(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", "+00:00"))
 
 
+def _parse_naive_utc(text: str) -> datetime:
+    """A naive timestamp the exporter is declared to write in UTC; an explicit offset wins."""
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+IANA_PROTOCOLS: Mapping[str, str] = {"1": "icmp", "6": "tcp", "17": "udp", "58": "icmp6"}
+"""The protocol numbers a flow exporter writes, as the names every other dialect (and every
+rule's ``flow.protocol``) uses. An unlisted number passes through as itself."""
+
+
+def _protocol_name(text: str) -> str:
+    return IANA_PROTOCOLS.get(text.split(".")[0], text)
+
+
+def _same(text: str) -> str:
+    return text
+
+
 @dataclass(frozen=True)
 class Dialect:
     """One flow text format, described rather than coded.
@@ -100,6 +125,10 @@ class Dialect:
     delimiter: str = ","
     comment_prefix: str | None = None
     fields_directive: str | None = None
+    parse_protocol: Callable[[str], str] = _same
+    """How a protocol cell becomes the name the rest of the system uses (``tcp``)."""
+    duration_unit_s: float = 1.0
+    """Seconds per unit of the duration column: 1 for seconds, 1e-6 for microseconds."""
     quoted: bool = False
     """Whether fields may be RFC 4180 quoted (a value carrying the delimiter, wrapped in
     ``"``). True for a real CSV; false for Zeek, whose fields are never quoted and may
@@ -179,7 +208,34 @@ FLOW_CSV = Dialect(
     quoted=True,
 )
 
-DIALECTS: dict[str, Dialect] = {ZEEK_CONN.name: ZEEK_CONN, FLOW_CSV.name: FLOW_CSV}
+CICFLOWMETER_CSV = Dialect(
+    name="cicflowmeter-csv",
+    # cicflowmeter's own column names. Its "fwd"/"bwd" are relative to the flow's first
+    # packet, which is the originator — so fwd is src and bwd is dst, as Zeek's orig/resp.
+    columns={
+        "ts": "timestamp",
+        "src_ip": "src_ip",
+        "src_port": "src_port",
+        "dst_ip": "dst_ip",
+        "dst_port": "dst_port",
+        "protocol": "protocol",
+        "duration": "flow_duration",
+        "src_bytes": "totlen_fwd_pkts",
+        "dst_bytes": "totlen_bwd_pkts",
+        "src_packets": "tot_fwd_pkts",
+        "dst_packets": "tot_bwd_pkts",
+    },
+    parse_timestamp=_parse_naive_utc,
+    parse_protocol=_protocol_name,
+    duration_unit_s=1e-6,
+    quoted=True,
+)
+
+DIALECTS: dict[str, Dialect] = {
+    ZEEK_CONN.name: ZEEK_CONN,
+    FLOW_CSV.name: FLOW_CSV,
+    CICFLOWMETER_CSV.name: CICFLOWMETER_CSV,
+}
 
 # Missing-value markers. A module constant rather than a per-dialect field: no shipped
 # dialect varies it, and a knob nothing turns is a knob that goes untested. Promote it back
@@ -318,7 +374,9 @@ def _parse_row(reader: _Reader, parts: Sequence[str], locality: Locality) -> dic
 
     duration_text = reader.value(parts, "duration")
     try:
-        duration = float(duration_text) if duration_text is not None else 0.0
+        duration = (
+            float(duration_text) * dialect.duration_unit_s if duration_text is not None else 0.0
+        )
     except ValueError as exc:
         raise FlowParseError(f"duration is not a number: {duration_text!r}") from exc
     if not math.isfinite(duration):
@@ -334,7 +392,7 @@ def _parse_row(reader: _Reader, parts: Sequence[str], locality: Locality) -> dic
         record = orient(
             src_ip=_required(reader, parts, "src_ip"),
             dst_ip=_required(reader, parts, "dst_ip"),
-            protocol=_required(reader, parts, "protocol"),
+            protocol=dialect.parse_protocol(_required(reader, parts, "protocol")),
             src_port=_port(reader, parts, "src_port"),
             dst_port=_port(reader, parts, "dst_port"),
             duration_s=duration,

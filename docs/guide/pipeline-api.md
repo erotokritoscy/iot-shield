@@ -13,7 +13,7 @@ There are two HTTP services in this repo and the split is deliberate.
 
 | | Serves | Writes | Guide |
 |---|---|---|---|
-| Pipeline API | `/modules`, `/runs/validate`, `/runs/preview`, `/runs` | yes | this one |
+| Pipeline API | `/modules`, `/runs/validate`, `/runs/preview`, `/runs`, `/data-sources` | yes | this one |
 | Read API | `/alerts`, `/events`, `/detections`, ... | never | `docs/guide/read-api.md` |
 
 A run is the expensive, slow, occasionally crashing part of this system. Keeping it in a
@@ -45,7 +45,8 @@ definition.
 | `GET /modules` | the adapter catalogue | what a UI builds its menus from |
 | `POST /runs/validate` | the compatibility guard, no execution | live feedback while somebody edits a config |
 | `POST /runs/preview` | one source read by its normalizer, nothing judged or stored | "is this file in the format I said?" |
-| `POST /runs` | run it, return a summary | the only write path |
+| `POST /runs` | run it, return a summary | the only path that writes results |
+| `/data-sources` | the organization's IT/OT data sources: list (anyone), add/edit/remove (admins) | see *Data sources* below |
 | `GET /docs` | generated API docs | |
 
 With `IOTSHIELD_AUTH` set, a seventh group appears: the account routes under `/auth`, and every
@@ -332,6 +333,55 @@ failed writing a file — which is why the message quotes the sink's own error i
 generic one. *Which* destinations completed is not in the body yet; read it back from the read
 API. An opaque 500 there is genuinely ambiguous about whether the data landed.
 
+## Data sources
+
+An organization's register of where its data comes from, each source typed **IT** (network
+traffic, logs) or **OT** (meters, sensors) — ADR-0041. Always mounted; with auth off it is the
+default organization's. Anyone in the organization lists; its admins write.
+
+| | |
+|---|---|
+| `GET /data-sources` | IT before OT, then by name |
+| `POST /data-sources` | 201; 409 for a name the organization already uses |
+| `PUT /data-sources/{source_id}` | replaces every field; 404 for an id that is not this organization's |
+| `DELETE /data-sources/{source_id}` | 204; data already ingested is untouched |
+| `GET /data-sources/connections` | the source databases this organization may pull from (ADR-0042) |
+| `GET /data-sources/{source_id}/devices` | what a pull can be narrowed to; query string = connector params |
+| `POST /data-sources/{source_id}/pull` | a date range of the source's database, as text for its normalizer |
+
+```json
+{"name": "SensiPro meters", "type": "OT", "description": "hourly export",
+ "normalizer": "meter", "source_format": "sensipro-hourly-csv"}
+```
+
+`normalizer` and `source_format` are optional, and checked against the registry exactly as a
+run's are: an unknown normalizer, a format it does not read, a format without a normalizer, or
+a multi-format normalizer with none named are all 422; a normalizer with one format gets it
+filled in. Blank optional text is stored as not set. The register is not read by the pipeline:
+a run still names its own normalizer and format.
+
+### Pulling from a source's database (ADR-0042)
+
+A source may name a **connection**, one of the databases declared in `config/connections.yaml`
+(never a host). Its reader is then the connector's own (`sensipro` → `meter` /
+`sensipro-hourly-csv`; `biology` → `flow` / `cicflowmeter-csv`), and anyone in the
+organization can pull from it:
+
+```json
+POST /data-sources/{id}/pull
+{"start": "2023-07-01", "end": "2023-07-01", "params": {"utility": "water", "devices": ["a01a035"]}}
+
+{"content": "device_id,from_timestamp,last_value,unit\n...", "normalizer": "meter",
+ "source_format": "sensipro-hourly-csv", "rows": 24, "origin": "SensiPro meters 2023-07-01..2023-07-01"}
+```
+
+The content is a run's input as-is. Days are the source's own calendar (SensiPro: Cyprus time,
+Biology: UTC), both inclusive. Every session is read-only with a 30 s query timeout. A window
+over 92 days, over 100,000 rows, or over one source's 4,000,000 characters is a 422 that gives
+the size; it is never truncated. A database that does not answer is a 502 naming the connection
+and nothing else. A connection not declared, or reserved for another organization, is a 422
+either way.
+
 ## Where results go
 
 `sinks` is part of the spec, so the caller chooses destinations even though it cannot choose
@@ -451,7 +501,7 @@ a truthy value. Unset, they are not registered at all:
 
 ```
 GET /eval/detectors        -> 404
-app routes: /docs, /health, /modules, /openapi.json, /redoc, /runs, /runs/preview, /runs/validate
+app routes: /data-sources, /data-sources/{source_id}, /docs, /health, /modules, /openapi.json, /redoc, /runs, /runs/preview, /runs/validate
 ```
 
 Absent rather than guarded, which is a stronger property: there is no route to probe, no

@@ -26,6 +26,17 @@ export type AuthState =
   | { readonly kind: "anonymous" }
   | { readonly kind: "user"; readonly me: MeResponse };
 
+/**
+ * Whether this caller administers their organization: everyone does with no login (the one
+ * default organization's admin), otherwise its admins and a super admin at home in it.
+ */
+export function isOrgAdmin(state: AuthState | undefined): boolean {
+  if (state?.kind === "disabled") return true;
+  if (state?.kind !== "user") return false;
+  const { me } = state;
+  return me.organization !== null && (me.role === "admin" || me.role === "superadmin");
+}
+
 export const authKey = ["auth", "me"] as const;
 
 const ANONYMOUS: AuthState = { kind: "anonymous" };

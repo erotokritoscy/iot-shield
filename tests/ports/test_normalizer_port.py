@@ -87,6 +87,17 @@ start,src_ip,src_port,dst_ip,dst_port,proto,duration,src_bytes,dst_bytes,src_pac
 # 2 good (one with a non-UTC offset), 1 header (schema), 1 blank, 3 bad: two foreign
 # endpoints, a naive timestamp (the contract rejects it), and a non-numeric port.
 
+CICFLOWMETER_TEXT = """\
+src_ip,dst_ip,src_port,dst_port,protocol,timestamp,flow_duration,flow_byts_s,tot_fwd_pkts,tot_bwd_pkts,totlen_fwd_pkts,totlen_bwd_pkts
+192.168.0.140,192.168.0.255,47808,47808,17,2023-07-22 11:45:00,1500.0,0.0,1.0,0.0,24.0,0.0
+192.168.0.109,203.0.113.9,51514,443,6,2023-07-22 11:46:00,2000000.0,10.5,10.0,8.0,1200.0,900.0
+
+203.0.113.1,198.51.100.2,1,2,6,2023-07-22 11:47:00,0.0,0.0,1.0,0.0,40.0,0.0
+192.168.0.140,192.168.0.255,47808,47808,17,yesterday,0.0,0.0,1.0,0.0,24.0,0.0
+"""
+# 2 good (BACnet broadcast, outbound TCP), 1 header (schema), 1 blank, 2 bad: two foreign
+# endpoints and an unparseable timestamp.
+
 
 PASSTHROUGH_TEXT = """\
 {"timestamp":"2026-07-07T12:00:00Z","asset_id":"pump-02","source_type":"telemetry","value":0.38}
@@ -174,6 +185,16 @@ CASES = [
             expected_malformed=3,
         ),
         id="flow-csv",
+    ),
+    pytest.param(
+        NormalizerCase(
+            make=FlowNormalizer,
+            source_format="cicflowmeter-csv",
+            text=CICFLOWMETER_TEXT,
+            expected_events=2,
+            expected_malformed=2,
+        ),
+        id="flow-cicflowmeter-csv",
     ),
     pytest.param(
         NormalizerCase(

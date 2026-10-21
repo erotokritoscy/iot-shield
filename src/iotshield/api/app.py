@@ -240,4 +240,9 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             top_alert=top.items[0] if top.items else None,
         )
 
+    # Chart-sized counts for the IT and OT overview pages (ADR-0044). Read-only like the rest.
+    from iotshield.api.overview import create_overview_router
+
+    app.include_router(create_overview_router())
+
     return app

@@ -42,6 +42,8 @@ from iotshield.detect.meter import MeterParams
 from iotshield.detect.meter.artifact import available_artifacts as _meter_artifacts
 from iotshield.detect.meter.artifact import load_artifact as _load_meter_artifact
 from iotshield.detect.meter.detector import CAPABILITY as _METER_CAPABILITY
+from iotshield.detect.meter_quality import CAPABILITY as _METER_QUALITY_CAPABILITY
+from iotshield.detect.meter_quality import MeterQualityDetector
 from iotshield.detect.rules.detector import DEFAULT_LANE as _DEFAULT_RULES_LANE
 from iotshield.detect.rules.detector import (
     DEFAULT_MERGE_GAP_MINUTES as _DEFAULT_RULES_MERGE_GAP,
@@ -219,6 +221,16 @@ def _log_burst(
     )
 
 
+def _meter_quality(
+    high_kwh: float = 35.0, high_m3: float = 0.075, max_silence_hours: float = 2.0
+) -> MeterQualityDetector:
+    # SensiPro's heartbeat and high anomalies (ADR-0043). Coerced like _stub_threshold: YAML
+    # scalars may arrive quoted, and a bad value is refused, named, by _construct.
+    return MeterQualityDetector(
+        high_kwh=float(high_kwh), high_m3=float(high_m3), max_silence_hours=float(max_silence_hours)
+    )
+
+
 def _flow_normalizer(home_networks: str | list[str] | None = None) -> FlowNormalizer:
     # The first parameterized normalizer (ADR-0023 D8). A bad CIDR raises ValueError,
     # caught and attributed by _construct — so a typo fails at construction, named, rather
@@ -387,6 +399,7 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
         discovered={"artifact": _meter_artifacts},
     ),
     "rules": AdapterSpec(_rules, _rules_capability, discovered={"ruleset": available_rulesets}),
+    "meter_quality": AdapterSpec(_meter_quality, static(_METER_QUALITY_CAPABILITY)),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {

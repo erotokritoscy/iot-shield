@@ -46,6 +46,8 @@ export interface SourceRow {
   readonly content: string;
   /** The uploaded or sample filename, when a file supplied the content; `null` means "pasted". */
   readonly fileName: string | null;
+  /** The organization's data source this row was filled from (ADR-0041), if any. */
+  readonly dataSource?: string | null;
 }
 
 export interface DetectorRow {
@@ -273,10 +275,11 @@ export function useSourcePreviews(
 
   React.useEffect(() => {
     const current = new AbortController();
+    const pending = inflight.current;
     controller.current = current;
     return () => {
       current.abort();
-      inflight.current.clear();
+      pending.clear();
     };
   }, []);
 

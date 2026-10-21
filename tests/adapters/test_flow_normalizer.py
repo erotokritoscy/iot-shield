@@ -112,6 +112,57 @@ class TestZeekDialect:
         assert result.events == [] and result.malformed == []
 
 
+class TestCicflowmeterDialect:
+    """The CSV cicflowmeter writes, as the Biology capture pipeline stores it (ADR-0042)."""
+
+    HEADER = (
+        "src_ip,dst_ip,src_port,dst_port,protocol,timestamp,flow_duration,flow_byts_s,"
+        "tot_fwd_pkts,tot_bwd_pkts,totlen_fwd_pkts,totlen_bwd_pkts,pkt_len_max\n"
+    )
+
+    def event(self, row: str) -> NormalizedEvent:
+        return one_event(self.HEADER + row + "\n", "cicflowmeter-csv")
+
+    def test_a_bacnet_broadcast_becomes_a_udp_flow_event(self) -> None:
+        event = self.event(
+            "192.168.0.140,192.168.0.255,47808,47808,17,2023-07-22 11:45:00,1500.0,0.0,"
+            "1.0,0.0,24.0,0.0,24.0"
+        )
+        record = FlowRecord.from_metadata(event.metadata[METADATA_KEY])
+        assert event.asset_id == "192.168.0.140"
+        assert record.protocol == "udp"  # IANA 17, named as every other dialect names it
+        assert (record.peer_ip, record.peer_port) == ("192.168.0.255", 47808)
+        assert record.bytes_out == 24 and record.packets_out == 1
+
+    def test_naive_timestamps_are_utc_and_an_offset_is_honoured(self) -> None:
+        naive = self.event("10.0.0.7,8.8.8.8,1,53,17,2023-07-22 11:45:00,0,0,1,1,10,20,10")
+        assert naive.timestamp.isoformat() == "2023-07-22T11:45:00+00:00"
+        offset = self.event("10.0.0.7,8.8.8.8,1,53,17,2023-07-22T14:45:00+03:00,0,0,1,1,10,20,10")
+        assert offset.timestamp == naive.timestamp
+
+    def test_the_duration_is_read_as_microseconds(self) -> None:
+        event = self.event("10.0.0.7,8.8.8.8,1,53,6,2023-07-22 11:45:00,2500000.0,0,1,1,1,1,1")
+        record = FlowRecord.from_metadata(event.metadata[METADATA_KEY])
+        assert record.duration_s == pytest.approx(2.5)
+
+    @pytest.mark.parametrize(("number", "name"), [("6", "tcp"), ("1", "icmp"), ("132", "132")])
+    def test_protocol_numbers_are_named_and_an_unknown_one_passes_through(
+        self, number: str, name: str
+    ) -> None:
+        event = self.event(f"10.0.0.7,8.8.8.8,1,53,{number},2023-07-22 11:45:00,0,0,1,1,1,1,1")
+        assert FlowRecord.from_metadata(event.metadata[METADATA_KEY]).protocol == name
+
+    def test_a_dhcp_request_from_0_0_0_0_is_quarantined_with_a_reason(self) -> None:
+        # The Biology data really holds two of these: neither end is a monitored host.
+        result = run(
+            self.HEADER
+            + "0.0.0.0,255.255.255.255,68,67,17,2023-06-20 07:35:00,0,0,1,0,300,0,300\n",
+            "cicflowmeter-csv",
+        )
+        (rejected,) = result.malformed
+        assert result.events == [] and "neither endpoint" in rejected.error
+
+
 class TestOrientationAtTheBoundary:
     def test_an_inbound_flow_is_attributed_to_the_local_asset(self) -> None:
         row = "2026-07-07T12:00:00+00:00,203.0.113.5,40000,10.0.0.7,22,tcp,1.5,500,40,5,2,SF"

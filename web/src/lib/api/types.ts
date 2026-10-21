@@ -22,6 +22,10 @@ export type Summary = R["Summary"];
 export type Lane = R["Lane"];
 export type AlertSeverity = R["AlertSeverity"];
 export type Criticality = R["Criticality"];
+// The IT and OT overviews (ADR-0044): chart-sized counts, counted server-side.
+export type ItOverview = R["ItOverview"];
+export type OtOverview = R["OtOverview"];
+export type QualityRecordInfo = R["QualityRecordInfo"];
 
 // --- Pipeline plane (orchestration) ------------------------------------------
 export type ParamInfo = P["ParamInfo"];
@@ -32,6 +36,16 @@ export type IssueInfo = P["IssueInfo"];
 export type ValidateResponse = P["ValidateResponse"];
 export type PreviewResponse = P["PreviewResponse"];
 export type RejectedLine = P["RejectedLine"];
+
+// --- Data sources (ADR-0041) --------------------------------------------------
+export type DataSourceInfo = P["DataSourceInfo"];
+export type DataSourceRequest = P["DataSourceRequest"];
+export type SourceType = DataSourceInfo["type"];
+// --- Connections and pulls (ADR-0042) ---------------------------------------------
+export type ConnectionInfo = P["ConnectionInfo"];
+export type DeviceInfo = P["DeviceInfo"];
+export type PullRequest = P["PullRequest"];
+export type PullResponse = P["PullResponse"];
 export type RunResponse = P["RunResponse"];
 export type PipelineSpec = P["PipelineSpec"];
 

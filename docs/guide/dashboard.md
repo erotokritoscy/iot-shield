@@ -261,6 +261,30 @@ It also carries the rule the whole app follows about truncation: **a page that s
 shows a table in the same breath must say when the table is capped**, and which slice it is. An
 unmarked cap reads as a contradiction the operator has to resolve alone.
 
+### IT and OT overviews
+
+The iotShield prototype's two dashboards, rebuilt over iotshield's own results (ADR-0044,
+`pages/overview/`, charts in `charts/overview.ts`). All counting happens on the read API's
+`/overview` routes, so the charts are complete whatever the range. Each page keeps its range of
+UTC days in the URL (`?start=&end=`) and, when the range holds no data, offers to jump to the week
+ending at the latest day that does.
+
+- **IT overview**: flows, how many fall inside a flow-lane detection on the same device (the
+  prototype's "attack vs normal", stated as what iotshield can claim), detections per day (every
+  day drawn, an empty one at zero), detections per detector, and the flows table (capped at 500,
+  saying so with the true total).
+- **OT overview**: SensiPro's six anomaly types. Anomalies per day, or per hour when the range is
+  one day; a pie and a table of the six with SensiPro's codes and where each is found (detector or
+  ingest); the top twenty meters; and the records, filterable by type. Each type keeps one
+  Okabe–Ito colour on every chart, with a legend, the table and an (i) beside it.
+- **Meter page** (`/overview/ot/meter/:id`, from any meter link): one UTC day of its hourly
+  consumption, one line per anomaly type over the range, and its records.
+- **Replay** (all three pages): ▶ plays the range forward bucket by bucket (up to a week is drawn
+  by hour, longer by day) — time charts grow across a fixed axis behind a dashed "now" line,
+  counters, pies and per-meter bars show only what has arrived, and an "arriving now" feed lists the
+  newest records. ⏸ pauses, ⟲ resets, 1×/2×/4× sets the pace (`lib/replay.ts`). It replays stored
+  results without fetching anything, never starts by itself, and returns to the full range when done.
+
 ## Operate: Compose & run
 
 A four-step **wizard**: *Data → Detection → Alerts & output → Review & run*. It is the write plane,
@@ -388,6 +412,29 @@ of the page that is currently inconsistent. The server bounds one source at 4,00
 nginx bounds the whole request at 8 MB, and the browser bounds one uploaded file at 8 MB. The
 browser's limit exists because `JSON.stringify` over tens of megabytes locks the tab long before the
 proxy would answer. See "Known drift" below.
+
+## Operate: Data sources
+
+`/data-sources` (`pages/DataSourcesPage.tsx`) is the organization's register of where its data
+comes from — iotShield's IT/OT data sources, carried over (ADR-0041). The list shows each source's
+type, name, how it is read (`normalizer · format`, or *not set*) and description. Admins (and
+everyone, with no login) get an add/edit form with an (i) on every field and Edit / Remove per row;
+a member sees the list and a note that only an admin can change it. The form asks for an input
+format only when the chosen normalizer reads more than one, mirroring the server's check.
+
+On Compose, the source card shows a **Data source** picker once the organization has any. Picking
+one fills in the normalizer and format it names (or, for a source that names none, says so and
+leaves them); choosing another normalizer by hand clears the pick. Nothing about the pick is sent
+with the run.
+
+A source with a **connection** (ADR-0042) also gets a **Pull** panel (`compose/PullPanel.tsx`):
+from/to dates, the connector's own params (SensiPro: utility), and a filterable device list
+(meters or hosts; none selected means all of them). **Pull** asks the server for that window, and
+the answer fills the source exactly as an uploaded file would: its content, its origin
+(`SensiPro meters 2023-07-01..2023-07-02`) and the connector's normalizer and format. The
+wrong-format check and the run see no difference. A refused pull (too many days or rows) says why
+and leaves the source as it was. On the Data sources page, an admin picks the connection; the
+normalizer fields then disappear, because the connector decides how the source is read.
 
 ## Evaluate: Benchmarks
 
@@ -610,6 +657,9 @@ Recorded rather than fixed, because this guide is documentation and these are co
 | Enrichment's read path in TypeScript | `web/src/lib/evidence.ts` |
 | Compose: preselection, live validation, the untrained warning | `web/src/pages/ComposePage.tsx` |
 | Compose: the (i) text behind every field | `web/src/pages/compose/help.ts` |
+| Data sources: the IT/OT register and its form | `web/src/pages/DataSourcesPage.tsx`, `src/iotshield/api/data_sources.py` |
+| IT/OT overviews: the pages, the chart builders, the counting | `web/src/pages/overview/`, `web/src/charts/overview.ts`, `src/iotshield/storage/overview.py` |
+| Pulling from a source database: connectors and the Pull panel | `src/iotshield/connect/`, `web/src/pages/compose/PullPanel.tsx`, `config/connections.yaml` |
 | The walkthrough's three inputs, and the scenario they encode | `scripts/make_demo_data.py` |
 | Artifact vs hyperparameters, shared by both pages that choose weights | `web/src/lib/artifact.ts` |
 | Parameter widgets from published declarations | `web/src/lib/params.ts` |

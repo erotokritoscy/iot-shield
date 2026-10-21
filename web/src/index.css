@@ -116,3 +116,26 @@
     @apply text-xs leading-relaxed text-muted;
   }
 }
+
+/* The replay's "arriving now" feed (ADR-0044 amendment): a new row slides in from the top.
+   Movement only — under "reduce motion" it simply appears. */
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.feed-in {
+  animation: feed-in 260ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-in {
+    animation: none;
+  }
+}

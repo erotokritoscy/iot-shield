@@ -40,6 +40,13 @@ import type {
   Summary,
   UserInfo,
   PreviewResponse,
+  ConnectionInfo,
+  DataSourceInfo,
+  ItOverview,
+  OtOverview,
+  QualityRecordInfo,
+  DeviceInfo,
+  PullResponse,
   ValidateResponse,
 } from "./types";
 
@@ -252,6 +259,83 @@ export const userInfoSchema = z.object({
 });
 export type _UserInfoOk = Assert<Satisfies<UserInfo, z.infer<typeof userInfoSchema>>>;
 export const usersSchema = z.array(userInfoSchema);
+
+/** One of an organization's data sources, IT or OT (ADR-0041). */
+export const dataSourceSchema = z.object({
+  source_id: z.string(),
+  name: z.string(),
+  type: z.enum(["IT", "OT"]),
+  description: z.string().nullable(),
+  normalizer: z.string().nullable(),
+  source_format: z.string().nullable(),
+  connection: z.string().nullable(),
+  created_at: z.string(),
+});
+export type _DataSourceOk = Assert<Satisfies<DataSourceInfo, z.infer<typeof dataSourceSchema>>>;
+export const dataSourcesSchema = z.array(dataSourceSchema);
+
+/** A source database this organization may pull from (ADR-0042). */
+export const connectionSchema = z.object({
+  name: z.string(),
+  connector: z.string(),
+  description: z.string(),
+  normalizer: z.string(),
+  source_format: z.string(),
+  params: z.array(paramInfoSchema),
+  has_devices: z.boolean(),
+});
+export type _ConnectionOk = Assert<Satisfies<ConnectionInfo, z.infer<typeof connectionSchema>>>;
+export const connectionsSchema = z.array(connectionSchema);
+
+export const deviceSchema = z.object({ id: z.string(), label: z.string() });
+export type _DeviceOk = Assert<Satisfies<DeviceInfo, z.infer<typeof deviceSchema>>>;
+export const devicesSchema = z.array(deviceSchema);
+
+export const pullSchema = z.object({
+  content: z.string(),
+  normalizer: z.string(),
+  source_format: z.string(),
+  rows: z.number(),
+  origin: z.string(),
+});
+export type _PullOk = Assert<Satisfies<PullResponse, z.infer<typeof pullSchema>>>;
+
+// --- The IT and OT overviews (ADR-0044) ---------------------------------------------
+
+export const itOverviewSchema = z.object({
+  flows: z.number(),
+  flagged: z.number(),
+  per_day: z.array(z.object({ day: z.string(), count: z.number() })),
+  per_method: z.array(z.object({ method: z.string(), count: z.number() })),
+  latest_day: z.string().nullable(),
+  series: z.array(z.object({ bucket: z.string(), flows: z.number(), flagged: z.number(), detections: z.number() })),
+});
+export type _ItOverviewOk = Assert<Satisfies<ItOverview, z.infer<typeof itOverviewSchema>>>;
+
+export const otOverviewSchema = z.object({
+  total: z.number(),
+  unplaced: z.number(),
+  per_type: z.array(
+    z.object({ issue: z.string(), category: z.number(), subcategory: z.number(), count: z.number() }),
+  ),
+  series: z.array(z.object({ bucket: z.string(), issue: z.string(), count: z.number() })),
+  per_meter: z.array(z.object({ asset_id: z.string(), count: z.number() })),
+  meters: z.number(),
+  latest_day: z.string().nullable(),
+  meter_series: z.array(z.object({ bucket: z.string(), asset_id: z.string(), count: z.number() })),
+});
+export type _OtOverviewOk = Assert<Satisfies<OtOverview, z.infer<typeof otOverviewSchema>>>;
+
+export const qualityRecordsSchema = z.array(
+  z.object({
+    issue: z.string(),
+    source: z.enum(["detection", "reject"]),
+    asset_id: z.string().nullable(),
+    at: z.string().nullable(),
+    detail: z.string(),
+  }),
+);
+export type _QualityRecordOk = Assert<Satisfies<QualityRecordInfo, z.infer<typeof qualityRecordsSchema>[number]>>;
 
 /** A 204: the server said yes and nothing else. */
 export const noContentSchema = z.null();

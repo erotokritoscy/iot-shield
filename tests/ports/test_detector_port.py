@@ -20,6 +20,7 @@ from iotshield.detect import (
     Fittable,
     FlowBurstDetector,
     LogBurstDetector,
+    MeterQualityDetector,
     RuleDetector,
     StubThresholdDetector,
 )
@@ -127,6 +128,16 @@ _RULE_FLOW_EVENTS = [
     flow_event(60, "203.0.113.200", port=443, bytes_out=250_000),
 ]
 
+# A day of hourly SensiPro-style electricity readings with a three-hour silence (heartbeat)
+# and one 50 kWh hour (high): both of meter_quality's rules fire.
+_METER_QUALITY_EVENTS = [
+    meter_fixtures.meter_event(
+        T0 + timedelta(hours=hour), 50.0 if hour == 20 else 1.0, 100.0 + hour
+    )
+    for hour in range(24)
+    if hour not in (10, 11, 12)
+]
+
 CASES = [
     pytest.param(
         DetectorCase(
@@ -193,6 +204,15 @@ CASES = [
             registry_name="meter_iforest",
         ),
         id="meter-iforest",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=MeterQualityDetector,
+            triggering_events=_METER_QUALITY_EVENTS,
+            # Written rules, like `rules`: nothing is fitted, so no ADR-0022 law applies.
+            registry_name="meter_quality",
+        ),
+        id="meter-quality",
     ),
     pytest.param(
         DetectorCase(

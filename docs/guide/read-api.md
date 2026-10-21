@@ -60,6 +60,9 @@ and host runs work.
 | `GET /alerts/{id}/detections` | the evidence behind one alert | |
 | `GET /malformed` | inputs that failed normalization | |
 | `GET /summary` | per-table counts plus the top alert | |
+| `GET /overview/it` | flows, flows inside a detection, flow detections per day and per detector | `start`, `end` (UTC days) |
+| `GET /overview/ot` | SensiPro's six anomaly types: per type, per day or hour, per meter | `start`, `end`, `asset_id`, `bucket` |
+| `GET /overview/ot/records` | those anomalies, oldest first, with `X-Total-Count` | `start`, `end`, `asset_id`, `issue` |
 
 Every paged list endpoint takes `limit` (1 to 10,000, default 1000) and `offset`. `/assets` is
 the exception noted above: an inventory is a lookup table, so it comes back whole.
@@ -70,6 +73,14 @@ included, and `/summary`'s counts are that organization's counts.
 `/health` runs an actual query rather than returning a constant, so it answers "can this
 process serve requests?" rather than "is this process alive?". A container whose database
 went away fails its healthcheck instead of serving 500s.
+
+The three `/overview` routes (ADR-0044) are the exception to "rows, not answers": they count in
+SQL and return chart-sized summaries, because a chart drawn from a list capped at 10,000 rows would
+be a chart of the cap. Their ranges are whole UTC days, both ends included, at most 366, and each
+answer carries `latest_day` (the latest day with any flow or meter reading) so a page can find the
+data. OT counts come from two places, as ADR-0043 split them: `meter_quality` detections (heartbeat,
+high) and the meter normalizer's tagged rejects (valueError, zero, negative, small), whose tag
+`[zero] meter e1 at <UTC time>: …` names the meter-hour they belong to.
 
 ## The contracts are the wire format
 
