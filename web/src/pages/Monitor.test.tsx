@@ -223,9 +223,7 @@ describe("Triage", () => {
 describe("Assets & telemetry", () => {
   it("renders the picker caption, the timeline and the all-lane detections table", async () => {
     renderApp("/assets");
-    expect(
-      await screen.findByRole("option", { name: "Feed pump 2 [pump-02]" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("assets_asset")).toHaveTextContent("Feed pump 2 [pump-02]");
     expect(await screen.findByText(/criticality: high/)).toBeInTheDocument();
     expect(
       await screen.findByText(/Red bands\/rules: telemetry detection windows/),
@@ -233,6 +231,24 @@ describe("Assets & telemetry", () => {
     expect(await screen.findByRole("heading", { name: "Detections" })).toBeInTheDocument();
     // UTC in the table beside the chart (A4).
     expect(await screen.findByText("2026-07-07 12:00:30")).toBeInTheDocument();
+  });
+
+  it("searches the asset list from inside the dropdown and opens the asset picked", async () => {
+    const gateway = { ...seed.discoveredAsset, asset_id: "gw-11", name: "Edge gateway" };
+    server.use(
+      http.get(`${API}/assets`, () => HttpResponse.json([seed.asset, seed.discoveredAsset, gateway])),
+    );
+    renderApp("/assets");
+    await userEvent.click(await screen.findByTestId("assets_asset"));
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    await userEvent.type(screen.getByTestId("assets_asset_search"), "gw");
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Edge gateway [gw-11] (auto-discovered)",
+    ]);
+    await userEvent.click(screen.getByRole("option", { name: /Edge gateway/ }));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByTestId("assets_asset")).toHaveTextContent("Edge gateway [gw-11]");
+    expect(await screen.findByText(/criticality: medium/)).toBeInTheDocument();
   });
 
   it("shows the discovery empty state when the inventory is empty", async () => {

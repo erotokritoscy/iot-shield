@@ -4,7 +4,8 @@
  * `meter_quality` detector (heartbeat, high) and the meter normalizer's tagged rejects
  * (valueError, zero, negative, small), ADR-0043.
  *
- * A single-day range is drawn by hour, as the prototype did; longer ranges by day.
+ * A single-day range is drawn by hour, as the prototype did; longer ranges by day. The meter
+ * selector beside the range narrows every count, chart and record to one meter (`?meter=`).
  */
 import { Link, useLocation } from "react-router-dom";
 
@@ -193,8 +194,13 @@ export function OtOverviewPage() {
   const palette = useChartPalette();
   const [range, setRange] = useDayRange();
   const bucket = bucketFor(range);
-  const overview = useOtOverview(range, undefined, bucket);
-  const records = useOtRecords(range);
+  const [chosenMeter, setMeter] = useUrlChoice("meter");
+  const meter = chosenMeter ?? undefined;
+  const overview = useOtOverview(range, meter, bucket);
+  const records = useOtRecords(range, meter);
+  // A chosen meter stays offered even when the range holds none of its readings.
+  const meterIds = overview.data?.meter_ids ?? [];
+  const meterOptions = [ALL, ...(meter && !meterIds.includes(meter) ? [meter, ...meterIds] : meterIds)];
   const buckets = bucketsOf(range, bucket);
   const replay = useReplay(buckets);
   const now = replay.now;
@@ -212,7 +218,23 @@ export function OtOverviewPage() {
           latestDay={overview.data?.latest_day}
           empty={overview.data?.total === 0}
           info={RANGE_INFO}
-        />
+        >
+          <Field
+            label="Sensor"
+            htmlFor="ot_meter"
+            info="Which sensor (utility meter, by its device id) to show: one, or all of them. Offered: every sensor with a reading in the range."
+          >
+            <Select
+              id="ot_meter"
+              data-testid="ot_meter"
+              className="max-w-xs"
+              options={meterOptions}
+              labelFor={(option) => (option === ALL ? "all sensors" : option)}
+              value={meter ?? ALL}
+              onChange={(event) => setMeter(event.target.value)}
+            />
+          </Field>
+        </DayRangePicker>
         <QueryState query={overview} label="Counting anomalies…">
           {(data) => {
             // During a replay every count is of what has "arrived" by `now`; otherwise the range's.
@@ -310,7 +332,7 @@ export function OtOverviewPage() {
             );
           }}
         </QueryState>
-        <AnomalyRecords range={range} total={overview.data?.total} />
+        <AnomalyRecords range={range} assetId={meter} total={overview.data?.total} />
       </div>
     </>
   );

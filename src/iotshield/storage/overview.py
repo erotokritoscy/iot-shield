@@ -149,6 +149,23 @@ def latest_day(session: Session, *, org_id: str, kind: Literal["it", "ot"]) -> s
     return f"{latest.astimezone(UTC):%Y-%m-%d}"
 
 
+def meter_ids(session: Session, *, org_id: str, start: datetime, end: datetime) -> list[str]:
+    """Every meter with a reading in ``[start, end)``, sorted — what the OT overview's meter
+    selector offers, so a quiet meter can be chosen as well as one with anomalies."""
+    stmt = (
+        select(EventRow.asset_id)
+        .where(
+            EventRow.org_id == org_id,
+            EventRow.source_format.in_(METER_FORMATS),
+            EventRow.timestamp >= start,
+            EventRow.timestamp < end,
+        )
+        .distinct()
+        .order_by(EventRow.asset_id)
+    )
+    return list(session.scalars(stmt))
+
+
 def quality_records(
     session: Session,
     *,

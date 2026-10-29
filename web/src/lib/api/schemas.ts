@@ -323,6 +323,7 @@ export const otOverviewSchema = z.object({
   meters: z.number(),
   latest_day: z.string().nullable(),
   meter_series: z.array(z.object({ bucket: z.string(), asset_id: z.string(), count: z.number() })),
+  meter_ids: z.array(z.string()),
 });
 export type _OtOverviewOk = Assert<Satisfies<OtOverview, z.infer<typeof otOverviewSchema>>>;
 

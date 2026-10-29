@@ -77,6 +77,7 @@ function serve(): void {
           { bucket: "2023-07-01T06:00:00+00:00", asset_id: "e1", count: 5 },
           { bucket: "2023-07-03T10:00:00+00:00", asset_id: "w1", count: 2 },
         ],
+        meter_ids: ["e1", "q1", "w1"],
       });
     }),
     http.get(`${API}/overview/ot/records`, ({ request }) => {
@@ -191,6 +192,34 @@ describe("OT overview", () => {
     await waitFor(() => expect(asked.records.some((query) => query.includes("issue=zero"))).toBe(true));
   });
 
+  it("offers every meter beside the range and narrows the whole page to the one chosen", async () => {
+    renderApp("/overview/ot?start=2023-07-01&end=2023-07-07");
+    const select = await screen.findByTestId("ot_meter");
+    // Right after "To", in the range's row.
+    const row = screen.getByTestId("day_range");
+    expect(within(row).getByTestId("ot_meter")).toBe(select);
+    // A quiet meter (q1) is offered too, not only the ones with anomalies.
+    await waitFor(() =>
+      expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
+        "all sensors",
+        "e1",
+        "q1",
+        "w1",
+      ]),
+    );
+    await userEvent.selectOptions(select, "q1");
+    await waitFor(() => expect(asked.ot).toContain("?start=2023-07-01&end=2023-07-07&asset_id=q1&bucket=hour"));
+    await waitFor(() => expect(asked.records.some((query) => query.includes("asset_id=q1"))).toBe(true));
+    await userEvent.selectOptions(screen.getByTestId("ot_meter"), "");
+    expect(screen.getByTestId("ot_meter")).toHaveValue("");
+  });
+
+  it("keeps a meter chosen in the URL even when the range has none of its readings", async () => {
+    renderApp("/overview/ot?start=2023-07-01&end=2023-07-07&meter=gone");
+    await waitFor(() => expect(asked.ot).toContain("?start=2023-07-01&end=2023-07-07&asset_id=gone&bucket=hour"));
+    await waitFor(() => expect(screen.getByTestId("ot_meter")).toHaveValue("gone"));
+  });
+
   it("opens a meter on the same range, asking for that meter alone", async () => {
     renderApp("/overview/ot?start=2023-07-01&end=2023-07-07");
     const meters = await screen.findByTestId("ot_meters");
@@ -204,8 +233,11 @@ describe("OT overview", () => {
   });
 });
 
-it("lists both overviews in the sidebar under Monitor", async () => {
+it("lists both overviews in the sidebar under Monitor, right after Triage", async () => {
   renderApp("/overview/it?start=2023-07-16&end=2023-07-22");
   expect(await screen.findByRole("link", { name: "IT overview" })).toHaveAttribute("href", "/overview/it");
   expect(screen.getByRole("link", { name: "OT overview" })).toHaveAttribute("href", "/overview/ot");
+  const names = screen.getAllByRole("link").map((link) => link.textContent);
+  const triage = names.indexOf("Triage");
+  expect(names.slice(triage, triage + 3)).toEqual(["Triage", "IT overview", "OT overview"]);
 });

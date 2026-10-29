@@ -512,6 +512,8 @@ export interface components {
             meters: number;
             /** Meter Series */
             meter_series: components["schemas"]["MeterPoint"][];
+            /** Meter Ids */
+            meter_ids: string[];
             /** Latest Day */
             latest_day: string | null;
         };

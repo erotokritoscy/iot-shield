@@ -1426,6 +1426,13 @@
             "type": "array",
             "title": "Meter Series"
           },
+          "meter_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Meter Ids"
+          },
           "latest_day": {
             "anyOf": [
               {
@@ -1447,6 +1454,7 @@
           "per_meter",
           "meters",
           "meter_series",
+          "meter_ids",
           "latest_day"
         ],
         "title": "OtOverview"

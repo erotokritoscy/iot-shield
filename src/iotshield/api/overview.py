@@ -94,6 +94,9 @@ class OtOverview(BaseModel):
     """How many meters had any anomaly."""
     meter_series: list[MeterPoint]
     """``per_meter``'s meters only, per bucket — so the replay can grow their bars."""
+    meter_ids: list[str]
+    """Every meter with a reading in the range, sorted, whatever ``asset_id`` narrows to — the
+    page's meter selector."""
     latest_day: str | None
     """The most recent UTC day with any meter reading at all, whatever the range asked for."""
 
@@ -215,6 +218,7 @@ def create_overview_router() -> APIRouter:
                 MeterPoint(bucket=when, asset_id=meter, count=count)
                 for (when, meter), count in sorted(meter_series.items())
             ],
+            meter_ids=overview.meter_ids(session, org_id=account.org_id, start=low, end=high),
             latest_day=overview.latest_day(session, org_id=account.org_id, kind="ot"),
         )
 
