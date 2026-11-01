@@ -36,6 +36,8 @@ export const keys = {
     ["read", "detections", assetId, lane ?? "all"] as const,
   alertDetections: (alertId: string) => ["read", "alert-detections", alertId] as const,
   malformed: ["read", "malformed"] as const,
+  /** One run's rows of one list (ADR-0045); under "read" so Refresh data re-reads them. */
+  run: (runId: string, list: RunList) => ["read", "run", runId, list] as const,
   itOverview: (range: DayRange, bucket: string) => ["read", "overview", "it", range.start, range.end, bucket] as const,
   otOverview: (range: DayRange, assetId: string | undefined, bucket: string) =>
     ["read", "overview", "ot", range.start, range.end, assetId ?? "all", bucket] as const,
@@ -44,6 +46,9 @@ export const keys = {
   meterDay: (assetId: string, day: string) => ["read", "meter-day", assetId, day] as const,
   flows: (range: DayRange) => ["read", "flows", range.start, range.end] as const,
   modules: ["pipeline", "modules"] as const,
+  /** Saved runs (ADR-0046): the list, and one run's record. Rename and delete invalidate both. */
+  savedRuns: ["pipeline", "runs"] as const,
+  savedRun: (runId: string) => ["pipeline", "runs", runId] as const,
   dataSources: ["pipeline", "data-sources"] as const,
   connections: ["pipeline", "data-sources", "connections"] as const,
   devices: (sourceId: string, params: Record<string, string>) =>
@@ -79,6 +84,26 @@ export const useDetections = (assetId: string | undefined, lane?: Lane) =>
     queryFn: () =>
       readApi.detections({ ...(assetId ? { assetId } : {}), ...(lane ? { lane } : {}) }),
     enabled: Boolean(assetId),
+  });
+
+export type RunList = "events" | "malformed" | "detections" | "alerts";
+
+export const useRunEvents = (runId: string) =>
+  useQuery({ queryKey: keys.run(runId, "events"), queryFn: () => readApi.events({ runId }) });
+export const useRunMalformed = (runId: string) =>
+  useQuery({ queryKey: keys.run(runId, "malformed"), queryFn: () => readApi.malformed({ runId }) });
+export const useRunDetections = (runId: string) =>
+  useQuery({ queryKey: keys.run(runId, "detections"), queryFn: () => readApi.detections({ runId }) });
+export const useRunAlerts = (runId: string) =>
+  useQuery({ queryKey: keys.run(runId, "alerts"), queryFn: () => readApi.alerts({ runId }) });
+
+export const useSavedRuns = () =>
+  useQuery({ queryKey: keys.savedRuns, queryFn: () => pipelineApi.savedRuns() });
+export const useSavedRun = (runId: string | undefined) =>
+  useQuery({
+    queryKey: keys.savedRun(runId ?? ""),
+    queryFn: () => pipelineApi.savedRun(runId as string),
+    enabled: Boolean(runId),
   });
 
 export const useAlertDetections = (alertId: string | undefined) =>

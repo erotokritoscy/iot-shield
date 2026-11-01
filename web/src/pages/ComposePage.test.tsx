@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { captured, PIPELINE, SAMPLE_CSV, server } from "@/test/msw";
+import { captured, PIPELINE, RUN_ID, SAMPLE_CSV, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
 const CSV = "2026-07-07T12:00:00+00:00,pump-02,Pressure,96.0";
@@ -228,6 +228,40 @@ describe("Compose & run — the wizard", () => {
     const body = captured.runBody as RunBody;
     expect(body.inputs).toEqual([{ content: CSV, origin: "source-1" }]);
     expect(body.spec.sources[0]).toEqual({ normalizer: "stub", source_format: "stub-csv", params: {} });
+  });
+
+  it("opens each non-zero result in a new tab, on that run's own list (ADR-0045)", async () => {
+    await withContent();
+    await runFromReview();
+    for (const list of ["events", "detections", "alerts"]) {
+      const tile = screen.getByTestId(`stat-${list}`);
+      expect(tile.tagName).toBe("A");
+      expect(tile).toHaveAttribute("href", `/runs/${RUN_ID}#${list}`);
+      expect(tile).toHaveAttribute("target", "_blank");
+      expect(tile).toHaveAttribute("rel", "noopener noreferrer");
+    }
+    // Nothing behind a zero to open, so it stays a number rather than a link to an empty list.
+    expect(screen.getByTestId("stat-malformed").tagName).toBe("DIV");
+  });
+
+  it("links nothing when the run was not written to the store the read API serves", async () => {
+    server.use(
+      http.post(`${PIPELINE}/runs`, () =>
+        HttpResponse.json({
+          run_id: RUN_ID,
+          events: 1,
+          malformed: 0,
+          detections: 1,
+          alerts: 1,
+          warnings: [],
+          destinations: ["file"],
+          top_alerts: [],
+        }),
+      ),
+    );
+    await withContent();
+    await runFromReview();
+    expect(screen.getByTestId("stat-alerts").tagName).toBe("DIV");
   });
 
   it("names each detector's choices on Review, defaults included", async () => {

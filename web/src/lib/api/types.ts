@@ -47,6 +47,7 @@ export type DeviceInfo = P["DeviceInfo"];
 export type PullRequest = P["PullRequest"];
 export type PullResponse = P["PullResponse"];
 export type RunResponse = P["RunResponse"];
+export type SavedRunInfo = P["SavedRunInfo"];
 export type PipelineSpec = P["PipelineSpec"];
 
 // --- Accounts (mounted only when IOTSHIELD_AUTH is set — ADR-0039) -----------

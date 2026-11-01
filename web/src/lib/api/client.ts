@@ -33,6 +33,8 @@ import {
   pullSchema,
   qualityRecordsSchema,
   runSchema,
+  savedRunSchema,
+  savedRunsSchema,
   summarySchema,
   userInfoSchema,
   usersSchema,
@@ -47,6 +49,7 @@ const ALERT_LIMIT = 1000;
 const MALFORMED_LIMIT = 1000;
 /** Anomaly records shown at once: the route's own ceiling is 1,000. */
 const RECORDS_LIMIT = 500;
+const SAVED_RUNS_LIMIT = 200;
 /** Flows listed at once on the IT overview; the charts count all of them server-side. */
 const FLOWS_LIMIT = 500;
 
@@ -113,25 +116,26 @@ export const readApi = {
 
   assets: () => apiRequest(READ_BASE, "/assets", { schema: assetsSchema }),
 
-  events: (options: { assetId?: string; lane?: Lane } = {}) =>
+  // `runId` narrows any of the four lists to one run's rows (ADR-0045) — the Run page.
+  events: (options: { assetId?: string; lane?: Lane; runId?: string } = {}) =>
     cappedList(EVENT_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/events", {
         schema: eventsSchema,
-        query: { asset_id: options.assetId, lane: options.lane, limit },
+        query: { asset_id: options.assetId, lane: options.lane, run_id: options.runId, limit },
       }),
     ),
 
-  detections: (options: { assetId?: string; lane?: Lane } = {}) =>
+  detections: (options: { assetId?: string; lane?: Lane; runId?: string } = {}) =>
     cappedList(DETECTION_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/detections", {
         schema: detectionsSchema,
-        query: { asset_id: options.assetId, lane: options.lane, limit },
+        query: { asset_id: options.assetId, lane: options.lane, run_id: options.runId, limit },
       }),
     ),
 
-  alerts: () =>
+  alerts: (options: { runId?: string } = {}) =>
     cappedList(ALERT_LIMIT, (limit) =>
-      apiRequest(READ_BASE, "/alerts", { schema: alertsSchema, query: { limit } }),
+      apiRequest(READ_BASE, "/alerts", { schema: alertsSchema, query: { run_id: options.runId, limit } }),
     ),
 
   // Uncapped on purpose, and the only list here that is: an alert's evidence is the set of
@@ -142,9 +146,12 @@ export const readApi = {
       schema: detectionsSchema,
     }),
 
-  malformed: () =>
+  malformed: (options: { runId?: string } = {}) =>
     cappedList(MALFORMED_LIMIT, (limit) =>
-      apiRequest(READ_BASE, "/malformed", { schema: malformedListSchema, query: { limit } }),
+      apiRequest(READ_BASE, "/malformed", {
+        schema: malformedListSchema,
+        query: { run_id: options.runId, limit },
+      }),
     ),
 
   // --- The IT and OT overviews (ADR-0044): counted on the server, whole UTC days ---------
@@ -209,6 +216,8 @@ export interface EvalRunRequest {
   readonly include_timeline: boolean;
 }
 
+const runPath = (runId: string) => `/runs/${encodeURIComponent(runId)}`;
+
 export const pipelineApi = {
   health: (signal?: AbortSignal) =>
     apiRequest(PIPELINE_BASE, "/health", { schema: healthSchema, ...(signal ? { signal } : {}) }),
@@ -232,12 +241,29 @@ export const pipelineApi = {
       ...(signal ? { signal } : {}),
     }),
 
-  run: (spec: unknown, inputs: SourceInput[]) =>
+  /** Run and save the chain; a blank `name` lets the server name it after its inputs (ADR-0046). */
+  run: (spec: unknown, inputs: SourceInput[], name?: string) =>
     apiRequest(PIPELINE_BASE, "/runs", {
       schema: runSchema,
       method: "POST",
-      body: { spec, inputs },
+      body: { spec, inputs, ...(name?.trim() ? { name: name.trim() } : {}) },
     }),
+
+  // --- Saved runs (ADR-0046) -------------------------------------------------------------
+
+  savedRuns: () =>
+    cappedList(SAVED_RUNS_LIMIT, (limit) =>
+      apiRequest(PIPELINE_BASE, "/runs", { schema: savedRunsSchema, query: { limit } }),
+    ),
+
+  savedRun: (runId: string) => apiRequest(PIPELINE_BASE, runPath(runId), { schema: savedRunSchema }),
+
+  renameRun: (runId: string, name: string) =>
+    apiRequest(PIPELINE_BASE, runPath(runId), { schema: savedRunSchema, method: "PATCH", body: { name } }),
+
+  /** Admins only: deletes the run and every result it stored. */
+  deleteRun: (runId: string) =>
+    apiRequest(PIPELINE_BASE, runPath(runId), { schema: noContentSchema, method: "DELETE" }),
 
   // The eval router exists only when IOTSHIELD_EVAL_API is set — absent, not guarded
   // (ADR-0021 D1). That absence is what the mode probes for (D5): 404 here means the plane

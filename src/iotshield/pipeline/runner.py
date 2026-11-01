@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from iotshield.contracts import (
     Asset,
@@ -76,6 +77,7 @@ class RunReport:
 
     origin: str
     destinations: list[str]
+    run_id: UUID
     events: int
     malformed: int
     detections: int
@@ -89,6 +91,7 @@ class RunReport:
             # The header names the run's sources; a multi-source run lists them all.
             origin=" + ".join(source.origin for source in result.sources) or "run",
             destinations=destinations,
+            run_id=result.run_id,
             events=len(result.events),
             malformed=len(result.malformed),
             detections=len(result.detections),
@@ -100,6 +103,7 @@ class RunReport:
     def render(self) -> str:
         lines = [
             f"Pipeline run complete: {self.origin}",
+            f"  run: {self.run_id}",
             f"  destinations: {', '.join(self.destinations) or 'none'}",
             f"  events: {self.events}   malformed: {self.malformed}"
             f"   detections: {self.detections}   alerts: {self.alerts}",
@@ -351,6 +355,9 @@ def compute_result(
     ]
 
     return RunResult(
+        # The spec's own fields only: `compute_result` is typed `PipelineSpec`, but a
+        # `PipelineConfig` satisfies it and would otherwise save the deployment's database URL.
+        spec=spec.model_dump(mode="json", include=set(PipelineSpec.model_fields)),
         run_at=datetime.now(UTC),
         sources=ingested.provenance,
         assets=assets,
@@ -490,7 +497,11 @@ def _load_source_texts(
 
 
 def run_pipeline(
-    config: PipelineConfig, input_path: Path | None = None, *, org_id: str = DEFAULT_ORG_ID
+    config: PipelineConfig,
+    input_path: Path | None = None,
+    *,
+    org_id: str = DEFAULT_ORG_ID,
+    name: str | None = None,
 ) -> RunReport:
     """CLI / standalone entry point: read the configured input(s) and run the pipeline.
 
@@ -499,16 +510,19 @@ def run_pipeline(
     run, creating a database engine (and schema) only if a configured sink needs one — so a
     file-only run needs no database at all. The Pipeline API instead injects its own
     long-lived engine (ADR-0015). ``org_id`` is the organization the results are stored
-    under (ADR-0039); the CLI's ``--org`` sets it.
+    under (ADR-0039); the CLI's ``--org`` sets it, and ``--name`` sets ``name``, what the
+    saved run is called (ADR-0046) — unnamed, the sink names it after its inputs.
     """
     inputs, origins = _load_source_texts(config, input_path)
     needs_db = any(sink_requires_database(sink.name) for sink in config.sinks)
     engine = make_engine(config.database_url) if needs_db and config.database_url else None
     try:
-        resources = SinkResources(org_id=org_id)
+        resources = SinkResources(org_id=org_id, run_name=name)
         if engine is not None:
             create_schema(engine)
-            resources = SinkResources(session_factory=make_session_factory(engine), org_id=org_id)
+            resources = SinkResources(
+                session_factory=make_session_factory(engine), org_id=org_id, run_name=name
+            )
         return execute_run(config, inputs, origins=origins, resources=resources)
     finally:
         if engine is not None:

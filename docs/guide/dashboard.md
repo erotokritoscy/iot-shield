@@ -36,7 +36,7 @@ navigation scheme somebody chose:
 | Group | Plane | Talks to |
 |---|---|---|
 | **Monitor** (Triage, Assets & telemetry, Data health) | read | the read API, `/api/*` |
-| **Operate** (Compose & run) | write | the Pipeline API, `/pipeline/*` |
+| **Operate** (Compose & run, Runs, Data sources) | write | the Pipeline API, `/pipeline/*` |
 | **Evaluate** (Benchmarks) | evaluation | the Pipeline API's `/eval/*` router, or a local file |
 
 Monitor browses what the pipeline produced. Operate composes a chain and triggers a run. Evaluate
@@ -44,7 +44,8 @@ Monitor browses what the pipeline produced. Operate composes a chain and trigger
 and the sidebar is the first place a new operator meets it.
 
 The routes are flat, one per view: `/`, `/assets`, `/data-health`, `/compose`, `/evaluate`, with
-anything else redirecting to Triage. When the deployment requires login, a fourth group,
+anything else redirecting to Triage. `/runs` lists every saved run (ADR-0046) and `/runs/:runId`
+opens one — reached from that list or from a run's result tiles (ADR-0045). When the deployment requires login, a fourth group,
 **Organization**, holds `/account` (everyone) and `/users` (admins), and `/login` and `/register`
 sit outside the shell. A **super admin** (ADR-0040) with no home organization gets a different sidebar altogether —
 *Platform → Organizations, Account* — because they see no organization's data: `TenantOnly`
@@ -375,10 +376,27 @@ that both accepts what the sources produce and is ready to run. "Whichever name 
 silently wrong the moment a second lane arrived, and wrong again when `flow` was registered and
 sorted ahead of `stub`, so a fresh session opened on a flow chain fed telemetry CSV.
 
-**A run produces a receipt, not a results view.** Events, malformed, detections, alerts, plus any
-warnings and the sinks actually written. If the postgres sink was among them and there are alerts,
-the page hands off to Triage; if it was not, it says so, because Triage reads the postgres store
-only and would otherwise look empty after a successful run.
+**A run produces a receipt, and the receipt opens the run.** Events, malformed, detections, alerts,
+plus any warnings and the sinks actually written. If the postgres sink was among them and there are
+alerts, the page hands off to Triage; if it was not, it says so, because Triage reads the postgres
+store only and would otherwise look empty after a successful run. Each non-zero count is also a
+link that opens **in a new tab** on the **Run page** (`/runs/<run_id>#<list>`, `RunPage.tsx`):
+that run's events (every lane), malformed records, detections and alerts, and nothing else —
+every list is asked for by `run_id` (ADR-0045), so the counts in its section titles are the
+tile's counts. A new tab, so following a number never loses the composed chain; alerts link on to
+Triage for the inspector. The tiles link only when postgres was written, since a file-only run
+stored nothing the page could read.
+
+**Every run is saved (ADR-0046).** Review & run has an optional **Run name**; left blank, the
+server names the run after its inputs and the time. **Operate → Runs** (`RunsPage.tsx`) lists the
+organization's runs newest first — dashboard, CLI and seed alike — and each opens its Run page,
+whose header is the run's record: name (**Rename**, anyone), who ran it and when, the chain, its
+warnings, **Open in Compose** and, for admins, **Delete** (which deletes every result the run
+stored, after a confirm). **Open in Compose** goes to `/compose?from=<run_id>`, which loads the run
+*before* the wizard mounts (its state is seeded once) and restores the chain through
+`compose/model.ts: specToState`, the inverse of `buildSpec` — params laid over the widget
+defaults, exactly as a scenario's are. The sources come back empty, because a saved run keeps
+its chain and not its data; a notice names the files it read.
 
 **This page is where the demo lives.** The thirteen `config/demo*.yaml` that indexed the adapters
 one at a time are gone; `config/demo.yaml` survives as the same walkthrough without a browser,
@@ -654,6 +672,8 @@ Recorded rather than fixed, because this guide is documentation and these are co
 | The read-side health gate and its two remedies | `web/src/pages/MonitorGate.tsx` |
 | The in-page failure boundary | `web/src/components/QueryState.tsx` |
 | The queue and the alert inspector | `web/src/pages/TriagePage.tsx` |
+| One run's results, behind the Compose tiles (ADR-0045) | `web/src/pages/RunPage.tsx` |
+| Saved runs: the list, and reopening a chain (ADR-0046) | `web/src/pages/RunsPage.tsx`, `web/src/pages/compose/model.ts: specToState`, `src/iotshield/storage/runs.py` |
 | Enrichment's read path in TypeScript | `web/src/lib/evidence.ts` |
 | Compose: preselection, live validation, the untrained warning | `web/src/pages/ComposePage.tsx` |
 | Compose: the (i) text behind every field | `web/src/pages/compose/help.ts` |

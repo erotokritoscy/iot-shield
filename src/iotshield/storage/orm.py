@@ -13,6 +13,11 @@ argument and ``to_contract`` drops it — the projection stays lossless for the 
 and no adapter can see, forge or forget a tenant. An asset is keyed by ``(org_id,
 asset_id)`` because two organizations may each own a device called ``10.0.0.24``.
 
+``run_id`` (ADR-0045) is a storage fact of the same kind: the run that wrote the row, so a
+run's results can be read back as a set. It is nullable because rows can arrive outside a
+run (a replay, a backfill, a test writing through the repository directly), and an honest
+"no run" beats a made-up one. Assets carry none — a device outlives the runs that saw it.
+
 The account tables (organizations, users, sessions) are not projections of any contract:
 they are the access-control layer the pipeline never sees. Neither is ``data_sources``: an
 organization's register of where its data comes from (ADR-0041), which the pipeline never
@@ -167,6 +172,38 @@ class DataSourceRow(Base):
     created_at: Mapped[datetime]
 
 
+class RunRow(Base):
+    """One saved pipeline run: its name, who ran it, the chain it ran, and what it found (ADR-0046).
+
+    Written by the Postgres sink in the same transaction as the run's rows, so a run that is
+    listed always has its results and a run whose write failed is not listed. The data rows
+    point back by ``run_id`` with **no foreign key**: the column predates this table
+    (ADR-0045), and ``create_all`` adds a missing table but never alters an existing one, so
+    a constraint here would exist on a fresh database and not on an upgraded one. Deleting a
+    run deletes its rows explicitly instead (``runs.delete_run``).
+
+    ``spec`` is the composed chain exactly as it ran — the ``PipelineSpec`` fields only, so
+    never the deployment's ``database_url``. The raw inputs are *not* kept: every line of
+    them is already stored, on an event's or a malformed record's ``raw``.
+    """
+
+    __tablename__ = "runs"
+    __table_args__ = (Index("ix_runs_org_ran_at", "org_id", "run_at"),)
+
+    run_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"))
+    name: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(64))  # a username; None from the CLI
+    run_at: Mapped[datetime]
+    spec: Mapped[dict[str, Any]]
+    sources: Mapped[list[Any]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    warnings: Mapped[list[Any]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    events: Mapped[int]
+    malformed: Mapped[int]
+    detections: Mapped[int]
+    alerts: Mapped[int]
+
+
 def _asset_fk() -> ForeignKeyConstraint:
     # Composite: a row may only name an asset of its OWN organization. A plain FK on
     # asset_id alone would let org A's detection point at org B's device of the same id.
@@ -236,6 +273,7 @@ class EventRow(Base):
 
     event_id: Mapped[UUID] = mapped_column(primary_key=True)
     org_id: Mapped[str] = mapped_column(String(64))
+    run_id: Mapped[UUID | None] = mapped_column(index=True)
     timestamp: Mapped[datetime]
     asset_id: Mapped[str] = mapped_column(String)
     source_type: Mapped[str] = mapped_column(String(20))
@@ -248,10 +286,13 @@ class EventRow(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
     @classmethod
-    def from_contract(cls, event: NormalizedEvent, *, org_id: str) -> "EventRow":
+    def from_contract(
+        cls, event: NormalizedEvent, *, org_id: str, run_id: UUID | None = None
+    ) -> "EventRow":
         return cls(
             event_id=event.event_id,
             org_id=org_id,
+            run_id=run_id,
             timestamp=event.timestamp,
             asset_id=event.asset_id,
             source_type=event.source_type.value,
@@ -286,6 +327,7 @@ class MalformedRow(Base):
 
     record_id: Mapped[UUID] = mapped_column(primary_key=True)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"))
+    run_id: Mapped[UUID | None] = mapped_column(index=True)
     raw: Mapped[str] = mapped_column(Text)
     error: Mapped[str] = mapped_column(Text)
     source_format: Mapped[str] = mapped_column(Text)
@@ -293,10 +335,13 @@ class MalformedRow(Base):
     created_at: Mapped[datetime]
 
     @classmethod
-    def from_contract(cls, record: MalformedRecord, *, org_id: str) -> "MalformedRow":
+    def from_contract(
+        cls, record: MalformedRecord, *, org_id: str, run_id: UUID | None = None
+    ) -> "MalformedRow":
         return cls(
             record_id=record.record_id,
             org_id=org_id,
+            run_id=run_id,
             raw=record.raw,
             error=record.error,
             source_format=record.source_format,
@@ -325,6 +370,7 @@ class DetectionRow(Base):
 
     detection_id: Mapped[UUID] = mapped_column(primary_key=True)
     org_id: Mapped[str] = mapped_column(String(64))
+    run_id: Mapped[UUID | None] = mapped_column(index=True)
     asset_id: Mapped[str] = mapped_column(String)
     window_start: Mapped[datetime]
     window_end: Mapped[datetime]
@@ -337,10 +383,13 @@ class DetectionRow(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata")
 
     @classmethod
-    def from_contract(cls, detection: DetectionResult, *, org_id: str) -> "DetectionRow":
+    def from_contract(
+        cls, detection: DetectionResult, *, org_id: str, run_id: UUID | None = None
+    ) -> "DetectionRow":
         return cls(
             detection_id=detection.detection_id,
             org_id=org_id,
+            run_id=run_id,
             asset_id=detection.asset_id,
             window_start=detection.window_start,
             window_end=detection.window_end,
@@ -390,6 +439,7 @@ class AlertRow(Base):
 
     alert_id: Mapped[UUID] = mapped_column(primary_key=True)
     org_id: Mapped[str] = mapped_column(String(64))
+    run_id: Mapped[UUID | None] = mapped_column(index=True)
     asset_id: Mapped[str] = mapped_column(String)
     window_start: Mapped[datetime]
     window_end: Mapped[datetime]
@@ -408,10 +458,13 @@ class AlertRow(Base):
     )
 
     @classmethod
-    def from_contract(cls, alert: PrioritizedAlert, *, org_id: str) -> "AlertRow":
+    def from_contract(
+        cls, alert: PrioritizedAlert, *, org_id: str, run_id: UUID | None = None
+    ) -> "AlertRow":
         return cls(
             alert_id=alert.alert_id,
             org_id=org_id,
+            run_id=run_id,
             asset_id=alert.asset_id,
             window_start=alert.window_start,
             window_end=alert.window_end,

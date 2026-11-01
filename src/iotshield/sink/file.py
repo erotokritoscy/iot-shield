@@ -25,6 +25,7 @@ class FileSink:
 
     def write(self, result: RunResult) -> None:
         record = {
+            "run_id": str(result.run_id),
             "run_at": result.run_at.isoformat(),
             "sources": [
                 {"normalizer": s.normalizer, "source_format": s.source_format, "origin": s.origin}

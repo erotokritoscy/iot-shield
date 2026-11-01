@@ -699,6 +699,7 @@ export interface operations {
                 lane?: components["schemas"]["Lane"] | null;
                 start?: string | null;
                 end?: string | null;
+                run_id?: string | null;
                 limit?: number;
                 /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
                 offset?: number;
@@ -736,6 +737,7 @@ export interface operations {
                 lane?: components["schemas"]["Lane"] | null;
                 start?: string | null;
                 end?: string | null;
+                run_id?: string | null;
                 limit?: number;
                 /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
                 offset?: number;
@@ -773,6 +775,7 @@ export interface operations {
                 asset_id?: string | null;
                 start?: string | null;
                 end?: string | null;
+                run_id?: string | null;
                 limit?: number;
                 /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
                 offset?: number;
@@ -868,6 +871,7 @@ export interface operations {
     malformed_malformed_get: {
         parameters: {
             query?: {
+                run_id?: string | null;
                 limit?: number;
                 /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */
                 offset?: number;

@@ -91,7 +91,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Saved Runs
+         * @description This organization's runs, newest first; ``X-Total-Count`` says how many exist.
+         */
+        get: operations["list_saved_runs_runs_get"];
         put?: never;
         /**
          * Create Run
@@ -206,6 +210,28 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Run */
+        get: operations["read_run_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove
+         * @description Delete the run and every event, malformed record, detection and alert it stored.
+         */
+        delete: operations["remove_runs__run_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename */
+        patch: operations["rename_runs__run_id__patch"];
         trace?: never;
     };
     "/eval/corpora": {
@@ -1477,6 +1503,11 @@ export interface components {
             /** Error */
             error: string;
         };
+        /** RenameRequest */
+        RenameRequest: {
+            /** Name */
+            name: string;
+        };
         /** RoleChangeRequest */
         RoleChangeRequest: {
             /**
@@ -1493,12 +1524,22 @@ export interface components {
              * @description One raw input per source in spec.sources (same order)
              */
             inputs: components["schemas"]["SourceInput"][];
+            /**
+             * Name
+             * @description What the saved run is called (ADR-0046); blank names it after its inputs
+             */
+            name?: string | null;
         };
         /**
          * RunResponse
-         * @description A run summary. Full results are read back from the read-side API.
+         * @description A run summary. Full results are read back from the read-side API, by ``run_id``.
          */
         RunResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
             /** Events */
             events: number;
             /** Malformed */
@@ -1513,6 +1554,45 @@ export interface components {
             destinations: string[];
             /** Top Alerts */
             top_alerts: components["schemas"]["PrioritizedAlert"][];
+        };
+        /** RunSourceInfo */
+        RunSourceInfo: {
+            /** Normalizer */
+            normalizer: string;
+            /** Source Format */
+            source_format: string;
+            /** Origin */
+            origin: string;
+        };
+        /** SavedRunInfo */
+        SavedRunInfo: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Name */
+            name: string;
+            /** Created By */
+            created_by: string | null;
+            /** Run At */
+            run_at: string;
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Sources */
+            sources: components["schemas"]["RunSourceInfo"][];
+            /** Warnings */
+            warnings: string[];
+            /** Events */
+            events: number;
+            /** Malformed */
+            malformed: number;
+            /** Detections */
+            detections: number;
+            /** Alerts */
+            alerts: number;
         };
         /**
          * SinkConfig
@@ -1787,6 +1867,38 @@ export interface operations {
             };
         };
     };
+    list_saved_runs_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedRunInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_run_runs_post: {
         parameters: {
             query?: never;
@@ -2011,6 +2123,101 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_run_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedRunInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_runs__run_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedRunInfo"];
+                };
             };
             /** @description Validation Error */
             422: {

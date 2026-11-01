@@ -7,7 +7,7 @@ speak contract objects only. Every data row belongs to one organization (ADR-003
 ``accounts`` holds the organizations, users and sessions that decide which.
 """
 
-from iotshield.storage import accounts, data_sources, repository
+from iotshield.storage import accounts, data_sources, repository, runs
 from iotshield.storage.accounts import DEFAULT_ORG_ID
 from iotshield.storage.db import (
     DATABASE_URL_ENV,
@@ -29,4 +29,5 @@ __all__ = [
     "make_engine",
     "make_session_factory",
     "repository",
+    "runs",
 ]

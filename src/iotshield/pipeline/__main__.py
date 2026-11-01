@@ -32,12 +32,21 @@ def main(argv: list[str] | None = None) -> int:
             f"dashboard's Users page. Created if absent. Default: {DEFAULT_ORG_ID!r}"
         ),
     )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "What the saved run is called on the dashboard's Runs page (ADR-0046). "
+            "Default: the config file's name"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
         config = load_config(args.config)
         org_id = slugify(args.org)
-        report = run_pipeline(config, args.input, org_id=org_id)
+        name = args.name or f"{args.config.name} (CLI)"
+        report = run_pipeline(config, args.input, org_id=org_id, name=name)
     except (ValidationError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

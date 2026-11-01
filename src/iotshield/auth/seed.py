@@ -102,7 +102,9 @@ def _seed_demo(session: Session, org_id: str, config_path: str) -> None:
     from iotshield.pipeline.config import load_config
     from iotshield.pipeline.runner import run_pipeline
 
-    report = run_pipeline(load_config(Path(config_path)), org_id=org_id)
+    report = run_pipeline(
+        load_config(Path(config_path)), org_id=org_id, name="Demo walkthrough (seed)"
+    )
     _say(
         f"demo data loaded into {org_id!r} from {config_path}: {report.events} events, "
         f"{report.detections} detections, {report.alerts} alerts"

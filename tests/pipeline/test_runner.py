@@ -27,7 +27,13 @@ from iotshield.pipeline import (
 from iotshield.pipeline import runner as runner_module
 from iotshield.pipeline.compat import IncompatiblePipelineError
 from iotshield.pipeline.config import SourceSpec
-from iotshield.storage import DEFAULT_ORG_ID, make_engine, make_session_factory, repository
+from iotshield.storage import (
+    DEFAULT_ORG_ID,
+    make_engine,
+    make_session_factory,
+    repository,
+    runs,
+)
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -90,6 +96,18 @@ class TestEndToEnd:
                 len(repository.get_detections(session, org_id=DEFAULT_ORG_ID)) == report.detections
             )
             assert len(repository.get_alerts(session, org_id=DEFAULT_ORG_ID)) == report.alerts
+
+    def test_a_host_run_is_saved_under_its_name_with_the_chain_it_ran(self, tmp_path: Path) -> None:
+        # ADR-0046: CLI and seed runs are listed beside the dashboard's, so they need names too.
+        config = make_config(tmp_path)
+        report = run_pipeline(config, write_input(tmp_path), name="nightly")
+        with open_db(config) as session:
+            (saved,) = runs.list_runs(session, org_id=DEFAULT_ORG_ID)
+        assert (saved.run_id, saved.name, saved.created_by) == (report.run_id, "nightly", None)
+        assert (saved.events, saved.malformed, saved.detections, saved.alerts) == (4, 2, 3, 2)
+        # The spec's own fields only: a PipelineConfig must not save its database URL.
+        assert "database_url" not in saved.spec
+        assert saved.spec["detectors"][0]["name"] == "stub_threshold"
 
     def test_alert_lineage_resolves_and_covers_all_detections(self, tmp_path: Path) -> None:
         config = make_config(tmp_path)

@@ -363,6 +363,26 @@ storage fact, not a contract field: the pipeline computes a run without knowing 
 auth off everything is the single `default` org, as before. **The schema changed with no
 migrations**: an old database needs `docker compose down -v`.
 
+**A run is addressable (ADR-0045).** Every computed `RunResult` carries a `run_id`; the Postgres
+sink stamps it on each event, malformed record, detection and alert (nullable — rows written
+outside a run have none), `POST /runs` returns it, and the read API's four lists take an optional
+`run_id` filter *inside* the tenant, so another org's run id finds nothing. The Compose page's
+result tiles open `/runs/<run_id>#<list>` in a new tab — that run's rows and nothing else. Like the
+tenant, it is a storage fact, not a contract field; and it too changed the schema without a
+migration.
+
+**Every run is saved (ADR-0046).** The Postgres sink writes a `runs` row in the run's own
+transaction — name, who ran it, when, the chain (`RunResult.spec`, the `PipelineSpec` fields
+only), the sources and the four counts — so CLI and seed runs are listed beside the
+dashboard's. The name and author ride on `SinkResources` (`run_name`/`run_by`) like `org_id`;
+unnamed, a run is called after its inputs and the time. Inputs are **not** saved (every line
+is already on an event's or malformed record's `raw`), so **Open in Compose**
+(`/compose?from=<run_id>`) restores the chain and asks for the data again. `GET/PATCH/DELETE
+/runs/{id}` and `GET /runs` live on the Pipeline API; members rename, admins delete, and
+deleting a run deletes everything it stored (assets stay). No foreign key from the data rows
+to `runs` — `create_all` cannot add one to an existing table — so this table needed no
+`down -v`.
+
 **The super admin (ADR-0040)** manages every org under `/admin` — create, suspend,
 delete-with-all-data (`?confirm=<org_id>`, server-checked), and any org's users. It **may have a
 home organization** (check constraint: `role = 'superadmin' OR org_id IS NOT NULL`): with one it
@@ -600,13 +620,14 @@ src/iotshield/
                 config/connections.yaml (by name, read-only sessions, passwords from env)
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests); accounts.py = orgs/users/sessions,
                 data_sources.py = each org's IT/OT data-source register (ADR-0041),
+                runs.py = saved runs: name, author, chain, counts (ADR-0046),
                 overview.py = the IT/OT overview counts behind the read API's /overview (ADR-0044)
   auth/         passwords.py (stdlib scrypt), superadmin.py (the CLI that creates super admins) —
                 the access-control layer the pipeline never sees (ADR-0039/0040)
   pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py);
                 _auth.py = the login gate both share, auth.py = the /auth router, admin.py = the
-                super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources
+                super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources; runs.py = saved /runs
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)

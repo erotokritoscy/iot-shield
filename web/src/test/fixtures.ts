@@ -152,6 +152,30 @@ export const malformed = {
   created_at: T0,
 };
 
+/**
+ * A saved run (ADR-0046): a log_burst preset that is not the default, an engine param and the
+ * file sink, so reopening it on Compose has something to restore beyond what a fresh page shows.
+ */
+export const savedRun = {
+  run_id: "5e1f0c2a-9b7d-4c3e-8a6f-0d2b4c6e8f10",
+  name: "Night shift check",
+  created_by: "ana",
+  run_at: T0,
+  spec: {
+    sources: [{ normalizer: "syslog", source_format: "syslog", path: null, params: {} }],
+    detectors: [{ name: "log_burst", params: { min_count: 12 } }],
+    alert_engine: { name: "weighted", params: {} },
+    assets: [],
+    sinks: [{ name: "postgres", params: {} }, { name: "file", params: { filename: "night.jsonl" } }],
+  },
+  sources: [{ normalizer: "syslog", source_format: "syslog", origin: "gateway.log" }],
+  warnings: [],
+  events: 3,
+  malformed: 1,
+  detections: 1,
+  alerts: 1,
+};
+
 export const summary = {
   counts: { events: 3, detections: 1, alerts: 1, malformed_records: 1 },
   top_alert: alert,

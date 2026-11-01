@@ -21,6 +21,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
+from uuid import UUID
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -56,6 +57,7 @@ from iotshield.storage import (
     make_engine,
     make_session_factory,
 )
+from iotshield.storage.runs import MAX_NAME_LENGTH as MAX_RUN_NAME_LENGTH
 
 # --- Wire models: the Pipeline API's request/response schema -----------------
 
@@ -167,6 +169,11 @@ class RunRequest(BaseModel):
     inputs: list[SourceInput] = Field(
         min_length=1, description="One raw input per source in spec.sources (same order)"
     )
+    name: str | None = Field(
+        default=None,
+        max_length=MAX_RUN_NAME_LENGTH,
+        description="What the saved run is called (ADR-0046); blank names it after its inputs",
+    )
 
 
 PREVIEW_REJECTS_SHOWN = 3
@@ -223,8 +230,9 @@ def _preview_response(
 
 
 class RunResponse(BaseModel):
-    """A run summary. Full results are read back from the read-side API."""
+    """A run summary. Full results are read back from the read-side API, by ``run_id``."""
 
+    run_id: UUID
     events: int
     malformed: int
     detections: int
@@ -402,6 +410,7 @@ def _issue_info(issue: CompatIssue) -> IssueInfo:
 
 def _run_response(report: RunReport) -> RunResponse:
     return RunResponse(
+        run_id=report.run_id,
         events=report.events,
         malformed=report.malformed,
         detections=report.detections,
@@ -522,6 +531,8 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
                     output_dir=app.state.output_dir,
                     # Who asked decides whose run it is — never anything in the request body.
                     org_id=account.org_id,
+                    run_name=request.name,
+                    run_by=account.user.username,
                 ),
             )
         except IncompatiblePipelineError as exc:
@@ -569,6 +580,12 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     from iotshield.api.data_sources import create_data_sources_router
 
     app.include_router(create_data_sources_router())
+
+    # Saved runs (ADR-0046): beside POST /runs, which creates them. Always mounted, like the
+    # data sources, because renaming and deleting write.
+    from iotshield.api.runs import create_runs_router
+
+    app.include_router(create_runs_router())
 
     # The evaluation plane is opt-in and *absent* otherwise: no route to reach or probe in a
     # product deployment, rather than a guard inside a live handler (ADR-0021 D1). Imported

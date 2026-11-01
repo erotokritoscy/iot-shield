@@ -11,7 +11,7 @@ import { pipelineApi } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import type { ModuleInfo, ModulesResponse, PreviewResponse } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
-import { initialValues, submittedParams, type ParamValues } from "@/lib/params";
+import { initialValues, submittedParams, type ParamValue, type ParamValues } from "@/lib/params";
 import type { Sample, Scenario } from "@/lib/samples";
 
 /**
@@ -316,4 +316,62 @@ export function useSourcePreviews(
     const entry = settled[index] === key ? cache.current.get(key) : undefined;
     return entry ?? { result: null, error: null, pending: true };
   });
+}
+
+/** A saved spec's param value as a widget value — the same conversion a scenario's gets. */
+const asWidget = (value: unknown): ParamValue =>
+  typeof value === "boolean" ? value : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+
+const asParams = (value: unknown): Record<string, ParamValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, asWidget(item)]))
+    : {};
+
+const asEntries = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null) : [];
+
+/**
+ * A saved run's chain as wizard state — the inverse of `buildSpec`, for **Open in Compose**
+ * (ADR-0046).
+ *
+ * Every param is laid over the widget defaults, exactly as a scenario's are, so the form shows
+ * them and `submittedParams` sends the same request the run sent. The sources come back
+ * **empty**: a saved run keeps its chain, not its inputs, so the operator attaches each one
+ * again (the page names the files the run read). A saved name
+ * the catalogue no longer has is kept rather than swapped for a default — the chain check then
+ * reports it, which is the honest answer to "this run used an adapter that is gone".
+ */
+export function specToState(spec: Record<string, unknown>, catalogue: ModulesResponse): ComposeState {
+  const find = <T extends { name: string }>(items: readonly T[], name: string) =>
+    items.find((item) => item.name === name);
+  const sources: SourceRow[] = asEntries(spec["sources"]).map((entry) => {
+    const normalizer = String(entry["normalizer"] ?? "");
+    return {
+      normalizer,
+      format: String(entry["source_format"] ?? ""),
+      params: { ...initialValues(find(catalogue.normalizers, normalizer)?.params), ...asParams(entry["params"]) },
+      content: "",
+      fileName: null,
+    };
+  });
+  const detectors: DetectorRow[] = asEntries(spec["detectors"]).map((entry) => {
+    const name = String(entry["name"] ?? "");
+    return { name, params: { ...judgeOnlyValues(find(catalogue.detectors, name)), ...asParams(entry["params"]) } };
+  });
+  const engineEntry = asEntries([spec["alert_engine"]])[0] ?? {};
+  const engine = String(engineEntry["name"] ?? catalogue.alert_engines[0]?.name ?? "");
+  const sinkEntries = asEntries(spec["sinks"]).filter((entry) => find(catalogue.sinks, String(entry["name"])));
+  return {
+    sources,
+    detectors,
+    engine,
+    engineParams: { ...initialValues(find(catalogue.alert_engines, engine)?.params), ...asParams(engineEntry["params"]) },
+    sinks: sinkEntries.map((entry) => String(entry["name"])),
+    sinkParams: Object.fromEntries(
+      catalogue.sinks.map((sink) => {
+        const saved = sinkEntries.find((entry) => entry["name"] === sink.name);
+        return [sink.name, { ...initialValues(sink.params), ...asParams(saved?.["params"]) }];
+      }),
+    ),
+  };
 }

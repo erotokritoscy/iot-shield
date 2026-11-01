@@ -37,6 +37,7 @@ import type {
   NormalizedEvent,
   PrioritizedAlert,
   RunResponse,
+  SavedRunInfo,
   Summary,
   UserInfo,
   PreviewResponse,
@@ -228,6 +229,8 @@ export const previewSchema = z.object({
 export type _PreviewOk = Assert<Satisfies<PreviewResponse, z.infer<typeof previewSchema>>>;
 
 export const runSchema = z.object({
+  /** Names the run's stored rows, so its results can be read back as a set (ADR-0045). */
+  run_id: z.string(),
   events: z.number(),
   malformed: z.number(),
   detections: z.number(),
@@ -237,6 +240,27 @@ export const runSchema = z.object({
   top_alerts: z.array(alertSchema),
 });
 export type _RunOk = Assert<Satisfies<RunResponse, z.infer<typeof runSchema>>>;
+
+/**
+ * A saved run (ADR-0046): its name, who ran it, the chain it ran and its counts. `spec` is
+ * left loose here on purpose — it is reopened through `specToState`, which reads only the
+ * fields it knows and treats the rest as absent, so a run saved by an older server still opens.
+ */
+export const savedRunSchema = z.object({
+  run_id: z.string(),
+  name: z.string(),
+  created_by: z.string().nullable(),
+  run_at: z.string(),
+  spec: z.record(z.string(), z.unknown()),
+  sources: z.array(z.object({ normalizer: z.string(), source_format: z.string(), origin: z.string() })),
+  warnings: z.array(z.string()),
+  events: z.number(),
+  malformed: z.number(),
+  detections: z.number(),
+  alerts: z.number(),
+});
+export type _SavedRunOk = Assert<Satisfies<SavedRunInfo, z.infer<typeof savedRunSchema>>>;
+export const savedRunsSchema = z.array(savedRunSchema);
 
 // --- Accounts (ADR-0039) ------------------------------------------------------
 

@@ -130,14 +130,14 @@
         "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nThe guard runs once, inside execute_run, which raises IncompatiblePipelineError on\nan ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map\nits typed error to a structured 422. It raises before any row is written.",
         "operationId": "create_run_runs_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RunRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -146,6 +146,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List Saved Runs",
+        "description": "This organization's runs, newest first; ``X-Total-Count`` says how many exist.",
+        "operationId": "list_saved_runs_runs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedRunInfo"
+                  },
+                  "title": "Response List Saved Runs Runs Get"
                 }
               }
             }
@@ -423,6 +482,135 @@
               "type": "string",
               "format": "uuid",
               "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Read Run",
+        "operationId": "read_run_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedRunInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Rename",
+        "operationId": "rename_runs__run_id__patch",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedRunInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Remove",
+        "description": "Delete the run and every event, malformed record, detection and alert it stored.",
+        "operationId": "remove_runs__run_id__delete",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
             }
           }
         ],
@@ -3192,6 +3380,22 @@
         ],
         "title": "RejectedLine"
       },
+      "RenameRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RenameRequest"
+      },
       "RoleChangeRequest": {
         "properties": {
           "role": {
@@ -3223,6 +3427,19 @@
             "minItems": 1,
             "title": "Inputs",
             "description": "One raw input per source in spec.sources (same order)"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "What the saved run is called (ADR-0046); blank names it after its inputs"
           }
         },
         "additionalProperties": false,
@@ -3235,6 +3452,11 @@
       },
       "RunResponse": {
         "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
           "events": {
             "type": "integer",
             "title": "Events"
@@ -3275,6 +3497,7 @@
         },
         "type": "object",
         "required": [
+          "run_id",
           "events",
           "malformed",
           "detections",
@@ -3284,7 +3507,108 @@
           "top_alerts"
         ],
         "title": "RunResponse",
-        "description": "A run summary. Full results are read back from the read-side API."
+        "description": "A run summary. Full results are read back from the read-side API, by ``run_id``."
+      },
+      "RunSourceInfo": {
+        "properties": {
+          "normalizer": {
+            "type": "string",
+            "title": "Normalizer"
+          },
+          "source_format": {
+            "type": "string",
+            "title": "Source Format"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "normalizer",
+          "source_format",
+          "origin"
+        ],
+        "title": "RunSourceInfo"
+      },
+      "SavedRunInfo": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "run_at": {
+            "type": "string",
+            "title": "Run At"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/RunSourceInfo"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "malformed": {
+            "type": "integer",
+            "title": "Malformed"
+          },
+          "detections": {
+            "type": "integer",
+            "title": "Detections"
+          },
+          "alerts": {
+            "type": "integer",
+            "title": "Alerts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "name",
+          "created_by",
+          "run_at",
+          "spec",
+          "sources",
+          "warnings",
+          "events",
+          "malformed",
+          "detections",
+          "alerts"
+        ],
+        "title": "SavedRunInfo"
       },
       "SinkConfig": {
         "properties": {

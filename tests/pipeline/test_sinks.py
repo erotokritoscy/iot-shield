@@ -40,6 +40,16 @@ def test_file_sink_appends_one_json_line_per_run(tmp_path: Path) -> None:
     assert record["run_at"].startswith("2026-07-07T12:00:00")  # ISO-8601 via the contracts
 
 
+def test_file_sink_records_the_run_id_and_each_run_gets_its_own(tmp_path: Path) -> None:
+    out = tmp_path / "out.jsonl"
+    first, second = _result(), _result()
+    FileSink(out).write(first)
+    FileSink(out).write(second)
+    ids = [json.loads(line)["run_id"] for line in out.read_text(encoding="utf-8").splitlines()]
+    assert ids == [str(first.run_id), str(second.run_id)]
+    assert first.run_id != second.run_id
+
+
 def test_file_sink_creates_missing_parent_dirs(tmp_path: Path) -> None:
     out = tmp_path / "nested" / "deep" / "out.jsonl"
     FileSink(out).write(_result())

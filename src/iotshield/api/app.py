@@ -144,6 +144,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         lane: Lane | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
+        run_id: UUID | None = None,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[NormalizedEvent]:
@@ -155,6 +156,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             lane=lane,
             start=start,
             end=end,
+            run_id=run_id,
             limit=limit,
             offset=offset,
         )
@@ -168,6 +170,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         lane: Lane | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
+        run_id: UUID | None = None,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[DetectionResult]:
@@ -179,6 +182,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             lane=lane,
             start=start,
             end=end,
+            run_id=run_id,
             limit=limit,
             offset=offset,
         )
@@ -192,6 +196,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         asset_id: str | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
+        run_id: UUID | None = None,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[PrioritizedAlert]:
@@ -203,6 +208,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             asset_id=asset_id,
             start=start,
             end=end,
+            run_id=run_id,
             limit=limit,
             offset=offset,
         )
@@ -224,12 +230,13 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         response: Response,
         session: SessionDep,
         account: AccountDep,
+        run_id: UUID | None = None,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[MalformedRecord]:
         """The audit view: inputs that failed normalization (never dropped)."""
         return _paged(response, repository.list_malformed)(
-            session, org_id=account.org_id, limit=limit, offset=offset
+            session, org_id=account.org_id, run_id=run_id, limit=limit, offset=offset
         )
 
     @app.get("/summary")

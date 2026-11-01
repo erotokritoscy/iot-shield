@@ -16,6 +16,11 @@ filter: a query that forgot its tenant would return another organization's alert
 perfectly healthy doing it. A required keyword makes forgetting a ``TypeError``. Lookups by
 id (an alert, an alert's detections) are scoped too, so another tenant's id is simply *not
 found* — indistinguishable from an id that never existed.
+
+``run_id`` is the opposite kind of argument (ADR-0045): optional on every write and every
+read. A write outside a run stores none; a read that names one narrows to that run's rows,
+*inside* the tenant — so another organization's run id finds nothing, exactly as its alert
+ids do.
 """
 
 from collections.abc import Sequence
@@ -199,28 +204,52 @@ def upsert_assets(session: Session, assets: Sequence[Asset], *, org_id: str) -> 
     session.flush()
 
 
-def insert_events(session: Session, events: Sequence[NormalizedEvent], *, org_id: str) -> None:
+def insert_events(
+    session: Session,
+    events: Sequence[NormalizedEvent],
+    *,
+    org_id: str,
+    run_id: UUID | None = None,
+) -> None:
     _ensure_assets(session, {event.asset_id for event in events}, org_id=org_id)
-    session.add_all(EventRow.from_contract(event, org_id=org_id) for event in events)
+    session.add_all(EventRow.from_contract(event, org_id=org_id, run_id=run_id) for event in events)
     session.flush()
 
 
-def insert_malformed(session: Session, records: Sequence[MalformedRecord], *, org_id: str) -> None:
-    session.add_all(MalformedRow.from_contract(record, org_id=org_id) for record in records)
+def insert_malformed(
+    session: Session,
+    records: Sequence[MalformedRecord],
+    *,
+    org_id: str,
+    run_id: UUID | None = None,
+) -> None:
+    session.add_all(
+        MalformedRow.from_contract(record, org_id=org_id, run_id=run_id) for record in records
+    )
     session.flush()
 
 
 def insert_detections(
-    session: Session, detections: Sequence[DetectionResult], *, org_id: str
+    session: Session,
+    detections: Sequence[DetectionResult],
+    *,
+    org_id: str,
+    run_id: UUID | None = None,
 ) -> None:
     _ensure_assets(session, {detection.asset_id for detection in detections}, org_id=org_id)
-    session.add_all(DetectionRow.from_contract(d, org_id=org_id) for d in detections)
+    session.add_all(DetectionRow.from_contract(d, org_id=org_id, run_id=run_id) for d in detections)
     session.flush()
 
 
-def insert_alerts(session: Session, alerts: Sequence[PrioritizedAlert], *, org_id: str) -> None:
+def insert_alerts(
+    session: Session,
+    alerts: Sequence[PrioritizedAlert],
+    *,
+    org_id: str,
+    run_id: UUID | None = None,
+) -> None:
     _ensure_assets(session, {alert.asset_id for alert in alerts}, org_id=org_id)
-    session.add_all(AlertRow.from_contract(alert, org_id=org_id) for alert in alerts)
+    session.add_all(AlertRow.from_contract(alert, org_id=org_id, run_id=run_id) for alert in alerts)
     session.flush()
 
 
@@ -239,6 +268,7 @@ def get_events(
     lane: Lane | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    run_id: UUID | None = None,
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[NormalizedEvent]:
@@ -251,6 +281,8 @@ def get_events(
         stmt = stmt.where(EventRow.asset_id == asset_id)
     if lane is not None:
         stmt = stmt.where(EventRow.source_type == lane.value)
+    if run_id is not None:
+        stmt = stmt.where(EventRow.run_id == run_id)
     if start is not None:
         stmt = stmt.where(EventRow.timestamp >= start)
     if end is not None:
@@ -264,13 +296,20 @@ def get_events(
 
 
 def list_malformed(
-    session: Session, *, org_id: str, limit: int = 1000, offset: int = 0
+    session: Session,
+    *,
+    org_id: str,
+    run_id: UUID | None = None,
+    limit: int = 1000,
+    offset: int = 0,
 ) -> Page[MalformedRecord]:
     stmt = (
         select(MalformedRow)
         .where(MalformedRow.org_id == org_id)
         .order_by(MalformedRow.created_at.desc(), MalformedRow.record_id.desc())
     )
+    if run_id is not None:
+        stmt = stmt.where(MalformedRow.run_id == run_id)
     rows = _oldest_first(session, stmt, limit=limit, offset=offset)
     return Page([row.to_contract() for row in rows], _total(session, stmt))
 
@@ -283,6 +322,7 @@ def get_detections(
     lane: Lane | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    run_id: UUID | None = None,
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[DetectionResult]:
@@ -295,6 +335,8 @@ def get_detections(
         stmt = stmt.where(DetectionRow.asset_id == asset_id)
     if lane is not None:
         stmt = stmt.where(DetectionRow.lane == lane.value)
+    if run_id is not None:
+        stmt = stmt.where(DetectionRow.run_id == run_id)
     if start is not None:
         stmt = stmt.where(DetectionRow.window_start >= start)
     if end is not None:
@@ -312,6 +354,7 @@ def get_alerts(
     asset_id: str | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    run_id: UUID | None = None,
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[PrioritizedAlert]:
@@ -334,6 +377,8 @@ def get_alerts(
         stmt = stmt.where(AlertRow.status == status.value)
     if asset_id is not None:
         stmt = stmt.where(AlertRow.asset_id == asset_id)
+    if run_id is not None:
+        stmt = stmt.where(AlertRow.run_id == run_id)
     if start is not None:
         stmt = stmt.where(AlertRow.window_start >= start)
     if end is not None:

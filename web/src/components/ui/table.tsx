@@ -4,7 +4,9 @@
  * Numerics are right-aligned and tabular (brief §7): a column of priority scores is read by
  * comparing digits in place, which proportional figures make impossible.
  */
+import { ExternalLink } from "lucide-react";
 import * as React from "react";
+import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/controls";
 import { formatCell, isFlatRecord } from "@/lib/format";
@@ -256,14 +258,47 @@ export function DynamicTable({
   );
 }
 
-export function StatTile({ label, value }: { readonly label: string; readonly value: React.ReactNode }) {
-  return (
-    <div
-      data-testid={`stat-${label.replace(/\s+/g, "-")}`}
-      className="rounded-lg border border-line bg-surface px-4 py-3"
-    >
-      <p className="text-2xs uppercase tracking-wide text-muted">{label}</p>
+/**
+ * A headline count. Given `to`, the whole tile is a link that opens in a **new tab** — the
+ * Compose page's run results, where following a count must not lose the composed chain.
+ * A zero stays a plain number: there is nothing behind it to open.
+ */
+export function StatTile({
+  label,
+  value,
+  to,
+}: {
+  readonly label: string;
+  readonly value: React.ReactNode;
+  readonly to?: string | undefined;
+}) {
+  const testId = `stat-${label.replace(/\s+/g, "-")}`;
+  const body = (
+    <>
+      <p className="flex items-center justify-between gap-2 text-2xs uppercase tracking-wide text-muted">
+        {label}
+        {to ? <ExternalLink aria-hidden className="h-3.5 w-3.5" /> : null}
+      </p>
       <p className="tabular mt-1 text-2xl font-semibold leading-none text-ink">{value}</p>
+    </>
+  );
+  if (to && value !== 0) {
+    return (
+      <Link
+        to={to}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid={testId}
+        aria-label={`${label}: ${String(value)} (opens in a new tab)`}
+        className="block rounded-lg border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-accent-soft"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <div data-testid={testId} className="rounded-lg border border-line bg-surface px-4 py-3">
+      {body}
     </div>
   );
 }

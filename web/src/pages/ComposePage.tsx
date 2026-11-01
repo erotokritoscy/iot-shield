@@ -17,21 +17,21 @@
  * `scripts/make_sample_data.py`): it fills every step at once and lands on Review, and the
  * Review step shows what that scenario is tested to produce.
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import * as React from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ParamFields } from "@/components/ParamFields";
-import { Button, Field, MultiSelect, RowCount, Select } from "@/components/ui/controls";
+import { Button, Field, MultiSelect, RowCount, Select, TextInput } from "@/components/ui/controls";
 import { InfoLines, InfoTip } from "@/components/ui/info";
 import { Card, Collapsible, ErrorState, Notice, PageHeader, Section, Spinner } from "@/components/ui/surfaces";
 import { StatTile } from "@/components/ui/table";
 import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
-import type { ModulesResponse, SinkInfo } from "@/lib/api/types";
+import type { ModulesResponse, SavedRunInfo, SinkInfo } from "@/lib/api/types";
 import { initialValues, type ParamValues } from "@/lib/params";
-import { useConnections, useDataSources, useModules } from "@/lib/queries";
+import { keys, useConnections, useDataSources, useModules, useSavedRun, type RunList } from "@/lib/queries";
 import { fetchManifest, fetchSampleText, type SampleManifest, type Scenario } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { DetectorCard } from "@/pages/compose/DetectorCard";
@@ -45,8 +45,10 @@ import {
   newDetector,
   newSource,
   sourceFromSample,
+  specToState,
   useSourcePreviews,
   useValidation,
+  type ComposeState,
   type DetectorRow,
   type SourceRow,
 } from "@/pages/compose/model";
@@ -54,6 +56,18 @@ import { ADAPTER_HELP, FIELD_HELP, paramHelp } from "@/pages/compose/help";
 import { SourceCard, SourceTabs, unreadable } from "@/pages/compose/SourceCard";
 
 const STEPS = ["Data", "Detection", "Alerts & output", "Review & run"] as const;
+
+/**
+ * Where a result tile leads: the Run page, scrolled to that tile's list (ADR-0045).
+ *
+ * Only when the run was written to Postgres — the store the read API serves. A file-only run
+ * kept its results in a JSONL on the server, so a link would open a page saying nothing was
+ * stored, which reads as a lost run rather than as a sink choice.
+ */
+function runLink(result: { run_id: string; destinations: readonly string[] }, list: RunList) {
+  if (!result.destinations.some((destination) => destination.startsWith("postgres"))) return undefined;
+  return `/runs/${encodeURIComponent(result.run_id)}#${list}`;
+}
 type StepNumber = 1 | 2 | 3 | 4;
 
 const samplesKey = ["samples", "manifest"] as const;
@@ -183,7 +197,20 @@ function Footer({
   );
 }
 
-function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
+/** A saved run reopened on this page (ADR-0046): its record, and its chain as wizard state. */
+interface Reopened {
+  readonly run: SavedRunInfo;
+  readonly state: ComposeState;
+}
+
+function ComposeWizard({
+  catalogue,
+  reopened,
+}: {
+  readonly catalogue: ModulesResponse;
+  readonly reopened?: Reopened | undefined;
+}) {
+  const restored = reopened?.state;
   const normalizers = React.useMemo(() => byName(catalogue.normalizers), [catalogue]);
   const detectorCatalogue = React.useMemo(() => byName(catalogue.detectors), [catalogue]);
   const engines = React.useMemo(() => byName(catalogue.alert_engines), [catalogue]);
@@ -194,23 +221,37 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
   const library: SampleManifest = manifest.data ?? { samples: [], scenarios: [] };
 
   // Preselection happens exactly once, when this component mounts with the catalogue.
-  const [sources, setSources] = React.useState<SourceRow[]>(() => [newSource(normalizers)]);
+  const [sources, setSources] = React.useState<SourceRow[]>(() =>
+    restored && restored.sources.length > 0 ? [...restored.sources] : [newSource(normalizers)],
+  );
   // Which source is on screen.
   const [currentSource, setCurrentSource] = React.useState(0);
   const [detectors, setDetectors] = React.useState<DetectorRow[]>(() => {
+    if (restored && restored.detectors.length > 0) return [...restored.detectors];
     const produced = new Set(
       normalizers.find((item) => item.name === newSource(normalizers).normalizer)?.produces ?? [],
     );
     return [newDetector(detectorCatalogue, produced, true)];
   });
-  const [engine, setEngine] = React.useState<string>(() => engines[0]?.name ?? "");
-  const [engineParams, setEngineParams] = React.useState<ParamValues>(() => initialValues(engines[0]?.params));
+  const [engine, setEngine] = React.useState<string>(() => restored?.engine || (engines[0]?.name ?? ""));
+  const [engineParams, setEngineParams] = React.useState<ParamValues>(() =>
+    restored?.engine ? restored.engineParams : initialValues(engines[0]?.params),
+  );
   const [selectedSinks, setSelectedSinks] = React.useState<string[]>(() =>
-    sinks.some((item) => item.name === "postgres") ? ["postgres"] : sinks.slice(0, 1).map((item) => item.name),
+    restored && restored.sinks.length > 0
+      ? [...restored.sinks]
+      : sinks.some((item) => item.name === "postgres")
+        ? ["postgres"]
+        : sinks.slice(0, 1).map((item) => item.name),
   );
   const [sinkParams, setSinkParams] = React.useState<Record<string, ParamValues>>(() =>
-    Object.fromEntries(sinks.map((item) => [item.name, initialValues(item.params)])),
+    restored
+      ? { ...restored.sinkParams }
+      : Object.fromEntries(sinks.map((item) => [item.name, initialValues(item.params)])),
   );
+  // What the saved run will be called (ADR-0046). Blank is fine: the server names it after
+  // its inputs and the time, so a run is never saved without a name.
+  const [runName, setRunName] = React.useState("");
   // The scenario last applied, and the exact spec + inputs it produced: its promised counts
   // are only shown while what will run is still exactly that.
   const [scenario, setScenario] = React.useState<{ scenario: Scenario; fingerprint: string } | null>(null);
@@ -289,7 +330,12 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
     );
 
   const validation = useValidation(spec);
-  const run = useMutation({ mutationFn: () => pipelineApi.run(spec, inputs) });
+  const queryClient = useQueryClient();
+  const run = useMutation({
+    mutationFn: () => pipelineApi.run(spec, inputs, runName),
+    // Every run is saved, so the Runs list is stale the moment one succeeds.
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.savedRuns }),
+  });
   const settling = validation.pending || validation.stale;
   // The chain check names its findings by stage; a source's are shown on that source.
   const sourceIssues = (index: number) =>
@@ -359,6 +405,18 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
 
       {step === 1 ? (
         <div className="space-y-8">
+          {reopened ? (
+            <div data-testid="compose_reopened">
+            <Notice tone="info" title={`Reopened from run “${reopened.run.name}”`}>
+              The chain is restored as it ran. A saved run keeps its chain, not its data, so attach
+              each source again
+              {reopened.run.sources.length > 0
+                ? ` — it read ${reopened.run.sources.map((source) => source.origin).join(", ")}`
+                : ""}
+              .
+            </Notice>
+            </div>
+          ) : null}
           <ScenarioPicker scenarios={library.scenarios} loading={loadingScenario} onPick={(s) => void applyScenario(s)} />
           {scenarioError ? <Notice tone="error">{scenarioError}</Notice> : null}
           {manifest.isError ? (
@@ -605,6 +663,21 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
               </>
             )}
 
+            <Field
+              label="Run name"
+              htmlFor="compose_run_name"
+              hint="Optional. Every run is saved under Operate → Runs; unnamed, it is called after its inputs and the time."
+            >
+              <TextInput
+                id="compose_run_name"
+                data-testid="compose_run_name"
+                value={runName}
+                maxLength={200}
+                placeholder={inputs.map((input) => input.origin).join(", ")}
+                onChange={(event) => setRunName(event.target.value)}
+              />
+            </Field>
+
             <div className="flex items-center gap-3">
               <Button variant="primary" data-testid="compose_run" disabled={!canRun} onClick={() => run.mutate()}>
                 Run pipeline
@@ -617,11 +690,20 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
             {run.isSuccess ? (
               <div className="space-y-4 pt-2">
                 <Notice tone="success">Run complete.</Notice>
+                {runLink(run.data, "events") ? (
+                  <p className="caption">
+                    Saved — find it again any time under{" "}
+                    <Link to="/runs" className="underline underline-offset-2" data-testid="compose_saved_link">
+                      Operate → Runs
+                    </Link>
+                    .
+                  </p>
+                ) : null}
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <StatTile label="events" value={run.data.events} />
-                  <StatTile label="malformed" value={run.data.malformed} />
-                  <StatTile label="detections" value={run.data.detections} />
-                  <StatTile label="alerts" value={run.data.alerts} />
+                  <StatTile label="events" value={run.data.events} to={runLink(run.data, "events")} />
+                  <StatTile label="malformed" value={run.data.malformed} to={runLink(run.data, "malformed")} />
+                  <StatTile label="detections" value={run.data.detections} to={runLink(run.data, "detections")} />
+                  <StatTile label="alerts" value={run.data.alerts} to={runLink(run.data, "alerts")} />
                 </div>
                 {pristineScenario ? (
                   (["events", "malformed", "detections", "alerts"] as const).every(
@@ -674,6 +756,36 @@ function ComposeWizard({ catalogue }: { readonly catalogue: ModulesResponse }) {
   );
 }
 
+/**
+ * The wizard, opened fresh or on a saved run's chain (`?from=<run_id>`, ADR-0046).
+ *
+ * The wizard's state is seeded once, at mount, so a reopened run must be loaded *before* it
+ * mounts — and the wizard is keyed by the run, so reopening another run starts over rather
+ * than keeping the previous one's choices.
+ */
+function Reopen({ catalogue }: { readonly catalogue: ModulesResponse }) {
+  const [params] = useSearchParams();
+  const from = params.get("from") ?? undefined;
+  const saved = useSavedRun(from);
+  if (!from) return <ComposeWizard catalogue={catalogue} />;
+  if (saved.isPending) return <Spinner label="Loading the saved run…" />;
+  if (saved.isError) {
+    return (
+      <>
+        <Notice tone="error">Could not reopen that run: {describeError(saved.error)}</Notice>
+        <ComposeWizard catalogue={catalogue} />
+      </>
+    );
+  }
+  return (
+    <ComposeWizard
+      key={saved.data.run_id}
+      catalogue={catalogue}
+      reopened={{ run: saved.data, state: specToState(saved.data.spec, catalogue) }}
+    />
+  );
+}
+
 export function ComposePage() {
   const modules = useModules();
 
@@ -699,7 +811,7 @@ export function ComposePage() {
         modules.data.sinks.length === 0 ? (
           <Notice tone="error">The Pipeline API reports no adapters — nothing to compose.</Notice>
         ) : (
-          <ComposeWizard catalogue={modules.data} />
+          <Reopen catalogue={modules.data} />
         )
       ) : null}
     </>

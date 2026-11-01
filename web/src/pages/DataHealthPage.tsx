@@ -4,7 +4,8 @@ import { DataTable, DynamicTable, type Column } from "@/components/ui/table";
 import type { MalformedRecord } from "@/lib/api/types";
 import { useMalformed, useSummary } from "@/lib/queries";
 
-const columns: Column<MalformedRecord>[] = [
+/** Shared with the Run page, which shows one run's slice of this same audit. */
+export const malformedColumns: Column<MalformedRecord>[] = [
   {
     key: "raw",
     header: "raw",
@@ -47,7 +48,7 @@ export function DataHealthPage() {
                     order="the most recent window only"
                   />
                   <DataTable
-                    columns={columns}
+                    columns={malformedColumns}
                     rows={page.rows}
                     rowKey={(row, index) => row.record_id ?? String(index)}
                     pageSize={50}

@@ -39,12 +39,24 @@ export const emptyHandlers: RequestHandler[] = [
 ];
 
 /** Whatever the last run POSTed — the request body a parity test asserts against (C4). */
-export const captured: { runBody: unknown; validateBody: unknown; evalBody: unknown; previewBodies: unknown[] } = {
+export const captured: {
+  runBody: unknown;
+  validateBody: unknown;
+  evalBody: unknown;
+  previewBodies: unknown[];
+  renameBody: unknown;
+  deletedRun: string | null;
+} = {
+  renameBody: null,
+  deletedRun: null,
   runBody: null,
   validateBody: null,
   evalBody: null,
   previewBodies: [],
 };
+
+/** The id `POST /runs` answers with — what the result tiles link to (ADR-0045). */
+export const RUN_ID = seed.savedRun.run_id;
 
 export const pipelineHandlers: RequestHandler[] = [
   http.get(`${PIPELINE}/health`, () => HttpResponse.json({ status: "ok", version: "test" })),
@@ -62,9 +74,26 @@ export const pipelineHandlers: RequestHandler[] = [
     const events = body.content.split("\n").filter((line) => line.trim()).length;
     return HttpResponse.json({ events, malformed: 0, level: "clean", rejected: [] });
   }),
+  // Saved runs (ADR-0046): one saved run, renamable and deletable.
+  http.get(`${PIPELINE}/runs`, () => HttpResponse.json([seed.savedRun])),
+  http.get(`${PIPELINE}/runs/:id`, ({ params }) =>
+    params["id"] === seed.savedRun.run_id
+      ? HttpResponse.json(seed.savedRun)
+      : HttpResponse.json({ detail: "run not found" }, { status: 404 }),
+  ),
+  http.patch(`${PIPELINE}/runs/:id`, async ({ request }) => {
+    const body = (await request.json()) as { name: string };
+    captured.renameBody = body;
+    return HttpResponse.json({ ...seed.savedRun, name: body.name });
+  }),
+  http.delete(`${PIPELINE}/runs/:id`, ({ params }) => {
+    captured.deletedRun = String(params["id"]);
+    return new HttpResponse(null, { status: 204 });
+  }),
   http.post(`${PIPELINE}/runs`, async ({ request }) => {
     captured.runBody = await request.json();
     return HttpResponse.json({
+      run_id: RUN_ID,
       events: 1,
       malformed: 0,
       detections: 1,
