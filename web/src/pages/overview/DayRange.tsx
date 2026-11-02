@@ -44,6 +44,7 @@ export function DayRangePicker({
   latestDay,
   empty,
   info,
+  children,
 }: {
   readonly range: DayRange;
   readonly onChange: (range: DayRange) => void;
@@ -52,6 +53,8 @@ export function DayRangePicker({
   /** Whether the chosen range holds no data at all — the only time the jump is offered. */
   readonly empty: boolean;
   readonly info: React.ReactNode;
+  /** More filters for the same row, drawn right after "To" (the OT overview's meter). */
+  readonly children?: React.ReactNode;
 }) {
   const outside = empty && latestDay && (latestDay < range.start || latestDay > range.end);
   return (
@@ -76,6 +79,7 @@ export function DayRangePicker({
           onChange={(event) => PATTERN.test(event.target.value) && onChange({ ...range, end: event.target.value })}
         />
       </Field>
+      {children}
       {outside ? (
         <Button size="sm" data-testid="range_latest" onClick={() => onChange(weekEnding(latestDay))}>
           Show the week ending {latestDay}, the latest data

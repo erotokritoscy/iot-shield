@@ -147,6 +147,15 @@ class TestOt:
             "valueError",
         }
 
+    def test_offers_every_meter_with_a_reading_whatever_the_narrowing(self, apps: Apps) -> None:
+        run_meters(apps.pipeline)
+        for query in ("", "&asset_id=e2"):
+            body = apps.read.get(f"/overview/ot?start=2023-07-01&end=2023-07-01{query}").json()
+            assert body["meter_ids"] == ["e1", "e2"]
+        # A range holding no readings offers none.
+        empty = apps.read.get("/overview/ot?start=2023-08-01&end=2023-08-01").json()
+        assert empty["meter_ids"] == []
+
     def test_lists_the_records_with_a_total(self, apps: Apps) -> None:
         run_meters(apps.pipeline)
         response = apps.read.get("/overview/ot/records?start=2023-07-01&end=2023-07-01&limit=2")

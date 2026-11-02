@@ -24,10 +24,10 @@ interface NavItem {
 
 const MONITOR: NavItem[] = [
   { to: "/", label: "Triage" },
-  { to: "/assets", label: "Assets & telemetry" },
-  { to: "/data-health", label: "Data health" },
   { to: "/overview/it", label: "IT overview" },
   { to: "/overview/ot", label: "OT overview" },
+  { to: "/assets", label: "Assets & telemetry" },
+  { to: "/data-health", label: "Data health" },
 ];
 
 const OPERATE: NavItem[] = [

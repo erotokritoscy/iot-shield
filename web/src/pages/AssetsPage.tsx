@@ -1,6 +1,6 @@
 import { Chart, useChartPalette } from "@/components/Chart";
 import { QueryState } from "@/components/QueryState";
-import { Field, Select } from "@/components/ui/controls";
+import { Field, SearchSelect } from "@/components/ui/controls";
 import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { telemetryTimeline } from "@/charts/specs";
@@ -128,10 +128,12 @@ export function AssetsPage() {
           return (
             <div className="space-y-6">
               <Field label="Asset" htmlFor="assets_asset" className="max-w-md">
-                <Select
+                <SearchSelect
                   id="assets_asset"
+                  data-testid="assets_asset"
+                  placeholder="Search by name or id…"
                   value={selected.asset_id}
-                  onChange={(event) => choose(event.target.value)}
+                  onChange={choose}
                   options={rows.map((asset) => asset.asset_id)}
                   labelFor={(id) => {
                     const asset = rows.find((item) => item.asset_id === id);

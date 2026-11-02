@@ -7,7 +7,7 @@
  * free — shadcn/ui without Radix (ADR-0031).
  */
 import { cva, type VariantProps } from "class-variance-authority";
-import { Minus, Plus } from "lucide-react";
+import { ChevronDown, Minus, Plus } from "lucide-react";
 import * as React from "react";
 
 import { InfoTip } from "@/components/ui/info";
@@ -78,6 +78,152 @@ export function Select({ options, labelFor, className, ...props }: SelectProps) 
         </option>
       ))}
     </select>
+  );
+}
+
+export interface SearchSelectProps {
+  /** Goes on the trigger button, so a `<Field htmlFor>` label names it. */
+  readonly id: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly options: readonly string[];
+  readonly labelFor?: (option: string) => string;
+  readonly placeholder?: string;
+  readonly className?: string;
+  readonly "data-testid"?: string;
+}
+
+/**
+ * A `Select` whose open list starts with a search box — the one deliberate exception to the
+ * native controls above, for lists long enough to need one (a fleet's assets): a native
+ * `<select>` cannot hold a text input. Typing filters the options (every word, anywhere in
+ * the label, case-insensitively); ↑/↓ move, Enter picks, Escape or a click elsewhere closes.
+ */
+export function SearchSelect({
+  id,
+  value,
+  onChange,
+  options,
+  labelFor = (option) => option,
+  placeholder = "Search…",
+  className,
+  "data-testid": testId,
+}: SearchSelectProps) {
+  const listId = React.useId();
+  const wrapper = React.useRef<HTMLDivElement>(null);
+  const trigger = React.useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [active, setActive] = React.useState(0);
+
+  const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = options.filter((option) => {
+    const label = labelFor(option).toLowerCase();
+    return words.every((word) => label.includes(word));
+  });
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [open]);
+
+  const show = () => {
+    setSearch("");
+    setActive(Math.max(0, options.indexOf(value)));
+    setOpen(true);
+  };
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  const pick = (option: string) => {
+    onChange(option);
+    close();
+  };
+
+  return (
+    <div ref={wrapper} className={cn("relative", className)}>
+      <button
+        ref={trigger}
+        id={id}
+        type="button"
+        data-testid={testId}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="control flex items-center justify-between gap-2 text-left"
+        onClick={() => (open ? setOpen(false) : show())}
+        onKeyDown={(event) => {
+          if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+            event.preventDefault();
+            show();
+          }
+        }}
+      >
+        <span className="truncate">{options.includes(value) ? labelFor(value) : value}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-line bg-surface p-1.5 shadow-lg">
+          <input
+            type="search"
+            autoFocus
+            role="combobox"
+            aria-label="Search the options"
+            aria-expanded
+            aria-controls={listId}
+            aria-activedescendant={matches[active] !== undefined ? `${listId}-${active}` : undefined}
+            data-testid={testId ? `${testId}_search` : undefined}
+            className="control mb-1.5"
+            placeholder={placeholder}
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setActive((index) => Math.min(index + 1, matches.length - 1));
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive((index) => Math.max(index - 1, 0));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                const option = matches[active];
+                if (option !== undefined) pick(option);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                close();
+              }
+            }}
+          />
+          <ul id={listId} role="listbox" className="max-h-64 overflow-y-auto">
+            {matches.map((option, index) => (
+              <li
+                key={option}
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={option === value}
+                className={cn(
+                  "cursor-pointer truncate rounded px-2 py-1.5 text-sm",
+                  index === active ? "bg-raised text-ink" : "text-dim",
+                  option === value && "font-medium text-accent",
+                )}
+                onMouseEnter={() => setActive(index)}
+                onClick={() => pick(option)}
+              >
+                {labelFor(option)}
+              </li>
+            ))}
+          </ul>
+          {matches.length === 0 ? <p className="caption px-2 py-1.5">No matches.</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
