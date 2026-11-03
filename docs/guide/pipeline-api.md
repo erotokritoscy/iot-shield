@@ -371,16 +371,35 @@ organization can pull from it:
 POST /data-sources/{id}/pull
 {"start": "2023-07-01", "end": "2023-07-01", "params": {"utility": "water", "devices": ["a01a035"]}}
 
-{"content": "device_id,from_timestamp,last_value,unit\n...", "normalizer": "meter",
+{"sample": "device_id,from_timestamp,last_value,unit\n...", "normalizer": "meter",
  "source_format": "sensipro-hourly-csv", "rows": 24, "origin": "SensiPro meters 2023-07-01..2023-07-01"}
 ```
 
-The content is a run's input as-is. Days are the source's own calendar (SensiPro: Cyprus time,
-Biology: UTC), both inclusive. Every session is read-only with a 30 s query timeout. A window
-over 92 days, over 100,000 rows, or over one source's 4,000,000 characters is a 422 that gives
-the size; it is never truncated. A database that does not answer is a 502 naming the connection
-and nothing else. A connection not declared, or reserved for another organization, is a 422
-either way.
+This **does not return the window** (ADR-0047). It answers what the Compose page needs first: how
+many rows the window holds (counted before the connector drops any filler hours) and a `sample` —
+the header and the first 200 lines — to check the format against. The run reads the rows itself:
+
+```json
+POST /runs
+{"spec": {...}, "inputs": [{"pull": {"source_id": "…", "start": "2023-07-01", "end": "2023-07-31",
+                                     "params": {"utility": "electricity"}}}]}
+```
+
+Each input is **either** `content` **or** `pull`; a run may mix them. Before anything is read,
+every pull is checked: the data source is this organization's, its connection is allowed, the
+spec's source uses the connector's own normalizer and format, and the window and params are
+valid. Any failure is a 422 and nothing is stored. The server then streams the window from the
+database and judges it a batch of assets at a time, so **there is no row limit** — one month of
+every meter is an ordinary run. The saved run records the pull, and Open in Compose restores it.
+
+Days are the source's own calendar (SensiPro: Cyprus time, Biology: UTC), both inclusive. Every
+session is read-only with a 30 s query timeout (SensiPro is read 100 meters per query, so no one
+query sorts a whole fleet). A window over 92 days is a 422. A database that does not answer is a
+502 naming the connection and nothing else — before the run or during it, in which case nothing
+was stored. A connection not declared, or reserved for another organization, is a 422 either way.
+
+A run is still synchronous, and nginx gives the Pipeline API 600 s; a very large window written
+to Postgres can take longer. That is the next limit, recorded in ADR-0047.
 
 ## Where results go
 
@@ -394,6 +413,12 @@ the database:
 Two ship. `postgres` is the default and the one the read API and dashboard consume. `file`
 appends the entire run as one JSON line, losslessly, for a deployment that wants no database
 at all.
+
+A run reaches its sinks **a batch of assets at a time** (ADR-0047): each sink is opened once,
+handed each batch, and finished with the totals — or aborted if the run fails. Postgres keeps one
+transaction for the whole run, so a run that fails in its last batch stores nothing; the file
+sink assembles its one line from parts and appends nothing on failure. A run small enough for one
+batch (50,000 events) is exactly the run it always was.
 
 Every sink is constructed **before any of them writes**. A typo in `sinks[1].params` used to
 commit the run to Postgres and then exit, so re-running after the fix duplicated the data.

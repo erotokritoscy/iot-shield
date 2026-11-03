@@ -7,7 +7,7 @@
  */
 import * as React from "react";
 
-import { pipelineApi } from "@/lib/api/client";
+import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import type { ModuleInfo, ModulesResponse, PreviewResponse } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
@@ -39,15 +39,78 @@ export const MAX_DETECTORS = 10;
  */
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
+/**
+ * A window of a data source that the run reads itself (ADR-0047). The browser never holds the
+ * rows: the pull answers with a count and a sample, and the run is sent this reference.
+ */
+export interface PulledWindow {
+  readonly source_id: string;
+  readonly start: string;
+  readonly end: string;
+  readonly params: Readonly<Record<string, unknown>>;
+  /** Rows in the window as counted by the pull; null when reopened from a saved run. */
+  readonly rows: number | null;
+}
+
+/**
+ * How a source's data arrives, chosen first on its card so only that way's fields are shown.
+ * Browser-only: the run is sent `content` or a `pull`, never this. `null` = not chosen yet,
+ * which is where every new source opens — the operator picks the way before anything else.
+ */
+export type SourceMode = "pull" | "sample" | "upload" | "paste";
+
 export interface SourceRow {
+  /** How the data arrives; null until chosen (see `SourceMode`). */
+  readonly mode?: SourceMode | null;
   readonly normalizer: string;
   readonly format: string;
   readonly params: ParamValues;
+  /** The source's text — or, for a pull, the sample the pull returned (what preview reads). */
   readonly content: string;
   /** The uploaded or sample filename, when a file supplied the content; `null` means "pasted". */
   readonly fileName: string | null;
   /** The organization's data source this row was filled from (ADR-0041), if any. */
   readonly dataSource?: string | null;
+  /** Set when the run reads this source from its data source rather than from `content`. */
+  readonly pull?: PulledWindow | null;
+}
+
+/** Whether a source has something to run: text, or a pull the server will read. */
+export const isFilled = (row: SourceRow): boolean => Boolean(row.pull) || row.content.trim().length > 0;
+
+/** What the run is sent for one source: its text, or the pull for the server to read. */
+export function sourceInput(row: SourceRow, index: number): SourceInput {
+  const origin = row.fileName ?? `source-${index + 1}`;
+  if (row.pull) {
+    const { source_id, start, end, params } = row.pull;
+    return { pull: { source_id, start, end, params }, origin };
+  }
+  return { content: row.content, origin };
+}
+
+/**
+ * A reopened run's pulls, put back on its rows (ADR-0047). Unlike an upload a pull is a
+ * reference, so the saved run holds it and nothing has to be attached again.
+ */
+export function restorePulls(
+  state: ComposeState,
+  saved: readonly { readonly origin: string; readonly pull?: Omit<PulledWindow, "rows"> | null }[],
+): ComposeState {
+  return {
+    ...state,
+    sources: state.sources.map((row, index) => {
+      const pull = saved[index]?.pull;
+      return pull
+        ? {
+            ...row,
+            mode: "pull" as const,
+            pull: { ...pull, rows: null },
+            dataSource: pull.source_id,
+            fileName: saved[index]?.origin ?? null,
+          }
+        : row;
+    }),
+  };
 }
 
 export interface DetectorRow {
@@ -117,7 +180,18 @@ export function newSource(normalizers: readonly ModuleInfo[]): SourceRow {
     params: initialValues(chosen?.params),
     content: "",
     fileName: null,
+    mode: null,
   };
+}
+
+/**
+ * The row after choosing how its data arrives. Whatever the previous way supplied is dropped —
+ * data hidden behind another way's fields would still be sent with the run — while the reader
+ * (normalizer, format, params) is kept, so a restored chain's reader survives the choice.
+ */
+export function withMode(row: SourceRow, mode: SourceMode): SourceRow {
+  if (row.mode === mode) return row;
+  return { ...row, mode, content: "", fileName: null, pull: null, dataSource: null };
 }
 
 export function newDetector(
@@ -149,6 +223,7 @@ export function sourceFromSample(
     params: initialValues(module?.params),
     content,
     fileName: sample.file,
+    mode: "sample",
   };
 }
 

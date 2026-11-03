@@ -5,14 +5,27 @@
  * The React counterpart of the Streamlit suite's `TestTriage` / `TestAssets` /
  * `TestDataHealth` (X4), which went with that app.
  */
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http } from "msw";
+import { HttpResponse, http, type JsonBodyType } from "msw";
 import { describe, expect, it } from "vitest";
 
 import * as seed from "@/test/fixtures";
 import { API, emptyHandlers, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
+
+/** Record the `start`/`end` each request to `path` carried, answering with `body`. */
+function recordRange(path: string, body: readonly unknown[]) {
+  const asked: { start: string | null; end: string | null }[] = [];
+  server.use(
+    http.get(`${API}${path}`, ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      asked.push({ start: params.get("start"), end: params.get("end") });
+      return HttpResponse.json(body as JsonBodyType);
+    }),
+  );
+  return asked;
+}
 
 
 
@@ -97,6 +110,84 @@ describe("Triage", () => {
 
     await userEvent.selectOptions(severity, "high");
     expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+  });
+
+  it("filters by run on the server, naming each run, and keeps the filter on an empty run", async () => {
+    // An alert carries no run_id, so the run filter cannot be a view over the page: it must
+    // be a request (ADR-0045). Asserting the query string is the point — a client-side filter
+    // would render the same here and miss every alert of the run below the 1,000 cap.
+    const asked: (string | null)[] = [];
+    server.use(
+      http.get(`${API}/alerts`, ({ request }) => {
+        const runId = new URL(request.url).searchParams.get("run_id");
+        asked.push(runId);
+        return HttpResponse.json(runId === null ? [seed.alert] : []);
+      }),
+    );
+    renderApp("/");
+    const run = await screen.findByLabelText("Run");
+    expect(await within(run).findByRole("option", { name: /^Night shift check — / })).toBeInTheDocument();
+    expect(asked).toEqual([null]);
+
+    await userEvent.selectOptions(run, seed.savedRun.run_id);
+    await waitFor(() => expect(asked).toContain(seed.savedRun.run_id));
+    // The run has no alerts: that is an answer about the run, not "nothing has run yet".
+    expect(await screen.findByText("No alert matches this filter.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Run")).toHaveValue(seed.savedRun.run_id);
+    expect(screen.queryByText(/run the pipeline first/)).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Run"), "");
+    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+  });
+
+  it("filters by time range on the server, as UTC, and keeps the filter on an empty range", async () => {
+    // Asked of the server, not applied to the page: the queue is capped at 1,000, so a
+    // client-side filter would miss every in-range alert ranked below the cap.
+    const asked = recordRange("/alerts", []);
+    renderApp("/?from=2026-07-07T12:00&to=2026-07-08T00:00");
+    expect(await screen.findByLabelText("From (UTC)")).toHaveValue("2026-07-07T12:00");
+    await waitFor(() =>
+      expect(asked).toContainEqual({ start: "2026-07-07T12:00:00Z", end: "2026-07-08T00:00:00Z" }),
+    );
+    // An empty range is an answer about the range, so the filter stays to widen it again.
+    expect(await screen.findByText("No alert matches this filter.")).toBeInTheDocument();
+    expect(screen.queryByText(/run the pipeline first/)).not.toBeInTheDocument();
+    // `/summary` is org-wide, so its tiles are named all-time beside a filtered queue.
+    expect(screen.getByText(/Counts are all-time totals/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear range" }));
+    await waitFor(() => expect(asked.at(-1)).toEqual({ start: null, end: null }));
+    // Cleared, an empty queue is the whole org's answer again, so the guidance returns.
+    expect(await screen.findByText(/run the pipeline first/)).toBeInTheDocument();
+  });
+
+  it("asks with one open side when only one bound is set", async () => {
+    const asked = recordRange("/alerts", [seed.alert]);
+    renderApp("/");
+    fireEvent.change(await screen.findByLabelText("To (UTC)"), {
+      target: { value: "2026-07-07T13:30" },
+    });
+    await waitFor(() => expect(asked.at(-1)).toEqual({ start: null, end: "2026-07-07T13:30:00Z" }));
+    expect(screen.getByText(/Counts are all-time totals/)).toBeInTheDocument();
+  });
+
+  it("warns when From is after To", async () => {
+    recordRange("/alerts", []);
+    renderApp("/?from=2026-07-09T00:00&to=2026-07-08T00:00");
+    expect(await screen.findByText(/“From” is after “To”/)).toBeInTheDocument();
+  });
+
+  it("opens on the run named in the URL, even one the run list does not hold", async () => {
+    const asked: (string | null)[] = [];
+    server.use(
+      http.get(`${API}/alerts`, ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get("run_id"));
+        return HttpResponse.json([seed.alert]);
+      }),
+    );
+    renderApp("/?run=gone-run");
+    expect(await screen.findByLabelText("Run")).toHaveValue("gone-run");
+    expect(asked).toEqual(["gone-run"]);
   });
   it("shows the KPI row, the ranked queue and the drill-down", async () => {
     renderApp("/");
@@ -251,6 +342,19 @@ describe("Assets & telemetry", () => {
     expect(await screen.findByText(/criticality: medium/)).toBeInTheDocument();
   });
 
+  it("narrows the readings and both detection lists to the time range", async () => {
+    const events = recordRange("/events", []);
+    const detections = recordRange("/detections", []);
+    renderApp("/assets?from=2026-07-07T12:00&to=2026-07-07T12:10");
+    const sent = { start: "2026-07-07T12:00:00Z", end: "2026-07-07T12:10:00Z" };
+    await waitFor(() => expect(events).toContainEqual(sent));
+    // Telemetry detections for the chart, all-lane detections for the table: both narrowed.
+    await waitFor(() => expect(detections.filter((d) => d.start === sent.start)).toHaveLength(2));
+    expect(
+      await screen.findByText("No detections for this asset in this time range."),
+    ).toBeInTheDocument();
+  });
+
   it("shows the discovery empty state when the inventory is empty", async () => {
     server.use(...emptyHandlers);
     renderApp("/assets");
@@ -267,6 +371,24 @@ describe("Data health", () => {
     expect(await screen.findByText("garbage-line")).toBeInTheDocument();
     expect(screen.getByText("unparseable")).toBeInTheDocument();
     expect(screen.getByText("test://seed")).toBeInTheDocument();
+  });
+
+  it("filters malformed inputs by when they were ingested, and says so", async () => {
+    const asked = recordRange("/malformed", []);
+    renderApp("/data-health");
+    fireEvent.change(await screen.findByLabelText("From (UTC)"), {
+      target: { value: "2026-07-07T12:00" },
+    });
+    await waitFor(() => expect(asked.at(-1)).toEqual({ start: "2026-07-07T12:00:00Z", end: null }));
+    expect(
+      await screen.findByText("No malformed inputs ingested in this time range."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Counts are all-time totals/)).toBeInTheDocument();
+  });
+
+  it("shows each malformed record's ingest time, the clock the range filters on", async () => {
+    renderApp("/data-health");
+    expect(await screen.findByRole("columnheader", { name: "ingested (UTC)" })).toBeInTheDocument();
   });
 
   it("takes the counts table's columns from whatever /summary carries (DH4)", async () => {

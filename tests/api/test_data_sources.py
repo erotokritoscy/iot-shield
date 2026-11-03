@@ -253,7 +253,9 @@ class TestConnections:
         )
         assert response.status_code == 422 and "no connection named 'nope'" in response.text
 
-    def test_pulls_a_window_ready_to_be_a_runs_input(self, connected: TestClient) -> None:
+    def test_a_pull_shows_its_size_and_a_sample_never_the_window(
+        self, connected: TestClient
+    ) -> None:
         source = _source(connected, "sensipro")
         response = connected.post(
             f"/data-sources/{source['source_id']}/pull",
@@ -267,20 +269,110 @@ class TestConnections:
             6,
         )
         assert body["origin"] == "Sensipro 2023-07-01..2023-07-01"
-        # The content runs as-is: the same request the Compose page then sends.
-        run = connected.post(
+        assert body["sample"].splitlines()[0] == "device_id,from_timestamp,last_value,unit"
+        assert "content" not in body  # ADR-0047: the rows stay on the server
+
+    def _run(self, client: TestClient, *inputs: dict[str, object], normalizer: str = "meter"):  # type: ignore[no-untyped-def]
+        formats = {"meter": "sensipro-hourly-csv", "stub": "stub-csv"}
+        return client.post(
             "/runs",
             json={
                 "spec": {
-                    "sources": [{"normalizer": "meter", "source_format": "sensipro-hourly-csv"}],
+                    "sources": [
+                        {"normalizer": normalizer, "source_format": formats[normalizer]}
+                        for _ in inputs
+                    ],
                     "detectors": [{"name": "stub_threshold", "params": {"threshold": 80.0}}],
                     "alert_engine": {"name": "stub"},
                 },
-                "inputs": [{"content": body["content"], "origin": body["origin"]}],
+                "inputs": list(inputs),
             },
         )
+
+    def test_a_run_reads_a_pull_itself_and_saves_it_to_reopen(self, connected: TestClient) -> None:
+        source = _source(connected, "sensipro")
+        pull = {
+            "source_id": source["source_id"],
+            "start": "2023-07-01",
+            "end": "2023-07-01",
+            "params": {"utility": "water"},
+        }
+        run = self._run(connected, {"pull": pull})
         assert run.status_code == 200, run.text
         assert (run.json()["events"], run.json()["malformed"]) == (5, 0)
+        saved = connected.get(f"/runs/{run.json()['run_id']}").json()
+        assert saved["sources"] == [
+            {
+                "normalizer": "meter",
+                "source_format": "sensipro-hourly-csv",
+                "origin": "Sensipro 2023-07-01..2023-07-01",
+                "pull": pull,
+            }
+        ]
+
+    def test_a_run_mixes_a_pull_with_text(self, connected: TestClient) -> None:
+        source = _source(connected, "sensipro")
+        text = (
+            "device_id,from_timestamp,last_value,unit\n"
+            "m9,2023-07-01 00:00:00,1,m3\n"
+            "m9,2023-07-01 01:00:00,2,m3\n"
+        )
+        pull = {"source_id": source["source_id"], "start": "2023-07-01", "end": "2023-07-01"}
+        run = self._run(connected, {"pull": pull}, {"content": text, "origin": "m9.csv"})
+        assert run.status_code == 200, run.text
+        assert run.json()["events"] == 10 + 1  # e1, e2: five hours each; m9: one
+
+    @pytest.mark.parametrize(
+        ("change", "says"),
+        [
+            ({"start": "2023-01-01", "end": "2023-12-31"}, "source 1: 365 days asked for"),
+            ({"params": {"utility": "gas"}}, "invalid pull parameters"),
+        ],
+    )
+    def test_a_bad_pull_is_refused_before_anything_is_read_or_stored(
+        self, connected: TestClient, change: dict[str, object], says: str
+    ) -> None:
+        source = _source(connected, "sensipro")
+        pull = {"source_id": source["source_id"], "start": "2023-07-01", "end": "2023-07-01"}
+        run = self._run(connected, {"pull": {**pull, **change}})
+        assert run.status_code == 422
+        assert says in run.json()["detail"]["message"]
+        assert connected.get("/runs").json() == []
+
+    def test_a_pull_must_be_read_with_its_connectors_normalizer(
+        self, connected: TestClient
+    ) -> None:
+        source = _source(connected, "sensipro")
+        pull = {"source_id": source["source_id"], "start": "2023-07-01", "end": "2023-07-01"}
+        run = self._run(connected, {"pull": pull}, normalizer="stub")
+        assert run.status_code == 422
+        assert "its pull is sensipro-hourly-csv for 'meter'" in run.json()["detail"]["message"]
+
+    def test_an_unknown_data_source_is_not_found(self, connected: TestClient) -> None:
+        pull = {
+            "source_id": "00000000-0000-4000-8000-000000000009",
+            "start": "2023-07-01",
+            "end": "2023-07-01",
+        }
+        assert self._run(connected, {"pull": pull}).status_code == 404
+
+    @pytest.mark.parametrize("given", [{}, {"content": "x", "pull": {}}])
+    def test_an_input_is_exactly_one_of_content_and_pull(
+        self, connected: TestClient, given: dict[str, object]
+    ) -> None:
+        source = _source(connected, "sensipro")
+        if "pull" in given:
+            given = {
+                **given,
+                "pull": {
+                    "source_id": source["source_id"],
+                    "start": "2023-07-01",
+                    "end": "2023-07-01",
+                },
+            }
+        run = self._run(connected, given)
+        assert run.status_code == 422
+        assert "exactly one of 'content' and 'pull'" in run.text
 
     def test_lists_devices_for_the_chosen_utility(self, connected: TestClient) -> None:
         source = _source(connected, "sensipro")

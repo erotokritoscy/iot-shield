@@ -1,30 +1,53 @@
 import { Chart, useChartPalette } from "@/components/Chart";
 import { QueryState } from "@/components/QueryState";
 import { Field, SearchSelect } from "@/components/ui/controls";
-import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
+import {
+  Notice,
+  PageHeader,
+  Section,
+  Truncated,
+} from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { telemetryTimeline } from "@/charts/specs";
 import { explanationOf } from "@/lib/evidence";
 import { formatNumber, formatUtc } from "@/lib/format";
 import type { Asset, DetectionResult } from "@/lib/api/types";
 import { useAssets, useDetections, useEvents } from "@/lib/queries";
+import { isOpen, type TimeRange, useTimeRange } from "@/lib/timeRange";
 import { useUrlChoice } from "@/lib/urlChoice";
+import { TimeRangeFilter } from "@/components/TimeRangeFilter";
 
 /** Rows per page in the detections table; a 5,000-row render is 25,000 DOM nodes. */
 const PAGE_SIZE = 50;
 
 /** `Feed pump 2 [pump-02] (auto-discovered)` — discovery is visible, never implied. */
 export function assetLabel(asset: Asset): string {
-  const discovered = asset.metadata?.["auto_discovered"] ? " (auto-discovered)" : "";
+  const discovered = asset.metadata?.["auto_discovered"]
+    ? " (auto-discovered)"
+    : "";
   return `${asset.name} [${asset.asset_id}]${discovered}`;
 }
 
 const detectionColumns: Column<DetectionResult>[] = [
   { key: "method", header: "method" },
   { key: "lane", header: "lane" },
-  { key: "score", header: "score", align: "right", render: (d) => formatNumber(d.score, 4) },
-  { key: "threshold", header: "threshold", align: "right", render: (d) => formatNumber(d.threshold, 4) },
-  { key: "window_start", header: "window start", render: (d) => formatUtc(d.window_start) },
+  {
+    key: "score",
+    header: "score",
+    align: "right",
+    render: (d) => formatNumber(d.score, 4),
+  },
+  {
+    key: "threshold",
+    header: "threshold",
+    align: "right",
+    render: (d) => formatNumber(d.threshold, 4),
+  },
+  {
+    key: "window_start",
+    header: "window start",
+    render: (d) => formatUtc(d.window_start),
+  },
   // Last, so the numeric block stays adjacent and readable, but present: `method` no longer
   // identifies a finding (ADR-0032 D3 — six rules on one lane all report `rules:flow`), and
   // without this the table lists several rows that differ only in score.
@@ -35,15 +58,21 @@ const detectionColumns: Column<DetectionResult>[] = [
   },
 ];
 
-function AssetDetail({ asset }: { readonly asset: Asset }) {
+function AssetDetail({
+  asset,
+  range,
+}: {
+  readonly asset: Asset;
+  readonly range: TimeRange;
+}) {
   const palette = useChartPalette();
   // Telemetry-only on purpose: the chart plots telemetry *values*, and overlaying a flow or
   // log detection's window on a value series they do not belong to would be misleading.
-  const events = useEvents(asset.asset_id, "telemetry");
-  const telemetryDetections = useDetections(asset.asset_id, "telemetry");
+  const events = useEvents(asset.asset_id, "telemetry", range);
+  const telemetryDetections = useDetections(asset.asset_id, "telemetry", range);
   // The table lists EVERY lane, so a flow- or log-only asset is not invisible here — its
   // alert sits in Triage while this page used to show it "no telemetry" and nothing else.
-  const allDetections = useDetections(asset.asset_id);
+  const allDetections = useDetections(asset.asset_id, undefined, range);
 
   return (
     <div className="space-y-8">
@@ -54,9 +83,16 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
 
       <QueryState query={events} label="Loading telemetry…">
         {(eventPage) => (
-          <QueryState query={telemetryDetections} label="Loading telemetry detections…">
+          <QueryState
+            query={telemetryDetections}
+            label="Loading telemetry detections…"
+          >
             {(detectionPage) => {
-              const spec = telemetryTimeline(eventPage.rows, detectionPage.rows, palette);
+              const spec = telemetryTimeline(
+                eventPage.rows,
+                detectionPage.rows,
+                palette,
+              );
               return (
                 <>
                   {/* The server orders events `timestamp DESC` and *then* limits, so the cap
@@ -68,7 +104,10 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
                     order="the most recent window only, so the axis does not start where the data does"
                   />
                   {spec === null ? (
-                    <Notice tone="info">No telemetry with numeric values for this asset.</Notice>
+                    <Notice tone="info">
+                      No telemetry with numeric values for this asset
+                      {isOpen(range) ? "" : " in this time range"}.
+                    </Notice>
                   ) : (
                     <Chart
                       spec={spec}
@@ -86,10 +125,17 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
       <QueryState query={allDetections} label="Loading detections…">
         {(page) =>
           page.rows.length === 0 ? (
-            <Notice tone="info">No detections for this asset.</Notice>
+            <Notice tone="info">
+              No detections for this asset
+              {isOpen(range) ? "" : " in this time range"}.
+            </Notice>
           ) : (
             <Section title="Detections">
-              <Truncated page={page} noun="detections" order="the most recent window only" />
+              <Truncated
+                page={page}
+                noun="detections"
+                order="the most recent window only"
+              />
               <DataTable
                 columns={detectionColumns}
                 rows={page.rows}
@@ -107,6 +153,7 @@ function AssetDetail({ asset }: { readonly asset: Asset }) {
 export function AssetsPage() {
   const assets = useAssets();
   const [chosenId, choose] = useUrlChoice("asset");
+  const [range, setRange] = useTimeRange();
 
   return (
     <>
@@ -119,29 +166,47 @@ export function AssetsPage() {
           if (rows.length === 0) {
             return (
               <Notice tone="info">
-                No assets yet — the inventory populates from data (asset discovery).
+                No assets yet — the inventory populates from data (asset
+                discovery).
               </Notice>
             );
           }
-          const selected = rows.find((asset) => asset.asset_id === chosenId) ?? rows[0];
+          const selected =
+            rows.find((asset) => asset.asset_id === chosenId) ?? rows[0];
           if (selected === undefined) return null;
           return (
             <div className="space-y-6">
-              <Field label="Asset" htmlFor="assets_asset" className="max-w-md">
-                <SearchSelect
-                  id="assets_asset"
-                  data-testid="assets_asset"
-                  placeholder="Search by name or id…"
-                  value={selected.asset_id}
-                  onChange={choose}
-                  options={rows.map((asset) => asset.asset_id)}
-                  labelFor={(id) => {
-                    const asset = rows.find((item) => item.asset_id === id);
-                    return asset ? assetLabel(asset) : id;
-                  }}
+              <div className="flex flex-wrap items-end gap-3">
+                <Field
+                  label="Asset"
+                  htmlFor="assets_asset"
+                  className="w-full max-w-md"
+                >
+                  <SearchSelect
+                    id="assets_asset"
+                    data-testid="assets_asset"
+                    placeholder="Search by name or id…"
+                    value={selected.asset_id}
+                    onChange={choose}
+                    options={rows.map((asset) => asset.asset_id)}
+                    labelFor={(id) => {
+                      const asset = rows.find((item) => item.asset_id === id);
+                      return asset ? assetLabel(asset) : id;
+                    }}
+                  />
+                </Field>
+                <TimeRangeFilter
+                  range={range}
+                  onChange={setRange}
+                  idPrefix="assets_range"
+                  basis="Readings are in the range when their timestamp is between From and To, both included; detections when their window starts at or after From and before To."
                 />
-              </Field>
-              <AssetDetail key={selected.asset_id} asset={selected} />
+              </div>
+              <AssetDetail
+                key={selected.asset_id}
+                asset={selected}
+                range={range}
+              />
             </div>
           );
         }}

@@ -252,7 +252,22 @@ export const savedRunSchema = z.object({
   created_by: z.string().nullable(),
   run_at: z.string(),
   spec: z.record(z.string(), z.unknown()),
-  sources: z.array(z.object({ normalizer: z.string(), source_format: z.string(), origin: z.string() })),
+  sources: z.array(
+    z.object({
+      normalizer: z.string(),
+      source_format: z.string(),
+      origin: z.string(),
+      /** The pull this input was read from (ADR-0047); a reopened run restores it. */
+      pull: z
+        .object({
+          source_id: z.string(),
+          start: z.string(),
+          end: z.string(),
+          params: z.record(z.string(), z.unknown()),
+        })
+        .nullish(),
+    }),
+  ),
   warnings: z.array(z.string()),
   events: z.number(),
   malformed: z.number(),
@@ -315,8 +330,9 @@ export const deviceSchema = z.object({ id: z.string(), label: z.string() });
 export type _DeviceOk = Assert<Satisfies<DeviceInfo, z.infer<typeof deviceSchema>>>;
 export const devicesSchema = z.array(deviceSchema);
 
+/** What a window holds — its size and a sample — never the window itself (ADR-0047). */
 export const pullSchema = z.object({
-  content: z.string(),
+  sample: z.string(),
   normalizer: z.string(),
   source_format: z.string(),
   rows: z.number(),

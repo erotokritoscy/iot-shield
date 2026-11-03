@@ -10,12 +10,14 @@
 import type { ParamInfo } from "@/lib/api/types";
 
 export const FIELD_HELP = {
+  mode:
+    "Pull reads a date range from one of your connected data sources; a sample is a small ready-made file; upload takes a file from your computer; paste takes typed records. Only the chosen way's fields are shown, and switching clears what the previous way supplied.",
   dataSource:
-    "One of your organization's data sources (Operate → Data sources). Picking one fills in the normalizer and format it is read with; you still upload or paste its data.",
+    "One of your organization's data sources (Operate → Data sources). Picking one fills in the normalizer and format it is read with.",
   pullFrom:
     "The first day to pull, in the source's own clock (SensiPro: Cyprus time; Biology: UTC). Included.",
   pullTo:
-    "The last day to pull, included. One pull covers at most 92 days and 100,000 rows; a larger window is refused with its size, never cut short.",
+    "The last day to pull, included. One pull covers at most 92 days, with no limit on rows: the run reads the window from the database itself, a batch at a time.",
   pullDevices:
     "Narrow the pull to some meters or hosts. Pick several with Ctrl/⌘-click; pick none to pull every one. The filter box only changes what is listed.",
   sample:
@@ -24,7 +26,7 @@ export const FIELD_HELP = {
     "The reader that turns this input into events. It must match what the data is: log lines need syslog, a Zeek conn.log or flow CSV needs flow, sensor CSV needs stub.",
   format:
     "The exact dialect of the input. This normalizer reads more than one, and the format is never guessed from the content, so pick the one your file is written in.",
-  upload: "A text file from your computer, up to 8 MB per source. It replaces anything pasted below.",
+  upload: "A text file from your computer, up to 8 MB per source.",
   origin:
     "Where these records came from: the uploaded file's name, or source-N for pasted text. It is stored with every record, including the rejected ones on Data health.",
   paste:

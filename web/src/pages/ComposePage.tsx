@@ -40,11 +40,14 @@ import {
   byName,
   detectorFromScenario,
   fitted,
+  isFilled,
   MAX_DETECTORS,
   MAX_SOURCES,
   newDetector,
   newSource,
+  restorePulls,
   sourceFromSample,
+  sourceInput,
   specToState,
   useSourcePreviews,
   useValidation,
@@ -272,10 +275,7 @@ function ComposeWizard({
       ),
     [sources, detectors, engine, engineParams, selectedSinks, sinkParams, catalogue],
   );
-  const inputs: SourceInput[] = sources.map((source, index) => ({
-    content: source.content,
-    origin: source.fileName ?? `source-${index + 1}`,
-  }));
+  const inputs: SourceInput[] = sources.map(sourceInput);
   const fingerprint = JSON.stringify({ spec, inputs });
   const pristineScenario = scenario !== null && scenario.fingerprint === fingerprint ? scenario.scenario : null;
 
@@ -286,20 +286,21 @@ function ComposeWizard({
       return module !== undefined && !fitted(module, row.params);
     });
 
+  // A pull is previewed through its sample, which is real connector output.
   const previews = useSourcePreviews(
     spec.sources,
-    inputs.map((input) => input.content),
+    sources.map((source) => source.content),
   );
 
   // --- step gating ---------------------------------------------------------------------------
-  const emptySource = sources.findIndex((source) => source.content.trim().length === 0);
+  const emptySource = sources.findIndex((source) => !isFilled(source));
   const unreadableSource = previews.findIndex(unreadable);
   const blockers: Record<StepNumber, string | null> = {
     1:
       sources.length === 0
         ? "Add at least one source."
         : emptySource >= 0
-          ? `Source ${emptySource + 1} needs content — pick a sample, upload a file or paste records.`
+          ? `Source ${emptySource + 1} needs content — choose how its data arrives: pull, sample, upload or paste.`
           : unreadableSource >= 0
             ? `Source ${unreadableSource + 1} cannot be read by ${sources[unreadableSource]?.normalizer ?? "its normalizer"} — check its normalizer and format.`
             : null,
@@ -375,10 +376,7 @@ function ComposeWizard({
         },
         catalogue,
       );
-      const nextInputs = nextSources.map((source, index) => ({
-        content: source.content,
-        origin: source.fileName ?? `source-${index + 1}`,
-      }));
+      const nextInputs = nextSources.map(sourceInput);
       setScenario({ scenario: picked, fingerprint: JSON.stringify({ spec: nextSpec, inputs: nextInputs }) });
       go(4);
     } catch (cause) {
@@ -414,6 +412,10 @@ function ComposeWizard({
                 ? ` — it read ${reopened.run.sources.map((source) => source.origin).join(", ")}`
                 : ""}
               .
+              {/* A pull is a reference, so it IS kept (ADR-0047): those sources are ready. */}
+              {reopened.run.sources.some((source) => source.pull)
+                ? " Sources pulled from a data source are restored and read again when the run starts."
+                : ""}
             </Notice>
             </div>
           ) : null}
@@ -588,7 +590,11 @@ function ComposeWizard({
                       <span className="text-muted">
                         {" "}
                         → {source.normalizer} ({source.format}) ·{" "}
-                        {source.content.split("\n").filter((line) => line.trim()).length.toLocaleString("en-US")} lines
+                        {source.pull
+                          ? source.pull.rows === null
+                            ? "pulled when the run starts"
+                            : `${source.pull.rows.toLocaleString("en-US")} rows, pulled when the run starts`
+                          : `${source.content.split("\n").filter((line) => line.trim()).length.toLocaleString("en-US")} lines`}
                       </span>
                     </li>
                   ))}
@@ -781,7 +787,10 @@ function Reopen({ catalogue }: { readonly catalogue: ModulesResponse }) {
     <ComposeWizard
       key={saved.data.run_id}
       catalogue={catalogue}
-      reopened={{ run: saved.data, state: specToState(saved.data.spec, catalogue) }}
+      reopened={{
+        run: saved.data,
+        state: restorePulls(specToState(saved.data.spec, catalogue), saved.data.sources),
+      }}
     />
   );
 }

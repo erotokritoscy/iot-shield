@@ -15,10 +15,12 @@ import { DataTable, DynamicTable, SeverityBadge, StatTile, type Column } from "@
 import { severityBar } from "@/charts/specs";
 import { actionSteps, explanationOf, mitreOf } from "@/lib/evidence";
 import { formatNumber, formatUtc } from "@/lib/format";
-import type { DetectionResult, PrioritizedAlert } from "@/lib/api/types";
+import type { DetectionResult, PrioritizedAlert, SavedRunInfo } from "@/lib/api/types";
 import { SEVERITY_ORDER, SUMMARY_KEYS } from "@/lib/api/types";
-import { useAlertDetections, useAlerts, useSummary } from "@/lib/queries";
+import { useAlertDetections, useAlerts, useSavedRuns, useSummary } from "@/lib/queries";
+import { isOpen, useTimeRange } from "@/lib/timeRange";
 import { useUrlChoice } from "@/lib/urlChoice";
+import { TimeRangeFilter } from "@/components/TimeRangeFilter";
 
 /** `HIGH 62.0 — pump-02 @ 2026-07-07 12:00`, UTC — the label format the old picker used. */
 export function alertLabel(alert: PrioritizedAlert): string {
@@ -236,17 +238,35 @@ function AlertInspector({
   );
 }
 
+/** `Night shift check — 2026-07-30 12:06`, UTC: a run's name alone need not be unique. */
+export function runLabel(run: SavedRunInfo): string {
+  return `${run.name} — ${formatUtc(run.run_at, "minute")}`;
+}
+
 function RankedQueue({
   rows,
   chosenId,
   onChoose,
+  runs,
+  runId,
+  onRun,
 }: {
   readonly rows: readonly PrioritizedAlert[];
   readonly chosenId: string | null;
   readonly onChoose: (id: string) => void;
+  readonly runs: readonly SavedRunInfo[];
+  readonly runId: string | null;
+  readonly onRun: (id: string) => void;
 }) {
   const [severity, setSeverity] = React.useState("");
   const [asset, setAsset] = React.useState("");
+
+  // A run id from the URL that the list does not hold (deleted, or older than the list's cap)
+  // is still offered, by id: a Select whose value is not among its options would display the
+  // first option while filtering by another — the defect ADR-0036 D2 names.
+  const runsById = new Map(runs.map((run) => [run.run_id, run]));
+  const runOptions = ["", ...runs.map((run) => run.run_id)];
+  if (runId && !runsById.has(runId)) runOptions.push(runId);
 
   // Unmemoised on purpose: measured at 19 µs for 1,000 alerts across 40 assets, which is 0.1%
   // of a frame. A `useMemo` here would cost more in dependency bookkeeping and reading
@@ -281,6 +301,24 @@ function RankedQueue({
             labelFor={(value) => (value === "" ? "any" : value)}
           />
         </Field>
+        {/* Unlike the two above, this one asks the server (ADR-0045): see `useAlerts`. The
+            asset choice is cleared with it, since the asset may not occur in the new run. */}
+        <Field label="Run" htmlFor="triage_run">
+          <Select
+            id="triage_run"
+            value={runId ?? ""}
+            onChange={(event) => {
+              setAsset("");
+              onRun(event.target.value);
+            }}
+            options={runOptions}
+            labelFor={(value) => {
+              if (value === "") return "any";
+              const run = runsById.get(value);
+              return run ? runLabel(run) : value;
+            }}
+          />
+        </Field>
         <p className="caption pb-2">
           {filtered.length.toLocaleString("en-US")} of {rows.length.toLocaleString("en-US")} shown
         </p>
@@ -304,7 +342,13 @@ function RankedQueue({
 
 export function TriagePage() {
   const summary = useSummary();
-  const alerts = useAlerts();
+  const [runId, chooseRun] = useUrlChoice("run");
+  const [range, setRange] = useTimeRange();
+  const ranged = !isOpen(range);
+  const alerts = useAlerts(runId, range);
+  // Only names the options: if the Pipeline API cannot list runs, the filter offers "any" and
+  // the queue still renders.
+  const savedRuns = useSavedRuns();
   const palette = useChartPalette();
   const [chosenId, choose] = useUrlChoice("alert");
 
@@ -332,10 +376,17 @@ export function TriagePage() {
 
       <QueryState query={summary} label="Loading counts…">
         {(data) => (
-          <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {SUMMARY_KEYS.map((key) => (
-              <StatTile key={key} label={key.replace(/_/g, " ")} value={data.counts[key] ?? 0} />
-            ))}
+          <div className="mb-8">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {SUMMARY_KEYS.map((key) => (
+                <StatTile key={key} label={key.replace(/_/g, " ")} value={data.counts[key] ?? 0} />
+              ))}
+            </div>
+            {/* `/summary` counts the whole org; under a range, unmarked tiles beside a
+                filtered queue would read as the range's totals. */}
+            {ranged ? (
+              <p className="caption mt-2">Counts are all-time totals; the time range filters the queue below.</p>
+            ) : null}
           </div>
         )}
       </QueryState>
@@ -343,7 +394,10 @@ export function TriagePage() {
       <QueryState query={alerts} label="Loading alerts…">
         {(page) => {
           const { rows, truncated, limit } = page;
-          if (rows.length === 0) {
+          // With a run chosen, an empty queue is an answer about that run — keep the filter
+          // on screen so it can be changed back, rather than the "nothing has run" guidance.
+          // Likewise under a time range: the range must stay on screen to be widened again.
+          if (rows.length === 0 && !runId && !ranged) {
             return (
               <Notice tone="info">
                 No alerts yet — run the pipeline first (see README: Run the demo pipeline).
@@ -353,10 +407,20 @@ export function TriagePage() {
           const spec = severityBar(rows, palette);
           return (
             <div className="space-y-8">
+              {/* Asked of the server (see `useAlerts`), so it filters the chart and the queue
+                  alike — and reaches alerts ranked below the cap. */}
+              <TimeRangeFilter
+                range={range}
+                onChange={setRange}
+                idPrefix="triage_range"
+                basis="An alert is in the range when its window STARTS at or after From and before To."
+              />
               <Truncated
                 page={page}
                 noun="alerts"
-                total={summary.data?.counts["alerts"]}
+                // `/summary` counts the whole org, so it is no total for one run's or one
+                // range's slice.
+                total={runId || ranged ? undefined : summary.data?.counts["alerts"]}
                 order="the highest-priority slice of the queue, not all of it"
               />
 
@@ -377,7 +441,14 @@ export function TriagePage() {
               )}
 
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-                <RankedQueue rows={rows} chosenId={chosenId} onChoose={choose} />
+                <RankedQueue
+                  rows={rows}
+                  chosenId={chosenId}
+                  onChoose={choose}
+                  runs={savedRuns.data?.rows ?? []}
+                  runId={runId}
+                  onRun={chooseRun}
+                />
                 {/* Sticky, and beside the queue rather than below it: an alert is chosen
                     *because* of where it sits relative to its neighbours, so the ranking has
                     to stay on screen while its evidence is read. */}

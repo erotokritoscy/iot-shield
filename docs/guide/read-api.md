@@ -58,7 +58,7 @@ and host runs work.
 | `GET /alerts` | the ranked queue, priority-descending | `status`, `asset_id`, `start`, `end` |
 | `GET /alerts/{id}` | one alert, 404 if unknown | |
 | `GET /alerts/{id}/detections` | the evidence behind one alert | |
-| `GET /malformed` | inputs that failed normalization | |
+| `GET /malformed` | inputs that failed normalization | `start`, `end` — on `created_at` (ingest time; the record has no timestamp of its own), half-open |
 | `GET /summary` | per-table counts plus the top alert | |
 | `GET /overview/it` | flows, flows inside a detection, flow detections per day and per detector | `start`, `end` (UTC days) |
 | `GET /overview/ot` | SensiPro's six anomaly types: per type, per day or hour, per meter | `start`, `end`, `asset_id`, `bucket` |

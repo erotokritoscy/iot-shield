@@ -25,13 +25,16 @@ from iotshield.connect.connections import (
 )
 from iotshield.connect.port import (
     MAX_PULL_DAYS,
-    MAX_PULL_ROWS,
     ConnectorSpec,
     Device,
     Pulled,
     PullRefused,
+    PullSummary,
+    check_pull,
     list_devices,
     pull,
+    pull_chunks,
+    pull_summary,
 )
 from iotshield.connect.registry import CONNECTORS
 
@@ -39,14 +42,17 @@ __all__ = [
     "CONNECTIONS_PATH_ENV",
     "CONNECTORS",
     "MAX_PULL_DAYS",
-    "MAX_PULL_ROWS",
     "Connection",
     "ConnectionUnavailable",
     "ConnectorSpec",
     "Device",
     "PullRefused",
+    "PullSummary",
     "Pulled",
+    "check_pull",
     "list_devices",
     "load_connections",
     "pull",
+    "pull_chunks",
+    "pull_summary",
 ]

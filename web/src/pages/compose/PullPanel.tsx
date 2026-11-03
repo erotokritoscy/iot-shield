@@ -31,7 +31,11 @@ export function PullPanel({
   readonly index: number;
   readonly source: DataSourceInfo;
   readonly connection: ConnectionInfo;
-  readonly onPulled: (pulled: PullResponse) => void;
+  /** The pull's summary, and the window asked for — which the run will read itself. */
+  readonly onPulled: (
+    pulled: PullResponse,
+    window: { readonly start: string; readonly end: string; readonly params: Record<string, unknown> },
+  ) => void;
 }) {
   // The device list is its own control (searchable, many), so the generic form gets the rest.
   const otherParams = connection.params.filter((param) => param.name !== DEVICES);
@@ -56,14 +60,11 @@ export function PullPanel({
   const needle = filter.trim().toLowerCase();
   const matching = (devices.data ?? []).filter((device) => !needle || device.label.toLowerCase().includes(needle));
 
+  const params: Record<string, unknown> = selected.length > 0 ? { ...sent, [DEVICES]: selected } : sent;
   const pull = useMutation({
-    mutationFn: () =>
-      dataSourcesApi.pull(source.source_id, {
-        start,
-        end,
-        params: selected.length > 0 ? { ...sent, [DEVICES]: selected } : sent,
-      }),
-    onSuccess: onPulled,
+    mutationFn: (window: { start: string; end: string; params: Record<string, unknown> }) =>
+      dataSourcesApi.pull(source.source_id, window),
+    onSuccess: (pulled, window) => onPulled(pulled, window),
   });
   const ready = start !== "" && end !== "" && !pull.isPending;
 
@@ -152,14 +153,19 @@ export function PullPanel({
       ) : null}
       {pull.isError ? <Notice tone="error">{describeRefusal(pull.error)}</Notice> : null}
       {pull.isSuccess ? (
-        <Notice tone="success">Pulled {pull.data.rows.toLocaleString("en-US")} rows into this source.</Notice>
+        // The rows are not here, and that is the point (ADR-0047): the run reads them from the
+        // database itself, a batch at a time, so a window of any size fits.
+        <Notice tone="success">
+          {pull.data.rows.toLocaleString("en-US")} rows in this window. The run reads them from{" "}
+          {source.name} itself; below is a sample of the first lines.
+        </Notice>
       ) : null}
       <Button
         size="sm"
         variant="primary"
         data-testid={`src_${index}_pull_go`}
         disabled={!ready}
-        onClick={() => pull.mutate()}
+        onClick={() => pull.mutate({ start, end, params })}
       >
         <Download className="h-3.5 w-3.5" aria-hidden /> {pull.isPending ? "Pulling…" : "Pull"}
       </Button>

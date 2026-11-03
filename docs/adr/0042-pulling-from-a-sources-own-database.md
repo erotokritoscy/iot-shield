@@ -163,3 +163,12 @@ promise a format its pulls never produce.
 The `sensipro` connector reads `count_accepted`/`count_rejected` and drops or marks SensiPro's
 filler hours (ADR-0043 amendment). `Fetch` now returns `(lines, rows read)`, and the row ceiling
 is checked against rows read.
+
+## Amendment (2026-11-02): no row ceiling — superseded in part by ADR-0047
+
+A pull is no longer sent to the browser and posted back with the run. The run reads it from the
+database itself, streamed and judged a batch of assets at a time, so D5's **Most rows** (100,000)
+and **Most characters** limits are gone for pulls, and `MAX_PULL_ROWS` was removed. `Fetch` became
+`stream` + `count`; `POST /data-sources/{id}/pull` now returns a row count and a sample rather
+than the content. The connect and query timeouts, read-only sessions and the 92-day window stand.
+See ADR-0047.

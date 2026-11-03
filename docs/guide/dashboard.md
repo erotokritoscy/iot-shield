@@ -208,6 +208,31 @@ still good, by asking.
 
 ## Monitor
 
+### The time range (all three Monitor pages)
+
+Each Monitor page has an optional **From / To (UTC)** filter (`components/TimeRangeFilter.tsx`,
+`lib/timeRange.ts`), kept in the URL as `?from=…&to=…` (UTC minutes, the `datetime-local` shape) so
+a filtered view is linkable and survives a refresh. Either side may be left open. The browser's
+`datetime-local` input carries no zone, so the value is read as UTC **by construction** — the `Z` is
+appended in code rather than letting `new Date()` read it in the viewer's zone.
+
+It is **asked of the server, never applied to the fetched page**, for the same reason as the run
+filter: every list is capped, and filtering the cap would silently miss the rows beyond it. Each
+page applies it to a different clock, and the (i) beside the inputs names which:
+
+| Page | Filters | On |
+|---|---|---|
+| Triage | the queue and the severity chart | an alert's `window_start`, half-open |
+| Assets & telemetry | the timeline and both detection lists | an event's `timestamp` (closed, like every events query), a detection's `window_start` (half-open) |
+| Data health | the malformed table | `created_at` — **ingest** time, half-open |
+
+Data health is the odd one out on purpose: a malformed line has no timestamp of its own, since the
+time is exactly what failed to parse, so when it was stored is the only clock it has. The table
+shows that column (`ingested (UTC)`) so the filter's effect is visible.
+
+`/summary` is not filtered — it counts the whole org — so under a range its KPIs are captioned as
+all-time totals and are no longer offered as the total of a capped list, just as with a run.
+
 ### Triage
 
 The queue, and the page the product exists for. A KPI row from `/summary`, a severity bar chart, the
@@ -301,9 +326,29 @@ not hidden, because a deliberately silent run is still a real measurement (ADR-0
 **Step 1 is a wizard of sources** (`pages/compose/SourceCard.tsx`). The sources are its steps —
 Source 1, Source 2, … in a row with a status each (✓, *needs content*, *wrong format?*, *has an error*), then
 **+ Add source** — and only the selected source is on screen, never stacked. That source is one
-card with every field at once (sample, normalizer and format, parameters, upload or paste), and at
-its foot the first five lines that will be read and the chain check's findings whose `stage` is
-`sources[i]`. **Next: Source N** moves on, or **Add another source** on the last one. Moving between
+card, and at its foot the first five lines that will be read and the chain check's findings whose
+`stage` is `sources[i]`.
+
+**A source card opens on one question: how does its data arrive?** — *Pull from a data source*,
+*Sample file*, *Upload a file* or *Paste records*, with **nothing chosen**, and only the chosen
+way's fields are drawn below it:
+
+| Way | Fields |
+|---|---|
+| Pull | the data source (only those with a connection) → the pull panel → the reader it brings, stated |
+| Sample | the sample → the reader it brings, stated |
+| Upload | optional data-source tag → normalizer and format → file and origin |
+| Paste | optional data-source tag → normalizer and format → the text box |
+
+All four used to be on screen at once, each silently replacing the others, so a pasted block could
+sit behind a pull and nobody could tell which one the run would send. Now **switching the way drops
+what the previous way supplied** (`compose/model.ts: withMode`) and keeps the reader, so a reopened
+run's normalizer survives the choice. A pull or a sample brings its own reader and *states* it
+rather than offering it — overriding it is what Upload and Paste are for. A way that cannot apply is
+not offered: Pull needs a data source with a connection, Sample a non-empty library. The choice is
+browser-only (`SourceRow.mode`); the run is sent `content` or a `pull` exactly as before. **Open in
+Compose** restores a pulled source on *Pull*; an uploaded one was not saved, so it opens unchosen
+with its reader kept. **Next: Source N** moves on, or **Add another source** on the last one. Moving between
 sources never blocks **Next** — content does, as before — so the wizard changes how sources are
 asked for, never what is sent.
 
@@ -331,8 +376,8 @@ Evaluate page does not use it yet.
 **Samples and scenarios.** `uv run python scripts/make_sample_data.py` writes a small library of
 inputs to `web/public/samples/` (served at `/samples/` beside the bundle — static files, so no new
 endpoint) and an identical copy to `data/samples/` for the CLI, plus `manifest.json`. Every source
-card offers *Use a sample file*, which sets the sample's normalizer, format, content and filename
-together. Step 1 also offers **scenarios** — each card shows its title only, with the description and what it
+card offers *Sample file* as a way its data can arrive, which sets the sample's normalizer, format,
+content and filename together. Step 1 also offers **scenarios** — each card shows its title only, with the description and what it
 holds (sources, detectors, expected alerts) behind an (i) — that fill every step and land on Review, which then shows
 what the scenario is *tested* to produce and, after the run, whether it did — but only while the
 spec and inputs are still exactly the scenario's; change anything and the promise is withdrawn.
@@ -440,12 +485,13 @@ everyone, with no login) get an add/edit form with an (i) on every field and Edi
 a member sees the list and a note that only an admin can change it. The form asks for an input
 format only when the chosen normalizer reads more than one, mirroring the server's check.
 
-On Compose, the source card shows a **Data source** picker once the organization has any. Picking
-one fills in the normalizer and format it names (or, for a source that names none, says so and
-leaves them); choosing another normalizer by hand clears the pick. Nothing about the pick is sent
-with the run.
+On Compose, a source set to *Upload* or *Paste* shows an optional **Data source** picker once the
+organization has any. Picking one fills in the normalizer and format it names (or, for a source
+that names none, says so and leaves them); choosing another normalizer by hand clears the pick.
+Nothing about the pick is sent with the run.
 
-A source with a **connection** (ADR-0042) also gets a **Pull** panel (`compose/PullPanel.tsx`):
+A source set to *Pull* lists only the data sources with a **connection** (ADR-0042), and choosing
+one opens the **Pull** panel (`compose/PullPanel.tsx`):
 from/to dates, the connector's own params (SensiPro: utility), and a filterable device list
 (meters or hosts; none selected means all of them). **Pull** asks the server for that window, and
 the answer fills the source exactly as an uploaded file would: its content, its origin

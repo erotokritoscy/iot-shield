@@ -11,8 +11,17 @@ from pathlib import Path
 import pytest
 from sqlalchemy.engine import URL
 
-from iotshield.connect import CONNECTORS, ConnectionUnavailable, PullRefused, list_devices, pull
+from iotshield.connect import (
+    CONNECTORS,
+    ConnectionUnavailable,
+    PullRefused,
+    list_devices,
+    pull,
+    pull_chunks,
+    pull_summary,
+)
 from iotshield.connect import port as port_module
+from iotshield.connect import sensipro as sensipro_module
 from iotshield.connect.connections import Connection, load_connections
 from iotshield.contracts import Lane
 from iotshield.flow import METADATA_KEY as FLOW_KEY
@@ -23,6 +32,7 @@ from tests.connect_world import World
 SENSIPRO = CONNECTORS["sensipro"]
 BIOLOGY = CONNECTORS["biology"]
 JULY_1 = date(2023, 7, 1)
+JUNE_20, JULY_22 = date(2023, 6, 20), date(2023, 7, 22)  # the Biology fixture's span
 
 
 def normalized(content: str, normalizer: str, source_format: str):  # type: ignore[no-untyped-def]
@@ -173,12 +183,15 @@ class TestThePullRules:
                 SENSIPRO, world.sensipro, date(2023, 1, 1), date(2023, 12, 31), {}, max_chars=10**6
             )
 
-    def test_too_many_rows_is_refused_never_truncated(
-        self, world: World, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(port_module, "MAX_PULL_ROWS", 5)
-        with pytest.raises(PullRefused, match="more than 5 rows"):
-            pull(SENSIPRO, world.sensipro, JULY_1, JULY_1, {}, max_chars=10**6)
+    def test_there_is_no_row_ceiling(self, world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ADR-0047: a run streams the window and batches it, so a large window is no longer
+        # refused for its size. Squeezing every limit that remains to its minimum still reads
+        # every row: one meter per query, one line per chunk.
+        monkeypatch.setattr(sensipro_module, "METERS_PER_QUERY", 1)
+        whole = pull(SENSIPRO, world.sensipro, JULY_1, JULY_1, {})
+        chunks = list(pull_chunks(SENSIPRO, world.sensipro, JULY_1, JULY_1, {}, chunk_lines=1))
+        assert sum(len(chunk.splitlines()) - 1 for chunk in chunks) == whole.rows == 12
+        assert not hasattr(port_module, "MAX_PULL_ROWS")
 
     def test_too_much_text_for_one_source_is_refused(self, world: World) -> None:
         with pytest.raises(PullRefused, match="over the 100 one source may hold"):
@@ -202,6 +215,82 @@ class TestThePullRules:
         with pytest.raises(ConnectionUnavailable) as caught:
             pull(SENSIPRO, broken, JULY_1, JULY_1, {}, max_chars=10**6)
         assert str(caught.value) == "could not read from connection 'sensipro-down'"
+
+
+class TestStreaming:
+    """A run reads a pull as chunks it normalizes one at a time (ADR-0047)."""
+
+    def test_a_chunk_never_cuts_a_meter_in_two(self, world: World) -> None:
+        # chunk_lines=1 asks for a cut after every line; the cut waits for the meter to change,
+        # because the normalizer differences a meter's counter row to row.
+        chunks = list(pull_chunks(SENSIPRO, world.sensipro, JULY_1, JULY_1, {}, chunk_lines=1))
+        meters = [{line.split(",")[0] for line in chunk.splitlines()[1:]} for chunk in chunks]
+        assert meters == [{"e1"}, {"e2"}]
+        assert all(
+            chunk.startswith("device_id,from_timestamp,last_value,unit\n") for chunk in chunks
+        )
+
+    def test_chunks_normalize_to_exactly_what_the_whole_window_does(self, world: World) -> None:
+        start, end = JULY_1, date(2023, 7, 5)
+        whole = pull(SENSIPRO, world.sensipro, start, end, {})
+        expected = normalized(whole.content, "meter", "sensipro-hourly-csv")
+        events, malformed = [], []
+        for chunk in pull_chunks(SENSIPRO, world.sensipro, start, end, {}, chunk_lines=2):
+            result = normalized(chunk, "meter", "sensipro-hourly-csv")
+            events.extend(result.events)
+            malformed.extend(result.malformed)
+        # event_id is minted per event, so it is the one field two readings cannot share.
+        assert [e.model_dump(exclude={"event_id"}) for e in events] == [
+            e.model_dump(exclude={"event_id"}) for e in expected.events
+        ]
+        minted = {"record_id", "created_at"}
+        assert [m.model_dump(exclude=minted) for m in malformed] == [
+            m.model_dump(exclude=minted) for m in expected.malformed
+        ]
+
+    def test_flows_may_be_cut_after_any_line(self, world: World) -> None:
+        chunks = list(pull_chunks(BIOLOGY, world.biology, JUNE_20, JULY_22, {}, chunk_lines=1))
+        assert [len(chunk.splitlines()) for chunk in chunks] == [2, 2, 2, 2]
+
+    def test_the_stream_is_lazy(self, world: World) -> None:
+        broken = Connection(
+            name="down",
+            connector="sensipro",
+            url=URL.create("sqlite", database="/nonexistent/dir/x.db"),
+            password_env=None,
+            organizations=None,
+        )
+        chunks = pull_chunks(SENSIPRO, broken, JULY_1, JULY_1, {})  # nothing queried yet
+        with pytest.raises(ConnectionUnavailable, match="'down'"):
+            next(chunks)
+
+    def test_a_bad_window_is_refused_before_anything_is_read(self, world: World) -> None:
+        with pytest.raises(PullRefused, match="at most 92"):
+            next(pull_chunks(SENSIPRO, world.sensipro, date(2023, 1, 1), date(2023, 12, 31), {}))
+
+
+class TestSummary:
+    """What the compose page is shown instead of the window: a count and a sample."""
+
+    def test_counts_rows_read_and_samples_the_first_lines(self, world: World) -> None:
+        day = date(2023, 7, 5)
+        summary = pull_summary(SENSIPRO, world.sensipro, day, day, {"devices": ["e3"]})
+        # Ten hours read, one of them left out (nothing arrived): the count is of rows READ.
+        assert summary.rows == 10
+        lines = summary.sample.splitlines()
+        assert lines[0] == "device_id,from_timestamp,last_value,unit"
+        assert len(lines) == 1 + 9
+        assert (summary.normalizer, summary.source_format) == ("meter", "sensipro-hourly-csv")
+
+    def test_the_sample_is_capped(self, world: World) -> None:
+        summary = pull_summary(SENSIPRO, world.sensipro, JULY_1, JULY_1, {}, sample_lines=3)
+        assert summary.rows == 12
+        assert len(summary.sample.splitlines()) == 1 + 3
+
+    def test_flows(self, world: World) -> None:
+        summary = pull_summary(BIOLOGY, world.biology, JUNE_20, JULY_22, {})
+        assert summary.rows == 4
+        assert summary.sample.splitlines()[0].startswith("src_ip,dst_ip")
 
 
 class TestConnectionsFile:

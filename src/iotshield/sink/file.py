@@ -9,38 +9,121 @@ provided (server deployments), only the filename component of ``path`` is used, 
 directory — so a caller-supplied path can never escape onto arbitrary server paths. When the
 run also names an organization (ADR-0039), that directory is ``<output_dir>/<org_id>/``, so one
 tenant's exports never land beside another's.
+
+**Still one line per run when the run arrives in batches (ADR-0047).** Each array's items are
+appended to a part file beside the target as the batches come in, and ``finish`` writes the
+line by copying the parts through in order — so the line is byte-identical to the one a
+single ``json.dumps`` of the whole run produced, and is never held in memory whole. Only the
+assets are kept (one per device, deduplicated across batches), and only until the line is
+written. The parts are deleted on ``finish`` and on ``abort``, so a failed run appends nothing.
 """
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
+from typing import Any, TextIO
 
-from iotshield.sink import RunResult, SinkResources
+from iotshield.contracts import Asset
+from iotshield.sink import RunHeader, RunResult, RunTotals, SinkResources, write_result
 
 _DEFAULT_FILENAME = "iotshield-results.jsonl"
+_ARRAYS = ("events", "malformed", "detections", "alerts")
 
 
 class FileSink:
     def __init__(self, path: Path) -> None:
         self._path = path
 
+    def open(self, header: RunHeader) -> "_FileWriter":
+        return _FileWriter(self._path, header)
+
     def write(self, result: RunResult) -> None:
-        record = {
-            "run_id": str(result.run_id),
-            "run_at": result.run_at.isoformat(),
-            "sources": [
-                {"normalizer": s.normalizer, "source_format": s.source_format, "origin": s.origin}
-                for s in result.sources
-            ],
-            "warnings": result.warnings,
-            "assets": [asset.model_dump(mode="json") for asset in result.assets],
-            "events": [event.model_dump(mode="json") for event in result.events],
-            "malformed": [bad.model_dump(mode="json") for bad in result.malformed],
-            "detections": [det.model_dump(mode="json") for det in result.detections],
-            "alerts": [alert.model_dump(mode="json") for alert in result.alerts],
+        """A complete result as a one-batch run."""
+        write_result(self, result)
+
+
+class _FileWriter:
+    def __init__(self, path: Path, header: RunHeader) -> None:
+        self._path = path
+        self._header = header
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._dir = Path(tempfile.mkdtemp(prefix=".iotshield-run-", dir=path.parent))
+        self._parts: dict[str, TextIO] = {
+            name: (self._dir / name).open("w", encoding="utf-8") for name in _ARRAYS
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
+        self._written: dict[str, int] = dict.fromkeys(_ARRAYS, 0)
+        self._registered: dict[str, Asset] = {}
+        self._discovered: dict[str, Asset] = {}
+
+    def add(self, part: RunResult) -> None:
+        for asset in part.assets:
+            if asset.metadata.get("auto_discovered"):
+                if asset.asset_id not in self._registered:
+                    self._discovered.setdefault(asset.asset_id, asset)
+            else:
+                self._registered.setdefault(asset.asset_id, asset)
+                self._discovered.pop(asset.asset_id, None)
+        for name, items in (
+            ("events", part.events),
+            ("malformed", part.malformed),
+            ("detections", part.detections),
+            ("alerts", part.alerts),
+        ):
+            handle = self._parts[name]
+            for item in items:
+                if self._written[name]:
+                    handle.write(", ")
+                handle.write(json.dumps(item.model_dump(mode="json")))
+                self._written[name] += 1
+
+    def finish(self, totals: RunTotals) -> None:
+        try:
+            for handle in self._parts.values():
+                handle.close()
+            header = self._header
+            # Registrations first, then discovered devices by id: the order `resolve_assets`
+            # gives a whole run, so a batched run's line is the same as an unbatched one's.
+            assets = [
+                *self._registered.values(),
+                *sorted(self._discovered.values(), key=lambda asset: asset.asset_id),
+            ]
+            head: dict[str, Any] = {
+                "run_id": str(header.run_id),
+                "run_at": header.run_at.isoformat(),
+                "sources": [_source(s) for s in header.sources],
+                "warnings": totals.warnings,
+                "assets": [asset.model_dump(mode="json") for asset in assets],
+            }
+            with self._path.open("a", encoding="utf-8") as out:
+                out.write(json.dumps(head)[:-1])  # the object, still open for the arrays
+                for name in _ARRAYS:
+                    out.write(f', "{name}": [')
+                    with (self._dir / name).open(encoding="utf-8") as part:
+                        shutil.copyfileobj(part, out)
+                    out.write("]")
+                out.write("}\n")
+        finally:
+            self._cleanup()
+
+    def abort(self) -> None:
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        for handle in self._parts.values():
+            handle.close()
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+
+def _source(source: Any) -> dict[str, Any]:
+    record = {
+        "normalizer": source.normalizer,
+        "source_format": source.source_format,
+        "origin": source.origin,
+    }
+    if source.pull is not None:
+        record["pull"] = source.pull
+    return record
 
 
 def build(resources: SinkResources, path: str = _DEFAULT_FILENAME) -> FileSink:

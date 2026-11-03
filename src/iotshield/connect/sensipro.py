@@ -26,8 +26,9 @@ Measured on the real database, the 10 meters that fail from 2023-07-18 have 7,09
 first kind and 17,286 of the second.
 """
 
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, bindparam, text
@@ -54,44 +55,79 @@ class SensiproParams(BaseModel):
     )
 
 
-_SELECT = """
-SELECT COALESCE(d.destination_address, CAST(d.id AS VARCHAR(32))) AS meter,
-       a.from_timestamp, a.last_value, d.unit, a.count_accepted, a.count_rejected
+_METER = "COALESCE(d.destination_address, CAST(d.id AS VARCHAR(32)))"
+
+METERS_PER_QUERY: Final = 100
+"""How many meters one query reads (ADR-0047). The stream must be ordered by meter — the
+normalizer differences each meter's counter in order — and one query sorted over a whole fleet
+and a quarter is millions of rows sorted before the first arrives, against the connection's
+30-second statement timeout. A group of meters is bounded by construction (100 meters x 92 days
+x 24 hours), and the groups follow the fleet's own meter order, so the whole stream is still
+ordered by meter."""
+
+
+def _device_filter(params: SensiproParams) -> tuple[str, dict[str, Any]]:
+    if not params.devices:
+        return "", {}
+    return " AND d.destination_address IN :devices", {"devices": params.devices}
+
+
+def _expand(sql: str, *names: str) -> Any:
+    stmt = text(sql)
+    for name in names:
+        stmt = stmt.bindparams(bindparam(name, expanding=True))
+    return stmt
+
+
+def _meters(engine: Engine, params: SensiproParams) -> list[int]:
+    """The device ids a pull reads, in meter order — the order the stream must follow."""
+    where, binds = _device_filter(params)
+    sql = f"SELECT d.id FROM devices d WHERE d.unit = :unit{where} ORDER BY {_METER}"
+    stmt = _expand(sql, *binds)
+    with engine.connect() as connection:
+        rows = connection.execute(stmt, {"unit": UNIT[params.utility], **binds})
+        return [device_id for (device_id,) in rows]
+
+
+def _stream(
+    engine: Engine, start: datetime, end: datetime, params: SensiproParams
+) -> Iterator[tuple[str | None, str]]:
+    ids = _meters(engine, params)
+    sql = f"""
+SELECT {_METER} AS meter, a.from_timestamp, a.last_value, d.unit,
+       a.count_accepted, a.count_rejected
 FROM ascendinghourlyreading a
 JOIN devices d ON d.id = a.device_id
-WHERE a.from_timestamp >= :start AND a.from_timestamp < :end AND d.unit = :unit
+WHERE a.from_timestamp >= :start AND a.from_timestamp < :end AND a.device_id IN :ids
+ORDER BY meter, a.from_timestamp
 """
+    stmt = _expand(sql, "ids")
+    for offset in range(0, len(ids), METERS_PER_QUERY):
+        group = ids[offset : offset + METERS_PER_QUERY]
+        with engine.connect() as connection:
+            result = connection.execution_options(stream_results=True, yield_per=5_000).execute(
+                stmt, {"start": start, "end": end, "ids": group}
+            )
+            for meter, stamp, counter, unit, accepted, rejected in result:
+                if accepted == 0 and rejected == 0:
+                    continue  # nothing arrived: leave the hour out, so the silence is seen
+                if accepted == 0 and rejected is not None and rejected > 0:
+                    counter = REJECTED  # every reading was refused: the repeated value is filler
+                yield meter, row((meter, stamp, counter, unit))
 
 
-def _fetch(
-    engine: Engine, start: datetime, end: datetime, params: SensiproParams, limit: int
-) -> tuple[list[str], int]:
-    sql = _SELECT
-    binds: dict[str, object] = {
-        "start": start,
-        "end": end,
-        "unit": UNIT[params.utility],
-        "limit": limit,
-    }
-    if params.devices:
-        sql += " AND d.destination_address IN :devices"
-        binds["devices"] = params.devices
-    # Per meter, oldest first: the normalizer differences each meter's counter in order.
-    sql += " ORDER BY meter, a.from_timestamp LIMIT :limit"
-    stmt = text(sql)
-    if params.devices:
-        stmt = stmt.bindparams(bindparam("devices", expanding=True))
-    lines: list[str] = []
-    read = 0
+def _count(engine: Engine, start: datetime, end: datetime, params: SensiproParams) -> int:
+    where, binds = _device_filter(params)
+    sql = (
+        "SELECT COUNT(*) FROM ascendinghourlyreading a JOIN devices d ON d.id = a.device_id "
+        f"WHERE a.from_timestamp >= :start AND a.from_timestamp < :end AND d.unit = :unit{where}"
+    )
     with engine.connect() as connection:
-        for meter, stamp, counter, unit, accepted, rejected in connection.execute(stmt, binds):
-            read += 1
-            if accepted == 0 and rejected == 0:
-                continue  # nothing arrived: leave the hour out, so the silence is seen
-            if accepted == 0 and rejected is not None and rejected > 0:
-                counter = REJECTED  # every reading was refused: the repeated value is filler
-            lines.append(row((meter, stamp, counter, unit)))
-    return lines, read
+        value = connection.execute(
+            _expand(sql, *binds),
+            {"start": start, "end": end, "unit": UNIT[params.utility], **binds},
+        ).scalar_one()
+    return int(value)
 
 
 def _devices(engine: Engine, params: SensiproParams) -> list[Device]:
@@ -114,6 +150,7 @@ SENSIPRO = ConnectorSpec(
     source_format="sensipro-hourly-csv",
     header="device_id,from_timestamp,last_value,unit",
     params_type=SensiproParams,
-    fetch=_fetch,
+    stream=_stream,
+    count=_count,
     devices=_devices,
 )

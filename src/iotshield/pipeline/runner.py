@@ -14,14 +14,24 @@ own adapter, and the events pool into the detector lanes, so one run can synthes
 detections across mixed modalities (telemetry CSV + syslog). The alert engine sees this
 run's detections only; cross-run correlation is future work (ADR-0006), as is enriching
 assets from a persistent store across runs.
+
+**``execute_run`` is batched; ``compute_run`` is not (ADR-0047).** A product run reads each
+source as a stream of chunks, partitions the normalized events by asset, and judges and writes
+one batch of assets at a time, so its memory is a batch rather than the whole run — which is
+what lets a run read a database window of millions of rows. Each batch is judged by
+``compute_result``, the same kernel ``compute_run`` uses, and batching is invisible to the
+outcome because detectors and alert buckets are per asset (``pipeline/batches.py``).
+``compute_run`` stays the whole-run-in-memory composition: the evaluation harness and the tests
+want a ``RunResult`` they can hold, and benchmarks are small by construction.
 """
 
-from collections.abc import Sequence
+import heapq
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
-from uuid import UUID
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
 from iotshield.contracts import (
     Asset,
@@ -34,6 +44,7 @@ from iotshield.contracts import (
 from iotshield.detect import Detector
 from iotshield.detect._fitted import is_fitted
 from iotshield.detect.port import Diagnosable
+from iotshield.pipeline.batches import BATCH_EVENTS, AssetPartition
 from iotshield.pipeline.compat import (
     CompatIssue,
     CompatLevel,
@@ -54,7 +65,14 @@ from iotshield.pipeline.registry import (
     build_sink,
     sink_requires_database,
 )
-from iotshield.sink import RunResult, SinkResources, SourceProvenance
+from iotshield.sink import (
+    RunHeader,
+    RunResult,
+    RunTotals,
+    RunWriter,
+    SinkResources,
+    SourceProvenance,
+)
 from iotshield.storage import (
     DEFAULT_ORG_ID,
     create_schema,
@@ -425,6 +443,40 @@ def compute_run(
     return compute_result(spec, ingested, detectors)
 
 
+@dataclass(frozen=True)
+class Feed:
+    """One source's input as a stream of texts, each normalized on its own (ADR-0047).
+
+    A chunk must be readable without its neighbours — a connector cuts only between groups
+    its normalizer reads independently (``connect.port.pull_chunks``). ``pull`` records the
+    data-source pull the chunks came from, so the saved run can reopen it.
+    """
+
+    chunks: Iterable[str]
+    origin: str
+    pull: dict[str, Any] | None = None
+
+
+def _alert_rank(alert: PrioritizedAlert) -> tuple[float, str, datetime]:
+    # The engines' own ranking (`alert/_correlate.py`), so the report's top alerts across
+    # batches are the ones a single batch would have put first.
+    return (-alert.priority_score, alert.asset_id, alert.window_start)
+
+
+def _feeds(
+    spec: PipelineSpec, inputs: Sequence[str | Feed], origins: Sequence[str] | None
+) -> list[Feed]:
+    if len(inputs) != len(spec.sources):
+        raise ValueError(
+            f"expected {len(spec.sources)} input(s) for the configured sources, got {len(inputs)}"
+        )
+    labels = _resolve_origins(spec, origins)
+    return [
+        item if isinstance(item, Feed) else Feed(chunks=[item], origin=labels[index])
+        for index, item in enumerate(inputs)
+    ]
+
+
 def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:
     # For the Postgres sink, show the resolved DB location so a cwd/URL mismatch is
     # visible in the report (what the old 'database:' line did); others show their name.
@@ -435,35 +487,156 @@ def _destination_label(sink_config: SinkConfig, config: PipelineConfig) -> str:
 
 def execute_run(
     config: PipelineConfig,
-    inputs: Sequence[str],
+    inputs: Sequence[str | Feed],
     *,
     origins: Sequence[str] | None = None,
     resources: SinkResources,
+    batch_events: int = BATCH_EVENTS,
 ) -> RunReport:
-    """Compute a run, then write it to every configured sink; return the summary.
+    """Run the pipeline into every configured sink, a batch of assets at a time.
 
-    Compute is store-agnostic (``compute_run``); the sinks decide where the result goes.
-    Sinks run in config order (put the system-of-record sink first); a sink that *raises*
-    fails the run — there is no cross-store atomicity, so a best-effort delivery sink must
-    swallow its own errors. Guard ERRORs raise inside ``compute_run``, before any sink runs.
+    ``inputs`` align to ``config.sources``: a whole text, or a ``Feed`` of chunks (a database
+    pull, streamed). Everything that can refuse the run does so before anything is read: the
+    guard, the adapters' construction, untrained detectors, and the sinks' construction. Then
+    the sources are normalized chunk by chunk into an asset partition, which spills to disk
+    once it holds more than a batch; each batch of whole assets is judged by
+    ``compute_result`` and handed to every sink (``RunWriter.add``); and the run is finished
+    with its totals. A failure anywhere aborts every writer not yet finished — the Postgres
+    sink rolls its one transaction back, the file sink drops its parts — so a failed run
+    leaves nothing behind in a sink that had not finished. Sinks finish in config order (put
+    the system-of-record first); there is no cross-store atomicity between them.
     """
-    result = compute_run(config, inputs, origins=origins)
+    spec: PipelineSpec = config
+    feeds = _feeds(spec, inputs, origins)
+    warnings = [
+        f"[{issue.stage}] {issue.message}"
+        for issue in ensure_compatible(spec)
+        if issue.level is CompatLevel.WARNING
+    ]
+    normalizers = {
+        config_fingerprint(source.normalizer, source.params): build_normalizer(
+            source.normalizer, source.params
+        )
+        for source in spec.sources
+    }
+    detectors = build_detectors(spec)
+    _ensure_fitted(spec, detectors)
     # Build every sink BEFORE writing to any of them. Sink construction is a pure config
     # concern with no dependency on the result, and `registry._construct` states the
     # contract: "Both fail here at construction — before any run side effect — named, so the
-    # operator knows which entry is wrong." That was true of normalizers, detectors and
-    # alert engines and false of sinks, because construction was interleaved with writing:
-    # with the default [postgres, file] shape a typo in sinks[1].params committed the run to
-    # Postgres and *then* exited 2, so re-running after the fix duplicated the data.
+    # operator knows which entry is wrong." With the default [postgres, file] shape a typo in
+    # sinks[1].params used to commit the run to Postgres and *then* exit 2, so re-running
+    # after the fix duplicated the data.
     sinks = [
         (sink_config, build_sink(sink_config.name, sink_config.params, resources))
         for sink_config in config.sinks
     ]
-    destinations: list[str] = []
-    for sink_config, sink in sinks:
-        sink.write(result)
-        destinations.append(_destination_label(sink_config, config))
-    return RunReport.from_result(result, destinations=destinations)
+    header = RunHeader(
+        run_id=uuid4(),
+        run_at=datetime.now(UTC),
+        sources=[
+            SourceProvenance(source.normalizer, source.source_format, feed.origin, feed.pull)
+            for source, feed in zip(spec.sources, feeds, strict=True)
+        ],
+        # The spec's own fields only: a `PipelineConfig` would otherwise save the deployment's
+        # database URL.
+        spec=spec.model_dump(mode="json", include=set(PipelineSpec.model_fields)),
+    )
+
+    writers: list[RunWriter] = []
+    finished = 0
+    partition = AssetPartition(spill_after=batch_events)
+    try:
+        for _, sink in sinks:
+            writers.append(sink.open(header))
+
+        def write(part: RunResult) -> None:
+            for writer in writers:
+                writer.add(part)
+
+        malformed_total = 0
+        for source, feed in zip(spec.sources, feeds, strict=True):
+            normalizer = normalizers[config_fingerprint(source.normalizer, source.params)]
+            read = rejected = 0
+            for chunk in feed.chunks:
+                result = normalizer.normalize(
+                    chunk, source_format=source.source_format, origin=feed.origin
+                )
+                read += len(result.events)
+                rejected += len(result.malformed)
+                partition.add(result.events)
+                if result.malformed:
+                    # Rejects belong to no asset, so they go straight out rather than waiting.
+                    write(_part(header, malformed=result.malformed))
+            malformed_total += rejected
+            quality = _high_malformed_warning(source.normalizer, read, rejected)
+            if quality is not None:
+                warnings.append(f"[input:{feed.origin}] {quality}")
+
+        events = detections = alerts = 0
+        top: list[PrioritizedAlert] = []
+        silences: list[str] = []
+        for batch in partition.batches(batch_events):
+            judged = compute_result(
+                spec,
+                NormalizedInputs(
+                    events=batch, malformed=[], provenance=header.sources, warnings=[]
+                ),
+                detectors,
+            )
+            write(judged)
+            events += len(judged.events)
+            detections += len(judged.detections)
+            alerts += len(judged.alerts)
+            top = heapq.nsmallest(TOP_ALERTS_IN_REPORT, [*top, *judged.alerts], key=_alert_rank)
+            # A detector explains its silence per batch; the same sentence twice is one note.
+            silences.extend(note for note in judged.warnings if note not in silences)
+
+        totals = RunTotals(
+            events=events,
+            malformed=malformed_total,
+            detections=detections,
+            alerts=alerts,
+            warnings=[*warnings, *silences],
+        )
+        destinations: list[str] = []
+        for (sink_config, _), writer in zip(sinks, writers, strict=True):
+            writer.finish(totals)
+            finished += 1
+            destinations.append(_destination_label(sink_config, config))
+    except BaseException:
+        for writer in writers[finished:]:
+            writer.abort()
+        raise
+    finally:
+        partition.close()
+
+    return RunReport(
+        origin=" + ".join(source.origin for source in header.sources) or "run",
+        destinations=destinations,
+        run_id=header.run_id,
+        events=totals.events,
+        malformed=totals.malformed,
+        detections=totals.detections,
+        alerts=totals.alerts,
+        top_alerts=top,
+        warnings=list(totals.warnings),
+    )
+
+
+def _part(header: RunHeader, **rows: Any) -> RunResult:
+    """A batch carrying only some rows (the rejects of one chunk), stamped with the run."""
+    return RunResult(
+        run_at=header.run_at,
+        sources=header.sources,
+        assets=[],
+        events=rows.get("events", []),
+        malformed=rows.get("malformed", []),
+        detections=[],
+        alerts=[],
+        run_id=header.run_id,
+        spec=header.spec,
+    )
 
 
 def _load_source_texts(

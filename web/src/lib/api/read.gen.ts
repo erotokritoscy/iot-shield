@@ -145,6 +145,9 @@ export interface paths {
         /**
          * Malformed
          * @description The audit view: inputs that failed normalization (never dropped).
+         *
+         *     `start`/`end` bound `created_at` — when the record was ingested — HALF-OPEN: a
+         *     malformed line has no timestamp of its own, since that is what failed to parse.
          */
         get: operations["malformed_malformed_get"];
         put?: never;
@@ -873,6 +876,8 @@ export interface operations {
     malformed_malformed_get: {
         parameters: {
             query?: {
+                start?: string | null;
+                end?: string | null;
                 run_id?: string | null;
                 limit?: number;
                 /** @description How many rows to skip. Every list ordering here is total (each ends in a unique id), so paging cannot skip or repeat a row. Read X-Total-Count to learn whether more remain. */

@@ -377,11 +377,31 @@ only), the sources and the four counts — so CLI and seed runs are listed besid
 dashboard's. The name and author ride on `SinkResources` (`run_name`/`run_by`) like `org_id`;
 unnamed, a run is called after its inputs and the time. Inputs are **not** saved (every line
 is already on an event's or malformed record's `raw`), so **Open in Compose**
-(`/compose?from=<run_id>`) restores the chain and asks for the data again. `GET/PATCH/DELETE
+(`/compose?from=<run_id>`) restores the chain and asks for the data again — except a source
+that was a data-source **pull**, which is a reference, so it is saved and restored (ADR-0047). `GET/PATCH/DELETE
 /runs/{id}` and `GET /runs` live on the Pipeline API; members rename, admins delete, and
 deleting a run deletes everything it stored (assets stay). No foreign key from the data rows
 to `runs` — `create_all` cannot add one to an existing table — so this table needed no
 `down -v`.
+
+**A run is batched by asset, and a pull is read by the run (ADR-0047).** A data-source pull
+used to be fetched whole, sent to the browser and posted back as `content`, which is what its
+100,000-row ceiling protected. Now `POST /runs` takes per source **either** `content` **or**
+`pull: {source_id, start, end, params}`, and the server streams the window itself
+(`connect.pull_chunks`: a server-side cursor, cut into ~20,000-line chunks only where the
+connector's *group* changes — a SensiPro meter, since the meter normalizer differences its
+counter row to row). `POST /data-sources/{id}/pull` returns a row count and a 200-line `sample`,
+never the window. `execute_run` normalizes chunk by chunk into 128 `crc32(asset_id)` buckets
+(`pipeline/batches.py`), spills to disk past a batch, and judges whole buckets ~50,000 events at
+a time with the same `compute_result` kernel `compute_run` uses. That changes no result because
+detectors and alert buckets are per asset — and it is the **normalized** asset id, not the
+connector's device, because a flow's asset can be its destination. A run that never spills is one
+batch in read order, i.e. the old run row for row (the demo numbers are pinned through it).
+The sink port became `open(header) -> RunWriter` with `add`/`finish`/`abort` (`write_result` for a
+whole result): Postgres keeps **one transaction** per run and expunges after each batch; the file
+sink stitches its one line from part files. No row limit; measured 534 MB peak at 2 million
+events against 1.6 GB for a third of that on the old path. Still synchronous under nginx's 600 s.
+`compute_run` (eval, tests) is unchanged. The 92-day window stays.
 
 **The super admin (ADR-0040)** manages every org under `/admin` — create, suspend,
 delete-with-all-data (`?confirm=<org_id>`, server-checked), and any org's users. It **may have a
@@ -614,17 +634,19 @@ src/iotshield/
                 rules/ = authored YAML signatures: fields.py (the checked field vocabulary),
                 model.py (the rule language), loader.py, library/ (the packaged rule set)
   alert/        scoring/correlation port + adapters (stub, weighted, ...)
-  sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output
-  connect/      connectors (ADR-0042): pull a window of a source's own DB (SensiPro Postgres, Biology
-                MySQL) as text a normalizer reads; connections.py = the DBs declared in
-                config/connections.yaml (by name, read-only sessions, passwords from env)
+  sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output;
+                a run arrives in parts: open(header) -> add(batch)... -> finish(totals) | abort (ADR-0047)
+  connect/      connectors (ADR-0042): stream a window of a source's own DB (SensiPro Postgres, Biology
+                MySQL) as text a normalizer reads, chunk by chunk (ADR-0047); connections.py = the DBs
+                declared in config/connections.yaml (by name, read-only sessions, passwords from env)
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests); accounts.py = orgs/users/sessions,
                 data_sources.py = each org's IT/OT data-source register (ADR-0041),
                 runs.py = saved runs: name, author, chain, counts (ADR-0046),
                 overview.py = the IT/OT overview counts behind the read API's /overview (ADR-0044)
   auth/         passwords.py (stdlib scrypt), superadmin.py (the CLI that creates super admins) —
                 the access-control layer the pipeline never sees (ADR-0039/0040)
-  pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point)
+  pipeline/     compute (store-agnostic) + registry + compatibility guard (run_pipeline entry point);
+                batches.py = the asset partition a product run is judged through, a batch at a time (ADR-0047)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py);
                 _auth.py = the login gate both share, auth.py = the /auth router, admin.py = the
                 super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources; runs.py = saved /runs

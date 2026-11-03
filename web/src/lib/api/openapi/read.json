@@ -566,9 +566,43 @@
     "/malformed": {
       "get": {
         "summary": "Malformed",
-        "description": "The audit view: inputs that failed normalization (never dropped).",
+        "description": "The audit view: inputs that failed normalization (never dropped).\n\n`start`/`end` bound `created_at` \u2014 when the record was ingested \u2014 HALF-OPEN: a\nmalformed line has no timestamp of its own, since that is what failed to parse.",
         "operationId": "malformed_malformed_get",
         "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
           {
             "name": "run_id",
             "in": "query",

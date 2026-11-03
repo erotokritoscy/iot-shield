@@ -53,6 +53,12 @@ const SAVED_RUNS_LIMIT = 200;
 /** Flows listed at once on the IT overview; the charts count all of them server-side. */
 const FLOWS_LIMIT = 500;
 
+/** Optional UTC instants bounding a list (`?start=&end=`); each route documents its clock. */
+export interface TimeBounds {
+  readonly start?: string;
+  readonly end?: string;
+}
+
 /** A range of whole UTC days, both inclusive, as `YYYY-MM-DD`. */
 export interface DayRange {
   readonly start: string;
@@ -117,25 +123,43 @@ export const readApi = {
   assets: () => apiRequest(READ_BASE, "/assets", { schema: assetsSchema }),
 
   // `runId` narrows any of the four lists to one run's rows (ADR-0045) — the Run page.
-  events: (options: { assetId?: string; lane?: Lane; runId?: string } = {}) =>
+  // `start`/`end` are UTC instants (`lib/timeRange.ts: rangeQuery`), each optional.
+  events: (options: { assetId?: string; lane?: Lane; runId?: string } & TimeBounds = {}) =>
     cappedList(EVENT_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/events", {
         schema: eventsSchema,
-        query: { asset_id: options.assetId, lane: options.lane, run_id: options.runId, limit },
+        query: {
+          asset_id: options.assetId,
+          lane: options.lane,
+          run_id: options.runId,
+          start: options.start,
+          end: options.end,
+          limit,
+        },
       }),
     ),
 
-  detections: (options: { assetId?: string; lane?: Lane; runId?: string } = {}) =>
+  detections: (options: { assetId?: string; lane?: Lane; runId?: string } & TimeBounds = {}) =>
     cappedList(DETECTION_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/detections", {
         schema: detectionsSchema,
-        query: { asset_id: options.assetId, lane: options.lane, run_id: options.runId, limit },
+        query: {
+          asset_id: options.assetId,
+          lane: options.lane,
+          run_id: options.runId,
+          start: options.start,
+          end: options.end,
+          limit,
+        },
       }),
     ),
 
-  alerts: (options: { runId?: string } = {}) =>
+  alerts: (options: { runId?: string } & TimeBounds = {}) =>
     cappedList(ALERT_LIMIT, (limit) =>
-      apiRequest(READ_BASE, "/alerts", { schema: alertsSchema, query: { run_id: options.runId, limit } }),
+      apiRequest(READ_BASE, "/alerts", {
+        schema: alertsSchema,
+        query: { run_id: options.runId, start: options.start, end: options.end, limit },
+      }),
     ),
 
   // Uncapped on purpose, and the only list here that is: an alert's evidence is the set of
@@ -146,11 +170,11 @@ export const readApi = {
       schema: detectionsSchema,
     }),
 
-  malformed: (options: { runId?: string } = {}) =>
+  malformed: (options: { runId?: string } & TimeBounds = {}) =>
     cappedList(MALFORMED_LIMIT, (limit) =>
       apiRequest(READ_BASE, "/malformed", {
         schema: malformedListSchema,
-        query: { run_id: options.runId, limit },
+        query: { run_id: options.runId, start: options.start, end: options.end, limit },
       }),
     ),
 
@@ -196,11 +220,21 @@ export const readApi = {
     }),
 };
 
-/** One input source's raw payload, aligned to `spec.sources` by position. */
-export interface SourceInput {
-  readonly content: string;
-  readonly origin: string;
-}
+/**
+ * One source's input, aligned to `spec.sources` by position: its text, or a window of a data
+ * source for the server to read itself during the run (ADR-0047) — never both.
+ */
+export type SourceInput =
+  | { readonly content: string; readonly origin: string }
+  | {
+      readonly pull: {
+        readonly source_id: string;
+        readonly start: string;
+        readonly end: string;
+        readonly params: Readonly<Record<string, unknown>>;
+      };
+      readonly origin: string;
+    };
 
 /** One `/eval/run` entry. `spec` is opaque here on purpose — see `benchSpecSchema`. */
 export interface EvalEntry {

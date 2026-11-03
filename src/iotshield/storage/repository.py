@@ -299,15 +299,26 @@ def list_malformed(
     session: Session,
     *,
     org_id: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
     run_id: UUID | None = None,
     limit: int = 1000,
     offset: int = 0,
 ) -> Page[MalformedRecord]:
+    """The audit list, filtered by when each record was STORED (``created_at``), half-open.
+
+    A malformed record has no timestamp of its own — the line failed to parse, so its time
+    is exactly what could not be read — so ingest time is the only clock it has.
+    """
     stmt = (
         select(MalformedRow)
         .where(MalformedRow.org_id == org_id)
         .order_by(MalformedRow.created_at.desc(), MalformedRow.record_id.desc())
     )
+    if start is not None:
+        stmt = stmt.where(MalformedRow.created_at >= start)
+    if end is not None:
+        stmt = stmt.where(MalformedRow.created_at < end)
     if run_id is not None:
         stmt = stmt.where(MalformedRow.run_id == run_id)
     rows = _oldest_first(session, stmt, limit=limit, offset=offset)

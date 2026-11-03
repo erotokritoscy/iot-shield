@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.orm import Session, sessionmaker
 
 from iotshield.api._auth import AccountDep, AdminDep
-from iotshield.api.control import MAX_SOURCE_CHARS, ParamInfo, model_params
+from iotshield.api.control import ParamInfo, model_params
 from iotshield.capabilities import formats_in
 from iotshield.connect import (
     CONNECTORS,
@@ -36,7 +36,7 @@ from iotshield.connect import (
     PullRefused,
     list_devices,
     load_connections,
-    pull,
+    pull_summary,
 )
 from iotshield.pipeline.registry import NORMALIZERS
 from iotshield.storage import repository
@@ -176,12 +176,17 @@ class PullRequest(BaseModel):
 
 
 class PullResponse(BaseModel):
-    """A window of the source, as text its normalizer reads — ready to be a run's input."""
+    """What a window of the source holds, without the window itself (ADR-0047).
 
-    content: str
+    A run reads the window from the database when it starts (``POST /runs`` with a ``pull``
+    input), so this answers only what the compose page needs first: how many rows, and a
+    sample of real connector output to check the format against — never every row.
+    """
+
+    sample: str = Field(description="The connector's header and the window's first lines")
     normalizer: str
     source_format: str
-    rows: int
+    rows: int = Field(description="Rows in the window, before the connector drops any")
     origin: str
 
 
@@ -231,7 +236,7 @@ def _with_connector_reader(body: DataSourceRequest, account: Account) -> DataSou
     return body
 
 
-def _connected_source(
+def connected_source(
     source_id: UUID, account: Account, session: Session
 ) -> tuple[DataSource, Connection, ConnectorSpec]:
     source = get_data_source(session, source_id, org_id=account.org_id)
@@ -290,7 +295,7 @@ def create_data_sources_router() -> APIRouter:
     ) -> list[DeviceInfo]:
         """What a pull from this source can be narrowed to (meters, hosts); query string =
         the connector's params, e.g. ``?utility=water``."""
-        _, connection, spec = _connected_source(source_id, account, session)
+        _, connection, spec = connected_source(source_id, account, session)
         params = {k: v for k, v in request.query_params.items() if k != "devices"}
         try:
             devices = list_devices(spec, connection, params)
@@ -304,18 +309,20 @@ def create_data_sources_router() -> APIRouter:
     def pull_source(
         source_id: UUID, body: PullRequest, account: AccountDep, session: SessionDep
     ) -> PullResponse:
-        """A date range of this source's database, as text for its normalizer. Read-only."""
-        source, connection, spec = _connected_source(source_id, account, session)
+        """How many rows a date range of this source holds, and its first lines. Read-only.
+
+        The rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in
+        batches, so there is no row limit here — only the 92-day window.
+        """
+        source, connection, spec = connected_source(source_id, account, session)
         try:
-            pulled = pull(
-                spec, connection, body.start, body.end, body.params, max_chars=MAX_SOURCE_CHARS
-            )
+            pulled = pull_summary(spec, connection, body.start, body.end, body.params)
         except PullRefused as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ConnectionUnavailable as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return PullResponse(
-            content=pulled.content,
+            sample=pulled.sample,
             normalizer=pulled.normalizer,
             source_format=pulled.source_format,
             rows=pulled.rows,

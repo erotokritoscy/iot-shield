@@ -10,7 +10,9 @@ uses cicflowmeter's own names, so a file cicflowmeter wrote and a pull from this
 identically.
 """
 
+from collections.abc import Iterator
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, bindparam, text
@@ -42,25 +44,47 @@ class BiologyParams(BaseModel):
     )
 
 
-def _fetch(
-    engine: Engine, start: datetime, end: datetime, params: BiologyParams, limit: int
-) -> tuple[list[str], int]:
+def _where(engine: Engine, params: BiologyParams) -> tuple[str, dict[str, Any]]:
     # `timestamp` is a keyword in some dialects; the engine's own quoting suits each one.
+    ts = engine.dialect.identifier_preparer.quote("timestamp")
+    sql = f" WHERE {ts} >= :start AND {ts} < :end"
+    if params.devices:
+        return sql + " AND src_ip IN :devices", {"devices": params.devices}
+    return sql, {}
+
+
+def _statement(sql: str, binds: dict[str, Any]) -> Any:
+    stmt = text(sql)
+    if "devices" in binds:
+        stmt = stmt.bindparams(bindparam("devices", expanding=True))
+    return stmt
+
+
+def _stream(
+    engine: Engine, start: datetime, end: datetime, params: BiologyParams
+) -> Iterator[tuple[str | None, str]]:
     quote = engine.dialect.identifier_preparer.quote
     columns = ", ".join(quote(column) for column in COLUMNS)
-    ts = quote("timestamp")
-    sql = f"SELECT {columns} FROM packets WHERE {ts} >= :start AND {ts} < :end"
-    binds: dict[str, object] = {"start": start, "end": end, "limit": limit}
-    if params.devices:
-        sql += " AND src_ip IN :devices"
-        binds["devices"] = params.devices
-    sql += f" ORDER BY {ts}, id LIMIT :limit"
-    stmt = text(sql)
-    if params.devices:
-        stmt = stmt.bindparams(bindparam("devices", expanding=True))
+    where, binds = _where(engine, params)
+    sql = f"SELECT {columns} FROM packets{where} ORDER BY {quote('timestamp')}, id"
     with engine.connect() as connection:
-        lines = [row(record) for record in connection.execute(stmt, binds)]
-    return lines, len(lines)
+        result = connection.execution_options(stream_results=True, yield_per=5_000).execute(
+            _statement(sql, binds), {"start": start, "end": end, **binds}
+        )
+        # A flow record stands alone (the flow normalizer is line-wise), so no group: a chunk
+        # may end after any line.
+        for record in result:
+            yield None, row(record)
+
+
+def _count(engine: Engine, start: datetime, end: datetime, params: BiologyParams) -> int:
+    where, binds = _where(engine, params)
+    with engine.connect() as connection:
+        value = connection.execute(
+            _statement(f"SELECT COUNT(*) FROM packets{where}", binds),
+            {"start": start, "end": end, **binds},
+        ).scalar_one()
+    return int(value)
 
 
 def _devices(engine: Engine, _params: BiologyParams) -> list[Device]:
@@ -82,6 +106,7 @@ BIOLOGY = ConnectorSpec(
     source_format="cicflowmeter-csv",
     header=",".join(COLUMNS),
     params_type=BiologyParams,
-    fetch=_fetch,
+    stream=_stream,
+    count=_count,
     devices=_devices,
 )

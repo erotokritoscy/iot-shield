@@ -26,9 +26,16 @@ interface RunBody {
   inputs: { content: string; origin: string }[];
 }
 
-async function openCompose(): Promise<void> {
+/** Choose how source `index`'s data arrives — the first decision on every source card. */
+async function choose(index: number, mode: "pull" | "sample" | "upload" | "paste"): Promise<void> {
+  await userEvent.click(await screen.findByTestId(`src_${index}_mode_${mode}`));
+}
+
+/** Open the wizard with source 1 set to `mode` (paste by default, which most tests type into). */
+async function openCompose(mode: "sample" | "upload" | "paste" | null = "paste"): Promise<void> {
   renderApp("/compose");
-  await screen.findByTestId("src_0_text");
+  await screen.findByTestId("src_0_mode_upload");
+  if (mode) await choose(0, mode);
 }
 
 
@@ -122,7 +129,7 @@ describe("Compose & run — the wizard", () => {
 
   it("clamps a deep link to the first step that is not ready", async () => {
     renderApp("/compose?step=4");
-    expect(await screen.findByTestId("src_0_text")).toBeInTheDocument();
+    expect(await screen.findByTestId("src_0_mode_paste")).toBeInTheDocument();
     expect(screen.getByTestId("step_1")).toHaveAttribute("aria-current", "step");
   });
 
@@ -192,14 +199,14 @@ describe("Compose & run — the wizard", () => {
   });
 
   it("lets an uploaded file be taken back", async () => {
-    await openCompose();
+    await openCompose("upload");
     await userEvent.upload(screen.getByTestId("src_0_file"), new File([CSV], "readings.csv", { type: "text/csv" }));
     expect(await screen.findByText("readings.csv", { selector: "p" })).toBeInTheDocument();
-    expect(screen.getByTestId("src_0_text")).toBeDisabled();
 
     await userEvent.click(screen.getByTestId("src_0_clear"));
-    await waitFor(() => expect(screen.getByTestId("src_0_text")).toBeEnabled());
+    await waitFor(() => expect(screen.queryByTestId("src_0_clear")).not.toBeInTheDocument());
     expect(screen.getByText("source-1")).toBeInTheDocument();
+    expect(screen.getByText(/Source 1 needs content/)).toBeInTheDocument();
   });
 
   it("shows a format picker only when the normalizer declares more than one dialect (C2)", async () => {
@@ -274,7 +281,7 @@ describe("Compose & run — the wizard", () => {
   });
 
   it("takes content from an uploaded file and its origin from the filename (C2)", async () => {
-    await openCompose();
+    await openCompose("upload");
     await userEvent.upload(screen.getByTestId("src_0_file"), new File([CSV], "pump-02.csv", { type: "text/csv" }));
     await toStep(2);
     const body = await runFromReview();
@@ -338,11 +345,56 @@ describe("Compose & run — the source wizard", () => {
     captured.runBody = null;
   });
 
-  it("shows every field of a source on one card, with a preview of what will be read", async () => {
+  it("opens a source on how its data arrives, with nothing chosen and no fields yet", async () => {
+    await openCompose(null);
+    const card = screen.getByTestId("src_0_card");
+    const ways = within(card).getAllByRole("radio");
+    // The test catalogue has samples but no data sources, so Pull is not offered.
+    expect(ways.map((way) => way.getAttribute("data-testid"))).toEqual([
+      "src_0_mode_sample",
+      "src_0_mode_upload",
+      "src_0_mode_paste",
+    ]);
+    for (const way of ways) expect(way).toHaveAttribute("aria-checked", "false");
+    expect(within(card).getByText("Choose one to see its fields.")).toBeInTheDocument();
+    for (const id of ["src_0_norm", "src_0_file", "src_0_text", "src_0_sample"]) {
+      expect(within(card).queryByTestId(id)).not.toBeInTheDocument();
+    }
+    expect(screen.getByText(/Source 1 needs content/)).toBeInTheDocument();
+  });
+
+  it("draws only the chosen way's fields", async () => {
+    await openCompose(null);
+    const card = screen.getByTestId("src_0_card");
+    const shown = () =>
+      ["src_0_sample", "src_0_norm", "src_0_file", "src_0_text"].filter((id) => within(card).queryByTestId(id));
+
+    await choose(0, "paste");
+    expect(screen.getByTestId("src_0_mode_paste")).toHaveAttribute("aria-checked", "true");
+    expect(shown()).toEqual(["src_0_norm", "src_0_text"]);
+    await choose(0, "upload");
+    expect(shown()).toEqual(["src_0_norm", "src_0_file"]);
+    await choose(0, "sample");
+    // A sample brings its own reader, so no normalizer is offered beside it.
+    expect(shown()).toEqual(["src_0_sample"]);
+  });
+
+  it("drops what the previous way supplied when the way changes, keeping the reader", async () => {
+    await openCompose();
+    await userEvent.selectOptions(screen.getByTestId("src_0_norm"), "syslog");
+    await userEvent.type(screen.getByTestId("src_0_text"), "a pasted line");
+    await choose(0, "upload");
+    // Hidden behind the upload, the pasted line would still have been sent with the run.
+    expect(screen.getByText(/Source 1 needs content/)).toBeInTheDocument();
+    expect(screen.getByTestId("src_0_norm")).toHaveValue("syslog");
+    await choose(0, "paste");
+    expect(screen.getByTestId("src_0_text")).toHaveValue("");
+  });
+
+  it("previews what will be read on the source's card", async () => {
     await openCompose();
     expect(screen.getByTestId("src_0_tab")).toHaveAttribute("aria-current", "step");
     const card = screen.getByTestId("src_0_card");
-    for (const id of ["src_0_norm", "src_0_file", "src_0_text"]) expect(within(card).getByTestId(id)).toBeInTheDocument();
     expect(within(card).queryByTestId("src_0_preview")).not.toBeInTheDocument();
 
     await userEvent.type(screen.getByTestId("src_0_text"), `${CSV}\n${CSV}`);
@@ -396,6 +448,7 @@ describe("Compose & run — the source wizard", () => {
     expect(screen.getByText(/Source 2 needs content/)).toBeInTheDocument();
     expect(screen.getByTestId("wizard_next")).toBeDisabled();
 
+    await choose(1, "upload");
     await userEvent.upload(screen.getByTestId("src_1_file"), new File([CSV], "second.csv", { type: "text/csv" }));
     await waitFor(() => expect(screen.getByTestId("wizard_next")).toBeEnabled());
     await toStep(2);
@@ -410,8 +463,10 @@ describe("Compose & run — the source wizard", () => {
     await openCompose();
     await userEvent.type(screen.getByTestId("src_0_text"), "a");
     await userEvent.click(screen.getByTestId("compose_src_add"));
+    await choose(1, "paste");
     await userEvent.type(screen.getByTestId("src_1_text"), "b");
     await userEvent.click(screen.getByTestId("compose_src_add"));
+    await choose(2, "paste");
     await userEvent.type(screen.getByTestId("src_2_text"), "c");
 
     await userEvent.click(screen.getByTestId("src_1_tab"));
@@ -525,12 +580,14 @@ describe("Compose & run — samples and scenarios", () => {
   });
 
   it("loads a sample file with its own normalizer and filename", async () => {
-    await openCompose();
+    await openCompose("sample");
     await userEvent.selectOptions(await screen.findByTestId("src_0_sample"), "bruteforce_syslog");
     expect(await screen.findByText("Failed root passwords.")).toBeInTheDocument();
-    expect(screen.getByText(/1 lines\s+loaded from/)).toBeInTheDocument();
     expect(screen.getByTestId("wizard_next")).toBeEnabled();
-    expect(screen.getByTestId("src_0_norm")).toHaveValue("syslog");
+    // The sample's reader is stated, not offered: changing it is what Upload / Paste are for.
+    expect(screen.getByTestId("src_0_reader")).toHaveTextContent("Read by syslog");
+    expect(screen.queryByTestId("src_0_norm")).not.toBeInTheDocument();
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("bruteforce_syslog");
   });
 
   it("shows a scenario by its title, with its description behind the (i)", async () => {

@@ -185,7 +185,10 @@ export interface paths {
         put?: never;
         /**
          * Pull Source
-         * @description A date range of this source's database, as text for its normalizer. Read-only.
+         * @description How many rows a date range of this source holds, and its first lines. Read-only.
+         *
+         *     The rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in
+         *     batches, so there is no row limit here — only the 92-day window.
          */
         post: operations["pull_source_data_sources__source_id__pull_post"];
         delete?: never;
@@ -1441,6 +1444,37 @@ export interface components {
              */
             created_at?: string;
         };
+        /**
+         * PullInput
+         * @description A window of an organization's data source, read by the server when the run starts.
+         */
+        PullInput: {
+            /**
+             * Source Id
+             * Format: uuid
+             * @description The data source to pull from (it names a connection)
+             */
+            source_id: string;
+            /**
+             * Start
+             * Format: date
+             * @description First day, inclusive, in the source's own clock
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Last day, inclusive
+             */
+            end: string;
+            /**
+             * Params
+             * @description The connector's pull params
+             */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
         /** PullRequest */
         PullRequest: {
             /**
@@ -1465,16 +1499,26 @@ export interface components {
         };
         /**
          * PullResponse
-         * @description A window of the source, as text its normalizer reads — ready to be a run's input.
+         * @description What a window of the source holds, without the window itself (ADR-0047).
+         *
+         *     A run reads the window from the database when it starts (``POST /runs`` with a ``pull``
+         *     input), so this answers only what the compose page needs first: how many rows, and a
+         *     sample of real connector output to check the format against — never every row.
          */
         PullResponse: {
-            /** Content */
-            content: string;
+            /**
+             * Sample
+             * @description The connector's header and the window's first lines
+             */
+            sample: string;
             /** Normalizer */
             normalizer: string;
             /** Source Format */
             source_format: string;
-            /** Rows */
+            /**
+             * Rows
+             * @description Rows in the window, before the connector drops any
+             */
             rows: number;
             /** Origin */
             origin: string;
@@ -1515,6 +1559,25 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member";
+        };
+        /**
+         * RunPullInfo
+         * @description The data-source pull an input was read from (ADR-0047) — enough to read it again.
+         */
+        RunPullInfo: {
+            /** Source Id */
+            source_id: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
         };
         /** RunRequest */
         RunRequest: {
@@ -1563,6 +1626,8 @@ export interface components {
             source_format: string;
             /** Origin */
             origin: string;
+            /** @description Set when this input was a pull; Open in Compose restores it */
+            pull?: components["schemas"]["RunPullInfo"] | null;
         };
         /** SavedRunInfo */
         SavedRunInfo: {
@@ -1618,14 +1683,21 @@ export interface components {
         };
         /**
          * SourceInput
-         * @description One source's raw payload, aligned to ``spec.sources`` by position.
+         * @description One source's input, aligned to ``spec.sources`` by position: its text, or a pull.
+         *
+         *     A pull is a *reference* (ADR-0047): the server streams the window from the source's
+         *     database during the run, a batch of assets at a time, so it has no size limit beyond the
+         *     pull's 92-day window. ``content`` is text the caller already holds — an upload, a paste —
+         *     and keeps its ceiling, because it travels in this request.
          */
         SourceInput: {
             /**
              * Content
              * @description Raw input payload for this source, at most 4,000,000 characters
              */
-            content: string;
+            content?: string | null;
+            /** @description Read this source from a data source instead (ADR-0047) */
+            pull?: components["schemas"]["PullInput"] | null;
             /**
              * Origin
              * @description Provenance label for this source

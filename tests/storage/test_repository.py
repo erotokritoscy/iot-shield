@@ -13,10 +13,11 @@ from iotshield.contracts import (
     AlertStatus,
     DetectionResult,
     Lane,
+    MalformedRecord,
     NormalizedEvent,
     PrioritizedAlert,
 )
-from iotshield.storage import DEFAULT_ORG_ID, repository
+from iotshield.storage import DEFAULT_ORG_ID, accounts, repository
 from iotshield.storage.orm import AssetRow, DetectionRow, EventRow, MalformedRow
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -135,6 +136,37 @@ class TestDetectionQueries:
             session, start=T0, end=T0 + timedelta(seconds=20), org_id=DEFAULT_ORG_ID
         )  # [start, end)
         assert [d.window_start for d in window] == [T0, T0 + timedelta(seconds=10)]
+
+
+class TestMalformedQueries:
+    def test_ingest_time_range_is_half_open_and_stays_inside_the_tenant(
+        self, session: Session
+    ) -> None:
+        def reject(raw: str, offset_s: int) -> MalformedRecord:
+            return MalformedRecord(
+                raw=raw,
+                error="unparseable",
+                source_format="stub-csv",
+                origin="test://range",
+                created_at=T0 + timedelta(seconds=offset_s),
+            )
+
+        repository.insert_malformed(
+            session, [reject("a", 0), reject("b", 10), reject("c", 20)], org_id=DEFAULT_ORG_ID
+        )
+        # Another tenant's record inside the same range must never leak through it.
+        theirs = accounts.register_organization(
+            session, name="Other Org", username="other@example.com", password_hash="x"
+        )
+        repository.insert_malformed(session, [reject("theirs", 10)], org_id=theirs.org_id)
+        page = repository.list_malformed(
+            session,
+            start=T0 + timedelta(seconds=5),
+            end=T0 + timedelta(seconds=20),
+            org_id=DEFAULT_ORG_ID,
+        )  # [start, end) on created_at
+        assert [r.raw for r in page.items] == ["b"]
+        assert page.total == 1
 
 
 class TestAlertQueries:

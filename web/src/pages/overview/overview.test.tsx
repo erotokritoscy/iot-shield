@@ -194,30 +194,38 @@ describe("OT overview", () => {
 
   it("offers every meter beside the range and narrows the whole page to the one chosen", async () => {
     renderApp("/overview/ot?start=2023-07-01&end=2023-07-07");
-    const select = await screen.findByTestId("ot_meter");
+    const picker = await screen.findByTestId("ot_meter");
     // Right after "To", in the range's row.
     const row = screen.getByTestId("day_range");
-    expect(within(row).getByTestId("ot_meter")).toBe(select);
+    expect(within(row).getByTestId("ot_meter")).toBe(picker);
+    expect(picker).toHaveTextContent("all sensors");
     // A quiet meter (q1) is offered too, not only the ones with anomalies.
-    await waitFor(() =>
-      expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
-        "all sensors",
-        "e1",
-        "q1",
-        "w1",
-      ]),
-    );
-    await userEvent.selectOptions(select, "q1");
+    // The options come with the overview, which has arrived once its meter links render.
+    await screen.findByTestId("ot_meters");
+    await userEvent.click(picker);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "all sensors",
+      "e1",
+      "q1",
+      "w1",
+    ]);
+    // Searchable: typing narrows the list, then a click picks.
+    await userEvent.type(screen.getByTestId("ot_meter_search"), "q");
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent)).toEqual(["q1"]);
+    await userEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: "q1" }));
+    expect(screen.getByTestId("ot_meter")).toHaveTextContent("q1");
     await waitFor(() => expect(asked.ot).toContain("?start=2023-07-01&end=2023-07-07&asset_id=q1&bucket=hour"));
     await waitFor(() => expect(asked.records.some((query) => query.includes("asset_id=q1"))).toBe(true));
-    await userEvent.selectOptions(screen.getByTestId("ot_meter"), "");
-    expect(screen.getByTestId("ot_meter")).toHaveValue("");
+    // And back to every sensor.
+    await userEvent.click(screen.getByTestId("ot_meter"));
+    await userEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: "all sensors" }));
+    expect(screen.getByTestId("ot_meter")).toHaveTextContent("all sensors");
   });
 
   it("keeps a meter chosen in the URL even when the range has none of its readings", async () => {
     renderApp("/overview/ot?start=2023-07-01&end=2023-07-07&meter=gone");
     await waitFor(() => expect(asked.ot).toContain("?start=2023-07-01&end=2023-07-07&asset_id=gone&bucket=hour"));
-    await waitFor(() => expect(screen.getByTestId("ot_meter")).toHaveValue("gone"));
+    await waitFor(() => expect(screen.getByTestId("ot_meter")).toHaveTextContent("gone"));
   });
 
   it("opens a meter on the same range, asking for that meter alone", async () => {

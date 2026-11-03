@@ -1,10 +1,18 @@
 """The Connector port: a time range of one known schema, as text a normalizer reads (ADR-0042).
 
-A connector is two functions over an engine — ``fetch`` the rows of a window as lines of an
-existing format, and optionally list the ``devices`` a pull can be narrowed to — plus a
-declaration of that format and the pydantic model of its pull parameters. ``pull`` owns
-everything they share: the window rules, the row and size ceilings, and turning a database
-failure into a message that names the connection and nothing about where it is.
+A connector is three functions over an engine — ``stream`` the rows of a window as lines of
+an existing format, ``count`` them, and optionally list the ``devices`` a pull can be narrowed
+to — plus a declaration of that format and the pydantic model of its pull parameters. This
+module owns everything they share: the window rules, cutting the stream into chunks a
+normalizer can read on their own, and turning a database failure into a message that names the
+connection and nothing about where it is.
+
+**A pull is streamed, never held (ADR-0047).** It used to be fetched whole, sent to the browser
+and posted back with the run, which is what the 100,000-row ceiling protected; now a run reads
+the window itself, chunk by chunk (``pull_chunks``), and the browser is shown a count and a
+sample (``pull_summary``). There is no row ceiling: memory is bounded by the run's batching,
+not by refusing a large window. The 92-day window limit stays — it bounds a *query*, not a
+result.
 
 The window is **calendar days in the source's own clock** — ``start`` inclusive, ``end``
 inclusive — because both shipped schemas store naive timestamps (SensiPro in Cyprus local
@@ -13,9 +21,10 @@ timeline. Converting here as well would apply the offset twice.
 """
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from itertools import islice
 from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
@@ -25,10 +34,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from iotshield.connect.connections import Connection, ConnectionUnavailable
 
 log = logging.getLogger(__name__)
-
-MAX_PULL_ROWS: Final = 100_000
-"""Most rows one pull may return. Above it the pull is refused with the count, so the caller
-narrows the window or the devices rather than receiving a silently truncated recording."""
 
 MAX_PULL_DAYS: Final = 92
 """Longest window one pull may ask for: a quarter, which bounds the query as well as its
@@ -47,12 +52,24 @@ class Device:
     label: str
 
 
-Fetch = Callable[[Engine, datetime, datetime, Any, int], tuple[list[str], int]]
-"""``(engine, start, end_exclusive, params, limit) -> (data lines, rows read)``.
+CHUNK_LINES: Final = 20_000
+"""About how many lines one chunk of a streamed pull holds. A chunk is normalized on its own,
+so it is never cut inside a group (see ``Stream``), which is why this is "about"."""
 
-The two counts differ when a connector drops a row (SensiPro's filler hours), and the row
-ceiling is judged on rows *read*: judged on lines, a truncated result whose dropped rows
-brought it under the ceiling would be served as if it were whole."""
+SAMPLE_LINES: Final = 200
+"""How many data lines a pull summary carries: enough for the compose page to check the format
+and show what arrived, never the window itself."""
+
+Stream = Callable[[Engine, datetime, datetime, Any], Iterator[tuple[str | None, str]]]
+"""``(engine, start, end_exclusive, params) -> (group, line), ...`` in the order to normalize.
+
+``group`` names the run of lines a chunk must not be cut inside, because the normalizer reads
+them together — a SensiPro meter, whose counter the meter normalizer differences row to row,
+so a meter split across two chunks would lose the hour at the cut. ``None`` means a line stands
+alone (a flow record) and a chunk may end after it. Lines of one group must be consecutive."""
+
+Count = Callable[[Engine, datetime, datetime, Any], int]
+"""``(engine, start, end_exclusive, params) -> rows`` in the window, before any are dropped."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +80,8 @@ class ConnectorSpec:
     source_format: str
     header: str
     params_type: type[BaseModel]
-    fetch: Fetch
+    stream: Stream
+    count: Count
     devices: Callable[[Engine, Any], list[Device]] | None = None
 
 
@@ -73,6 +91,16 @@ class Pulled:
     normalizer: str
     source_format: str
     rows: int
+
+
+@dataclass(frozen=True)
+class PullSummary:
+    """What a pull would read, without reading it: the row count and the first lines."""
+
+    rows: int
+    sample: str
+    normalizer: str
+    source_format: str
 
 
 def params_for(spec: ConnectorSpec, raw: Mapping[str, Any]) -> BaseModel:
@@ -102,6 +130,88 @@ def _unavailable(connection: Connection, exc: Exception) -> ConnectionUnavailabl
     return ConnectionUnavailable(f"could not read from connection {connection.name!r}")
 
 
+def check_pull(
+    spec: ConnectorSpec, start: date, end: date, params: Mapping[str, Any]
+) -> tuple[BaseModel, datetime, datetime]:
+    """The pull's parsed params and window, or ``PullRefused`` — without touching the database.
+
+    A run calls this for every pulled source before it reads anything, so a bad window on the
+    third source is refused before the first is streamed.
+    """
+    return params_for(spec, params), *_window(start, end)
+
+
+def pull_chunks(
+    spec: ConnectorSpec,
+    connection: Connection,
+    start: date,
+    end: date,
+    params: Mapping[str, Any],
+    *,
+    chunk_lines: int = CHUNK_LINES,
+) -> Iterator[str]:
+    """Stream one window as texts its normalizer reads on their own: the header, then lines.
+
+    Each chunk is cut only where the connector's ``group`` changes, so no group straddles two
+    chunks. Lazy: nothing is queried until the first chunk is asked for, and a database failure
+    mid-stream surfaces as ``ConnectionUnavailable`` like one at the start.
+    """
+    parsed, window_start, window_end = check_pull(spec, start, end, params)
+
+    def render(lines: list[str]) -> str:
+        return spec.header + "\n" + "".join(line + "\n" for line in lines)
+
+    lines: list[str] = []
+    last: str | None = None
+    try:
+        for group, line in spec.stream(connection.engine(), window_start, window_end, parsed):
+            if len(lines) >= chunk_lines and (group is None or group != last):
+                yield render(lines)
+                lines = []
+            lines.append(line)
+            last = group
+    except SQLAlchemyError as exc:
+        raise _unavailable(connection, exc) from exc
+    if lines:
+        yield render(lines)
+
+
+def pull_summary(
+    spec: ConnectorSpec,
+    connection: Connection,
+    start: date,
+    end: date,
+    params: Mapping[str, Any],
+    *,
+    sample_lines: int = SAMPLE_LINES,
+) -> PullSummary:
+    """How many rows the window holds, and its first lines — what the compose page shows.
+
+    The sample is real connector output, so checking it with the normalizer checks the format
+    the run will read; the count is of rows *read*, before a connector drops any (SensiPro's
+    filler hours), so it can exceed the lines a run receives.
+    """
+    parsed, window_start, window_end = check_pull(spec, start, end, params)
+    engine = connection.engine()
+    try:
+        rows = spec.count(engine, window_start, window_end, parsed)
+        stream = spec.stream(engine, window_start, window_end, parsed)
+        try:
+            first = [line for _, line in islice(stream, sample_lines)]
+        finally:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()  # ends the query rather than leaving it for the garbage collector
+    except SQLAlchemyError as exc:
+        raise _unavailable(connection, exc) from exc
+    return PullSummary(
+        rows=rows,
+        sample=spec.header + "\n" + "".join(line + "\n" for line in first),
+        normalizer=spec.normalizer,
+        source_format=spec.source_format,
+    )
+
+
 def pull(
     spec: ConnectorSpec,
     connection: Connection,
@@ -109,23 +219,23 @@ def pull(
     end: date,
     params: Mapping[str, Any],
     *,
-    max_chars: int,
+    max_chars: int | None = None,
 ) -> Pulled:
-    """Fetch one window and render it, or refuse saying why. Never truncates."""
-    parsed = params_for(spec, params)
-    window_start, window_end = _window(start, end)
+    """The whole window as one text, for a caller that needs it whole (tests, a script).
+
+    A run never calls this — it streams ``pull_chunks`` — so there is no row ceiling here
+    either; ``max_chars`` is for a caller that must bound what it holds, and refuses rather
+    than truncates.
+    """
+    parsed, window_start, window_end = check_pull(spec, start, end, params)
     try:
-        lines, read = spec.fetch(
-            connection.engine(), window_start, window_end, parsed, MAX_PULL_ROWS + 1
-        )
+        lines = [
+            line for _, line in spec.stream(connection.engine(), window_start, window_end, parsed)
+        ]
     except SQLAlchemyError as exc:
         raise _unavailable(connection, exc) from exc
-    if read > MAX_PULL_ROWS:
-        raise PullRefused(
-            f"more than {MAX_PULL_ROWS:,} rows in this window; pick fewer days or devices"
-        )
     content = spec.header + "\n" + "".join(line + "\n" for line in lines)
-    if len(content) > max_chars:
+    if max_chars is not None and len(content) > max_chars:
         raise PullRefused(
             f"{len(lines):,} rows make {len(content):,} characters, over the "
             f"{max_chars:,} one source may hold; pick fewer days or devices"

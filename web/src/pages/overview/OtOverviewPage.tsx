@@ -11,7 +11,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { Chart, useChartPalette } from "@/components/Chart";
 import { QueryState } from "@/components/QueryState";
-import { Field, Select } from "@/components/ui/controls";
+import { Field, SearchSelect, Select } from "@/components/ui/controls";
 import { InfoTip } from "@/components/ui/info";
 import { Notice, PageHeader, Section, Truncated } from "@/components/ui/surfaces";
 import { DataTable, StatTile, type Column } from "@/components/ui/table";
@@ -222,16 +222,19 @@ export function OtOverviewPage() {
           <Field
             label="Sensor"
             htmlFor="ot_meter"
-            info="Which sensor (utility meter, by its device id) to show: one, or all of them. Offered: every sensor with a reading in the range."
+            info="Which sensor (utility meter, by its device id) to show: one, or all of them. Offered: every sensor with a reading in the range. Type to search."
           >
-            <Select
+            {/* Searchable: a utility's fleet runs to hundreds of meters, which a native
+                <select> can only scroll through. */}
+            <SearchSelect
               id="ot_meter"
               data-testid="ot_meter"
-              className="max-w-xs"
+              className="w-64 max-w-full"
+              placeholder="Search sensors…"
               options={meterOptions}
               labelFor={(option) => (option === ALL ? "all sensors" : option)}
               value={meter ?? ALL}
-              onChange={(event) => setMeter(event.target.value)}
+              onChange={setMeter}
             />
           </Field>
         </DayRangePicker>

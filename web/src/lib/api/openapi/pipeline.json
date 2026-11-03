@@ -367,7 +367,7 @@
           "data sources"
         ],
         "summary": "Pull Source",
-        "description": "A date range of this source's database, as text for its normalizer. Read-only.",
+        "description": "How many rows a date range of this source holds, and its first lines. Read-only.\n\nThe rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in\nbatches, so there is no row limit here \u2014 only the 92-day window.",
         "operationId": "pull_source_data_sources__source_id__pull_post",
         "parameters": [
           {
@@ -3257,6 +3257,43 @@
         "title": "PrioritizedAlert",
         "description": "The analyst-facing decision: ranked, labeled, explained.\n\n``detection_ids`` is the lineage; more than one entry means corroboration.\nEvery detection bucket becomes an alert \u2014 ranking, not a hidden gate,\ndecides what analysts look at first (ADR-0003 D3)."
       },
+      "PullInput": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Id",
+            "description": "The data source to pull from (it names a connection)"
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "First day, inclusive, in the source's own clock"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "Last day, inclusive"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "The connector's pull params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "start",
+          "end"
+        ],
+        "title": "PullInput",
+        "description": "A window of an organization's data source, read by the server when the run starts."
+      },
       "PullRequest": {
         "properties": {
           "start": {
@@ -3288,9 +3325,10 @@
       },
       "PullResponse": {
         "properties": {
-          "content": {
+          "sample": {
             "type": "string",
-            "title": "Content"
+            "title": "Sample",
+            "description": "The connector's header and the window's first lines"
           },
           "normalizer": {
             "type": "string",
@@ -3302,7 +3340,8 @@
           },
           "rows": {
             "type": "integer",
-            "title": "Rows"
+            "title": "Rows",
+            "description": "Rows in the window, before the connector drops any"
           },
           "origin": {
             "type": "string",
@@ -3311,14 +3350,14 @@
         },
         "type": "object",
         "required": [
-          "content",
+          "sample",
           "normalizer",
           "source_format",
           "rows",
           "origin"
         ],
         "title": "PullResponse",
-        "description": "A window of the source, as text its normalizer reads \u2014 ready to be a run's input."
+        "description": "What a window of the source holds, without the window itself (ADR-0047).\n\nA run reads the window from the database when it starts (``POST /runs`` with a ``pull``\ninput), so this answers only what the compose page needs first: how many rows, and a\nsample of real connector output to check the format against \u2014 never every row."
       },
       "RegisterRequest": {
         "properties": {
@@ -3413,6 +3452,36 @@
           "role"
         ],
         "title": "RoleChangeRequest"
+      },
+      "RunPullInfo": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "start",
+          "end"
+        ],
+        "title": "RunPullInfo",
+        "description": "The data-source pull an input was read from (ADR-0047) \u2014 enough to read it again."
       },
       "RunRequest": {
         "properties": {
@@ -3522,6 +3591,17 @@
           "origin": {
             "type": "string",
             "title": "Origin"
+          },
+          "pull": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPullInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when this input was a pull; Open in Compose restores it"
           }
         },
         "type": "object",
@@ -3656,10 +3736,28 @@
       "SourceInput": {
         "properties": {
           "content": {
-            "type": "string",
-            "maxLength": 4000000,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000000
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Content",
             "description": "Raw input payload for this source, at most 4,000,000 characters"
+          },
+          "pull": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PullInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Read this source from a data source instead (ADR-0047)"
           },
           "origin": {
             "type": "string",
@@ -3670,11 +3768,8 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "content"
-        ],
         "title": "SourceInput",
-        "description": "One source's raw payload, aligned to ``spec.sources`` by position."
+        "description": "One source's input, aligned to ``spec.sources`` by position: its text, or a pull.\n\nA pull is a *reference* (ADR-0047): the server streams the window from the source's\ndatabase during the run, a batch of assets at a time, so it has no size limit beyond the\npull's 92-day window. ``content`` is text the caller already holds \u2014 an upload, a paste \u2014\nand keeps its ceiling, because it travels in this request."
       },
       "SourceSpec": {
         "properties": {

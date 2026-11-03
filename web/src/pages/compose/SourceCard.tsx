@@ -1,8 +1,13 @@
 /**
  * Step 1's sources: `SourceTabs` is the wizard — Source 1, Source 2, … as steps with their
- * status, then + Add source — and `SourceCard` is the one source on screen, every field of it at
- * once (data, format, settings), with a check of what will be read at the bottom. Sources are
- * never stacked one under another.
+ * status, then + Add source — and `SourceCard` is the one source on screen, with a check of what
+ * will be read at the bottom. Sources are never stacked one under another.
+ *
+ * A card opens on one question — how does this source's data arrive: pull, sample, upload or
+ * paste? — and draws only that way's fields. All four used to be on screen at once, each silently
+ * replacing the others, so a pasted block could hide behind a pull. Choosing a way drops what
+ * the previous way supplied (`withMode`); a pull or sample brings its own reader and shows it
+ * rather than offering it.
  *
  * The card edits the same `SourceRow` as before, so what is sent is unchanged. What it adds is a
  * read of the content by the source's own normalizer (`/runs/preview`), so a file in the wrong
@@ -13,7 +18,7 @@ import * as React from "react";
 
 import { ParamFields } from "@/components/ParamFields";
 import { Button, Field, Select, Textarea } from "@/components/ui/controls";
-import { InfoLines } from "@/components/ui/info";
+import { InfoLines, InfoTip } from "@/components/ui/info";
 import { Collapsible, Notice, Spinner } from "@/components/ui/surfaces";
 import { describeError } from "@/lib/api/http";
 import type { ConnectionInfo, DataSourceInfo, ModuleInfo, PreviewResponse, PullResponse } from "@/lib/api/types";
@@ -22,11 +27,103 @@ import { initialValues } from "@/lib/params";
 import { fetchSampleText, type Sample } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { ADAPTER_HELP, FIELD_HELP, FORMAT_HELP, paramHelp } from "@/pages/compose/help";
-import { MAX_UPLOAD_BYTES, sourceFromSample, type SourcePreview, type SourceRow } from "@/pages/compose/model";
+import {
+  isFilled,
+  MAX_UPLOAD_BYTES,
+  sourceFromSample,
+  withMode,
+  type PulledWindow,
+  type SourceMode,
+  type SourcePreview,
+  type SourceRow,
+} from "@/pages/compose/model";
 import { PullPanel } from "@/pages/compose/PullPanel";
 
 const NO_SAMPLE = "";
 const PREVIEW_LINES = 5;
+
+/** The ways a source's data can arrive, in the order offered, with what each one is. */
+const MODES: readonly { readonly mode: SourceMode; readonly label: string; readonly hint: string }[] = [
+  { mode: "pull", label: "Pull from a data source", hint: "A date range of a connected database." },
+  { mode: "sample", label: "Sample file", hint: "A small file from the built-in library." },
+  { mode: "upload", label: "Upload a file", hint: "A text file from your computer." },
+  { mode: "paste", label: "Paste records", hint: "Lines typed or pasted here." },
+];
+
+/**
+ * The first decision on a source: how its data arrives. Only that way's fields are drawn
+ * below it, so a card never offers four inputs at once that silently replace each other.
+ */
+function ModeChoice({
+  index,
+  mode,
+  offered,
+  onChoose,
+}: {
+  readonly index: number;
+  readonly mode: SourceMode | null;
+  readonly offered: readonly SourceMode[];
+  readonly onChoose: (mode: SourceMode) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1">
+        <p className="field-label mb-0" id={`src_${index}_mode_label`}>
+          How will this source's data arrive?
+        </p>
+        <InfoTip label="How will this source's data arrive?">{FIELD_HELP.mode}</InfoTip>
+      </div>
+      <div
+        role="radiogroup"
+        aria-labelledby={`src_${index}_mode_label`}
+        className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        {MODES.filter((item) => offered.includes(item.mode)).map((item) => {
+          const checked = item.mode === mode;
+          return (
+            <button
+              key={item.mode}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              data-testid={`src_${index}_mode_${item.mode}`}
+              onClick={() => onChoose(item.mode)}
+              className={cn(
+                "rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                checked ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface text-dim hover:bg-raised",
+              )}
+            >
+              <span className="block font-medium">{item.label}</span>
+              <span className="block text-2xs opacity-80">{item.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+      {mode === null ? <p className="caption mt-2">Choose one to see its fields.</p> : null}
+    </div>
+  );
+}
+
+const sourceLabel = (sources: readonly DataSourceInfo[]) => (id: string) => {
+  const source = sources.find((item) => item.source_id === id);
+  return source ? `${source.type} · ${source.name}` : "— none —";
+};
+
+const readerHint = (source: DataSourceInfo) =>
+  source.normalizer
+    ? `${source.type} · read by ${source.normalizer} (${source.source_format})`
+    : `${source.type} · no normalizer set for it.`;
+
+/** The reader a pull or sample set, shown rather than offered: they bring their own. */
+function ReaderLine({ index, row }: { readonly index: number; readonly row: SourceRow }) {
+  return (
+    <p className="caption" data-testid={`src_${index}_reader`}>
+      Read by <span className="font-mono">{row.normalizer}</span>
+      {row.format ? <> (<span className="font-mono">{row.format}</span>)</> : null}. To read it another way, upload
+      or paste it instead.
+    </p>
+  );
+}
 
 /** A chain-check finding about this source (`/runs/validate`, stage `sources[i]`). */
 export interface SourceIssue {
@@ -52,7 +149,7 @@ export function sourceProblem(
   issues: readonly SourceIssue[],
   preview: SourcePreview,
 ): SourceProblem | null {
-  if (nonBlank(row.content).length === 0) return { text: "needs content", tone: "warning" };
+  if (!isFilled(row)) return { text: "needs content", tone: "warning" };
   if (unreadable(preview)) return { text: "wrong format?", tone: "error" };
   if (issues.some((issue) => issue.level === "error")) return { text: "has an error", tone: "error" };
   if (preview.result?.level === "mostly_rejected") return { text: "mostly unreadable", tone: "warning" };
@@ -178,15 +275,26 @@ export function SourceCard({
       params: initialValues(next?.params),
       // Reading it some other way means it is no longer read as that data source says.
       dataSource: null,
+      pull: null,
     });
   };
 
   const chosenSource = dataSources.find((source) => source.source_id === row.dataSource);
   const connection = connections.find((item) => item.name === chosenSource?.connection);
+  // Only a source whose connection this organization may use can be pulled from.
+  const pullable = dataSources.filter((source) =>
+    connections.some((item) => item.name === source.connection),
+  );
+  // A way that cannot apply here is not offered — except the one already chosen.
+  const offered = MODES.map((item) => item.mode).filter(
+    (mode) =>
+      mode === row.mode ||
+      (mode === "pull" ? pullable.length > 0 : mode === "sample" ? samples.length > 0 : true),
+  );
   const pickDataSource = (sourceId: string) => {
     const source = dataSources.find((item) => item.source_id === sourceId);
     if (source === undefined) {
-      onChange({ ...row, dataSource: null });
+      onChange({ ...row, dataSource: null, pull: null });
       return;
     }
     const reader = normalizers.find((item) => item.name === source.normalizer);
@@ -198,13 +306,16 @@ export function SourceCard({
             normalizer: reader.name,
             format: source.source_format,
             params: initialValues(reader.params),
+            pull: null,
           }
-        : { ...row, dataSource: source.source_id },
+        : { ...row, dataSource: source.source_id, pull: null },
     );
   };
 
-  // A pull fills the source as an uploaded file would, in the format its connector writes.
-  const onPulled = (pulled: PullResponse) => {
+  // A pull sets the source to the format its connector writes and remembers the window: the
+  // run reads the rows itself (ADR-0047). `content` holds the sample, which is what the
+  // preview checks the format against — the same normalizer, on real connector output.
+  const onPulled = (pulled: PullResponse, window: Omit<PulledWindow, "source_id" | "rows">) => {
     setFileError(null);
     const reader = normalizers.find((item) => item.name === pulled.normalizer);
     onChange({
@@ -212,15 +323,16 @@ export function SourceCard({
       normalizer: pulled.normalizer,
       format: pulled.source_format,
       params: row.normalizer === pulled.normalizer ? row.params : initialValues(reader?.params),
-      content: pulled.content,
+      content: pulled.sample,
       fileName: pulled.origin,
+      pull: { ...window, source_id: row.dataSource ?? "", rows: pulled.rows },
     });
   };
 
   const onFile = async (file: File | null) => {
     setFileError(null);
     if (file === null) {
-      onChange({ ...row, content: "", fileName: null });
+      onChange({ ...row, content: "", fileName: null, pull: null });
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -231,7 +343,7 @@ export function SourceCard({
       return;
     }
     try {
-      onChange({ ...row, content: await readTextFile(file), fileName: file.name });
+      onChange({ ...row, content: await readTextFile(file), fileName: file.name, pull: null });
     } catch (cause) {
       // Swallowing this left the operator believing a file was attached.
       setFileError(`Could not read ${file.name}: ${describeError(cause)}`);
@@ -244,7 +356,7 @@ export function SourceCard({
     setFileError(null);
     const sample = samples.find((item) => item.id === sampleId);
     if (sample === undefined) {
-      onChange({ ...row, content: "", fileName: null });
+      onChange({ ...row, content: "", fileName: null, pull: null });
       return;
     }
     setLoadingSample(true);
@@ -268,157 +380,202 @@ export function SourceCard({
         ) : null}
       </div>
 
-      {dataSources.length > 0 ? (
-        <Field
-          label="Data source"
-          htmlFor={`src_${index}_source`}
-          info={FIELD_HELP.dataSource}
-          hint={
-            chosenSource
-              ? chosenSource.normalizer
-                ? `${chosenSource.type} · read by ${chosenSource.normalizer} (${chosenSource.source_format})` +
-                  (chosenSource.connection ? " · pull it below, or upload / paste." : ".")
-                : `${chosenSource.type} · no normalizer set for it — choose one below.`
-              : "Optional: which of your data sources this is."
-          }
-        >
-          <Select
-            id={`src_${index}_source`}
-            data-testid={`src_${index}_source`}
-            options={[NO_SAMPLE, ...dataSources.map((source) => source.source_id)]}
-            labelFor={(id) => {
-              const source = dataSources.find((item) => item.source_id === id);
-              return source ? `${source.type} · ${source.name}` : "— none —";
-            }}
-            value={chosenSource?.source_id ?? NO_SAMPLE}
-            onChange={(event) => pickDataSource(event.target.value)}
-          />
-        </Field>
-      ) : null}
+      <ModeChoice
+        index={index}
+        mode={row.mode ?? null}
+        offered={offered}
+        onChoose={(mode) => {
+          setFileError(null);
+          onChange(withMode(row, mode));
+        }}
+      />
 
-      {chosenSource && connection ? (
-        <PullPanel
-          key={chosenSource.source_id}
-          index={index}
-          source={chosenSource}
-          connection={connection}
-          onPulled={onPulled}
-        />
-      ) : null}
-
-      {samples.length > 0 ? (
-        <Field
-          label="Use a sample file"
-          htmlFor={`src_${index}_sample`}
-          info={FIELD_HELP.sample}
-          hint={chosenSample ? chosenSample.description : "Or upload / paste your own below."}
-        >
-          <Select
-            id={`src_${index}_sample`}
-            data-testid={`src_${index}_sample`}
-            options={[NO_SAMPLE, ...samples.map((sample) => sample.id)]}
-            labelFor={(id) =>
-              id === NO_SAMPLE ? "— none —" : (samples.find((sample) => sample.id === id)?.title ?? id)
-            }
-            value={chosenSample?.id ?? NO_SAMPLE}
-            disabled={loadingSample}
-            onChange={(event) => void onSample(event.target.value)}
-          />
-        </Field>
-      ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field
-          label="Normalizer"
-          htmlFor={`src_${index}_norm`}
-          info={
-            <InfoLines
-              lines={[
-                FIELD_HELP.normalizer,
-                ADAPTER_HELP[`normalizer:${row.normalizer}`],
-                ...formats.map((format) => FORMAT_HELP[format]),
-              ]}
-            />
-          }
-        >
-          <Select
-            id={`src_${index}_norm`}
-            data-testid={`src_${index}_norm`}
-            options={normalizers.map((item) => item.name)}
-            value={row.normalizer}
-            onChange={(event) => pickNormalizer(event.target.value)}
-          />
-        </Field>
-        {/* A format picker only when the normalizer declares more than one dialect —
-            otherwise it is a control with a single option, which reads as a decision. */}
-        {formats.length > 1 ? (
+      {row.mode === "pull" ? (
+        <>
           <Field
-            label="Input format"
-            htmlFor={`src_${index}_fmt`}
-            info={<InfoLines lines={[FIELD_HELP.format, FORMAT_HELP[row.format]]} />}
+            label="Data source"
+            htmlFor={`src_${index}_source`}
+            info={FIELD_HELP.dataSource}
+            hint={chosenSource ? readerHint(chosenSource) : "Which of your connected data sources to pull from."}
           >
             <Select
-              id={`src_${index}_fmt`}
-              data-testid={`src_${index}_fmt`}
-              options={formats}
-              value={row.format}
-              onChange={(event) => onChange({ ...row, format: event.target.value })}
+              id={`src_${index}_source`}
+              data-testid={`src_${index}_source`}
+              options={[NO_SAMPLE, ...pullable.map((source) => source.source_id)]}
+              labelFor={sourceLabel(pullable)}
+              value={chosenSource?.source_id ?? NO_SAMPLE}
+              onChange={(event) => pickDataSource(event.target.value)}
             />
           </Field>
-        ) : null}
-      </div>
+          {chosenSource && connection ? (
+            <PullPanel
+              key={chosenSource.source_id}
+              index={index}
+              source={chosenSource}
+              connection={connection}
+              onPulled={onPulled}
+            />
+          ) : null}
+          {chosenSource ? <ReaderLine index={index} row={row} /> : null}
+        </>
+      ) : null}
 
-      <Collapsible label={`${row.normalizer} parameters`}>
-        <ParamFields
-          params={module?.params}
-          values={row.params}
-          idPrefix={`src_${index}`}
-          info={(param) => paramHelp("normalizer", row.normalizer, param)}
-          onChange={(name, value) => onChange({ ...row, params: { ...row.params, [name]: value } })}
-        />
-      </Collapsible>
+      {row.mode === "sample" ? (
+        <>
+          <Field
+            label="Sample file"
+            htmlFor={`src_${index}_sample`}
+            info={FIELD_HELP.sample}
+            hint={chosenSample ? chosenSample.description : "A small file from the built-in library."}
+          >
+            <Select
+              id={`src_${index}_sample`}
+              data-testid={`src_${index}_sample`}
+              options={[NO_SAMPLE, ...samples.map((sample) => sample.id)]}
+              labelFor={(id) =>
+                id === NO_SAMPLE ? "— choose one —" : (samples.find((sample) => sample.id === id)?.title ?? id)
+              }
+              value={chosenSample?.id ?? NO_SAMPLE}
+              disabled={loadingSample}
+              onChange={(event) => void onSample(event.target.value)}
+            />
+          </Field>
+          {/* A sample brings its own reader; overriding it is what Upload / Paste are for. */}
+          {chosenSample ? <ReaderLine index={index} row={row} /> : null}
+        </>
+      ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Upload a file" htmlFor={`src_${index}_file`} info={FIELD_HELP.upload}>
-          <input
-            id={`src_${index}_file`}
-            data-testid={`src_${index}_file`}
-            type="file"
-            className="control file:mr-3 file:rounded file:border-0 file:bg-raised file:px-2 file:py-1 file:text-xs file:text-ink"
-            onChange={(event) => void onFile(event.target.files?.[0] ?? null)}
-          />
-        </Field>
-        <Field label="Origin" info={FIELD_HELP.origin} hint="Provenance recorded with every record from this source.">
-          <div className="flex items-center gap-2">
-            <p className="control min-w-0 flex-1 truncate bg-raised font-mono text-xs">{originOf(row, index)}</p>
-            {row.fileName !== null ? (
-              <Button size="sm" variant="ghost" data-testid={`src_${index}_clear`} onClick={() => void onFile(null)}>
-                Remove file
-              </Button>
+      {row.mode === "upload" || row.mode === "paste" ? (
+        <>
+          {dataSources.length > 0 ? (
+            <Field
+              label="Data source"
+              htmlFor={`src_${index}_source`}
+              info={FIELD_HELP.dataSource}
+              hint={
+                chosenSource
+                  ? chosenSource.normalizer
+                    ? readerHint(chosenSource)
+                    : `${chosenSource.type} · no normalizer set for it — choose one below.`
+                  : "Optional: which of your data sources this is; it fills in the reader."
+              }
+            >
+              <Select
+                id={`src_${index}_source`}
+                data-testid={`src_${index}_source`}
+                options={[NO_SAMPLE, ...dataSources.map((source) => source.source_id)]}
+                labelFor={sourceLabel(dataSources)}
+                value={chosenSource?.source_id ?? NO_SAMPLE}
+                onChange={(event) => pickDataSource(event.target.value)}
+              />
+            </Field>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Normalizer"
+              htmlFor={`src_${index}_norm`}
+              info={
+                <InfoLines
+                  lines={[
+                    FIELD_HELP.normalizer,
+                    ADAPTER_HELP[`normalizer:${row.normalizer}`],
+                    ...formats.map((format) => FORMAT_HELP[format]),
+                  ]}
+                />
+              }
+            >
+              <Select
+                id={`src_${index}_norm`}
+                data-testid={`src_${index}_norm`}
+                options={normalizers.map((item) => item.name)}
+                value={row.normalizer}
+                onChange={(event) => pickNormalizer(event.target.value)}
+              />
+            </Field>
+            {/* A format picker only when the normalizer declares more than one dialect —
+                otherwise it is a control with a single option, which reads as a decision. */}
+            {formats.length > 1 ? (
+              <Field
+                label="Input format"
+                htmlFor={`src_${index}_fmt`}
+                info={<InfoLines lines={[FIELD_HELP.format, FORMAT_HELP[row.format]]} />}
+              >
+                <Select
+                  id={`src_${index}_fmt`}
+                  data-testid={`src_${index}_fmt`}
+                  options={formats}
+                  value={row.format}
+                  onChange={(event) => onChange({ ...row, format: event.target.value, pull: null })}
+                />
+              </Field>
             ) : null}
           </div>
+        </>
+      ) : null}
+
+      {row.mode === "upload" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Upload a file" htmlFor={`src_${index}_file`} info={FIELD_HELP.upload}>
+            <input
+              id={`src_${index}_file`}
+              data-testid={`src_${index}_file`}
+              type="file"
+              className="control file:mr-3 file:rounded file:border-0 file:bg-raised file:px-2 file:py-1 file:text-xs file:text-ink"
+              onChange={(event) => void onFile(event.target.files?.[0] ?? null)}
+            />
+          </Field>
+          <Field label="Origin" info={FIELD_HELP.origin} hint="Provenance recorded with every record from this source.">
+            <div className="flex items-center gap-2">
+              <p className="control min-w-0 flex-1 truncate bg-raised font-mono text-xs">{originOf(row, index)}</p>
+              {row.fileName !== null ? (
+                <Button size="sm" variant="ghost" data-testid={`src_${index}_clear`} onClick={() => void onFile(null)}>
+                  Remove file
+                </Button>
+              ) : null}
+            </div>
+          </Field>
+        </div>
+      ) : null}
+
+      {row.mode === "paste" ? (
+        <Field
+          label="Paste records"
+          htmlFor={`src_${index}_text`}
+          info={<InfoLines lines={[FIELD_HELP.paste, FORMAT_HELP[row.format]]} />}
+          hint={FORMAT_HELP[row.format] ? `Expected: ${FORMAT_HELP[row.format]}` : undefined}
+        >
+          <Textarea
+            id={`src_${index}_text`}
+            data-testid={`src_${index}_text`}
+            rows={5}
+            placeholder="CSV for stub, log lines for syslog."
+            value={row.content}
+            onChange={(event) => onChange({ ...row, content: event.target.value, fileName: null, pull: null })}
+          />
         </Field>
-      </div>
+      ) : null}
 
       {fileError ? <Notice tone="error">{fileError}</Notice> : null}
 
-      <Field
-        label="…or paste records"
-        htmlFor={`src_${index}_text`}
-        info={<InfoLines lines={[FIELD_HELP.paste, FORMAT_HELP[row.format]]} />}
-        hint={FORMAT_HELP[row.format] ? `Expected: ${FORMAT_HELP[row.format]}` : undefined}
-      >
-        <Textarea
-          id={`src_${index}_text`}
-          data-testid={`src_${index}_text`}
-          rows={5}
-          placeholder="CSV for stub, log lines for syslog."
-          value={row.fileName === null ? row.content : ""}
-          disabled={row.fileName !== null}
-          onChange={(event) => onChange({ ...row, content: event.target.value, fileName: null })}
-        />
-      </Field>
-      {row.fileName !== null ? (
+      {row.mode ? (
+        <Collapsible label={`${row.normalizer} parameters`}>
+          <ParamFields
+            params={module?.params}
+            values={row.params}
+            idPrefix={`src_${index}`}
+            info={(param) => paramHelp("normalizer", row.normalizer, param)}
+            onChange={(name, value) => onChange({ ...row, params: { ...row.params, [name]: value } })}
+          />
+        </Collapsible>
+      ) : null}
+
+      {row.pull ? (
+        <p className="caption" data-testid={`src_${index}_pulled`}>
+          {row.pull.rows === null ? "A window" : `${row.pull.rows.toLocaleString("en-US")} rows`} of{" "}
+          <span className="font-mono">{row.fileName}</span>, read from the database when the run starts.
+        </p>
+      ) : row.fileName !== null && row.mode === "upload" ? (
         <p className="caption">
           {lines.length.toLocaleString("en-US")} lines loaded from <span className="font-mono">{row.fileName}</span>.
         </p>
@@ -542,6 +699,7 @@ function SourceCheck({
         <div>
           <p className="field-label">
             First {Math.min(PREVIEW_LINES, lines.length)} of {lines.length.toLocaleString("en-US")} lines
+            {row.pull ? " of the sample" : ""}
           </p>
           <pre
             data-testid={`src_${index}_preview`}
@@ -566,7 +724,8 @@ function SourceCheck({
       {!checking && issues.length === 0 && readable && preview.result ? (
         <Notice tone="success">
           Ready: {row.normalizer} reads {preview.result.events.toLocaleString("en-US")} of{" "}
-          {(preview.result.events + preview.result.malformed).toLocaleString("en-US")} records.
+          {(preview.result.events + preview.result.malformed).toLocaleString("en-US")} records
+          {row.pull ? " in the sample" : ""}.
         </Notice>
       ) : null}
     </div>

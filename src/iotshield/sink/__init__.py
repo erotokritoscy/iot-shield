@@ -7,6 +7,13 @@ sink (and what the read API / dashboard consume); a deployment can add or replac
 — a file export today, a webhook/SIEM tomorrow — without touching the runner. The store
 is pluggable (framing B of the week-2 design).
 
+**A run arrives in parts (ADR-0047).** A run too large to hold is computed one batch of
+assets at a time, so a sink is *opened* once per run (``RunHeader``: what is known before
+anything is read), handed each batch as a ``RunResult`` of its own (``add``), and *finished*
+with the run's totals — or *aborted*, when the run fails part-way, which must leave nothing
+behind. A run small enough for one batch is one ``add``; ``write_result`` is that whole
+sequence for a caller holding a complete result.
+
 Unlike the other ports, a sink declares no ``Capability``: it is a *terminal* consumer
 of the whole result, not a typed joint in the transformation chain, so the compatibility
 guard does not apply to it. Its extensibility comes from registration + discovery +
@@ -43,6 +50,9 @@ class SourceProvenance:
     normalizer: str
     source_format: str
     origin: str
+    # Set when the input was a data-source pull (ADR-0047): ``{source_id, start, end, params}``,
+    # JSON-ready, so the saved run can reopen the pull itself.
+    pull: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,7 +110,65 @@ class SinkResources:
     run_by: str | None = None
 
 
+@dataclass(frozen=True)
+class RunHeader:
+    """What is known about a run before any of it is computed — what a sink is opened with."""
+
+    run_id: UUID
+    run_at: datetime
+    sources: list[SourceProvenance]
+    spec: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RunTotals:
+    """What is known only once every batch is in: the counts, and the run's warnings."""
+
+    events: int
+    malformed: int
+    detections: int
+    alerts: int
+    warnings: list[str] = field(default_factory=list)
+
+
+class RunWriter(Protocol):
+    """One run being written. ``add`` once per batch, then exactly one of ``finish``/``abort``."""
+
+    def add(self, part: RunResult) -> None: ...
+
+    def finish(self, totals: RunTotals) -> None: ...
+
+    def abort(self) -> None: ...
+
+
 class ResultSink(Protocol):
     """Where a run's results are stored or delivered. The pipeline's fourth port."""
 
-    def write(self, result: RunResult) -> None: ...
+    def open(self, header: RunHeader) -> RunWriter: ...
+
+
+def header_of(result: RunResult) -> RunHeader:
+    return RunHeader(
+        run_id=result.run_id, run_at=result.run_at, sources=result.sources, spec=result.spec
+    )
+
+
+def totals_of(result: RunResult) -> RunTotals:
+    return RunTotals(
+        events=len(result.events),
+        malformed=len(result.malformed),
+        detections=len(result.detections),
+        alerts=len(result.alerts),
+        warnings=list(result.warnings),
+    )
+
+
+def write_result(sink: ResultSink, result: RunResult) -> None:
+    """Write a complete result as a one-batch run: open, add, finish — or abort and re-raise."""
+    writer = sink.open(header_of(result))
+    try:
+        writer.add(result)
+        writer.finish(totals_of(result))
+    except BaseException:
+        writer.abort()
+        raise

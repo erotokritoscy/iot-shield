@@ -15,6 +15,7 @@ from iotshield.contracts import Lane, NormalizedEvent
 from iotshield.pipeline.config import PipelineSpec
 from iotshield.pipeline.registry import SinkResources, build_sink
 from iotshield.pipeline.runner import compute_run, resolve_assets
+from iotshield.sink import write_result
 
 STUB_ROW = "2026-07-07T12:00:00+00:00,pump-02,Pressure,120\n"
 
@@ -106,7 +107,7 @@ class TestSinkConfigFailsBeforeAnySideEffect:
         """Observed through a real write rather than the sink's private attribute, so the
         assertion is about where output LANDS."""
         sink = build_sink("file", {"path": path}, SinkResources(output_dir=tmp_path))
-        sink.write(compute_run(_spec(), [STUB_ROW], origins=["x"]))
+        write_result(sink, compute_run(_spec(), [STUB_ROW], origins=["x"]))
 
         written = list(tmp_path.iterdir())
         assert [item.name for item in written] == [Path(path).name]

@@ -169,6 +169,33 @@ class TestReads:
         assert row["raw"] == "garbage"
         assert row["error"] == "unparseable"
 
+    def test_malformed_time_range_is_half_open_on_ingest_time(self, api: ApiHarness) -> None:
+        # A malformed record has no timestamp of its own, so the range bounds `created_at`.
+        stamps = [T0, T0 + timedelta(minutes=1), T0 + timedelta(minutes=2)]
+        with api.session_factory() as session, session.begin():
+            repository.insert_malformed(
+                session,
+                [
+                    MalformedRecord(
+                        raw=f"m{i}",
+                        error="unparseable",
+                        source_format="stub-csv",
+                        origin="test://range",
+                        created_at=at,
+                    )
+                    for i, at in enumerate(stamps)
+                ],
+                org_id=DEFAULT_ORG_ID,
+            )
+        response = api.client.get(
+            "/malformed", params={"start": stamps[1].isoformat(), "end": stamps[2].isoformat()}
+        )
+        # Half-open: m1 sits on `start` and is in; m2 sits on `end` and is out.
+        assert [r["raw"] for r in response.json()] == ["m1"]
+        assert response.headers["X-Total-Count"] == "1"
+        only_start = api.client.get("/malformed", params={"start": stamps[1].isoformat()}).json()
+        assert sorted(r["raw"] for r in only_start) == ["m1", "m2"]
+
     def test_summary_counts_and_top_alert(self, api: ApiHarness) -> None:
         _, stored_alert = seed_incident(api)
         body = api.client.get("/summary").json()
@@ -204,6 +231,10 @@ class TestValidation:
     def test_naive_datetime_param_is_422(self, api: ApiHarness) -> None:
         # Golden rule 4 at the API boundary: naive timestamps are a client error.
         response = api.client.get("/events", params={"start": "2026-07-07T12:00:00"})
+        assert response.status_code == 422
+
+    def test_naive_datetime_on_malformed_is_422(self, api: ApiHarness) -> None:
+        response = api.client.get("/malformed", params={"end": "2026-07-07T12:00:00"})
         assert response.status_code == 422
 
     def test_aware_non_utc_datetime_param_is_normalized(self, api: ApiHarness) -> None:

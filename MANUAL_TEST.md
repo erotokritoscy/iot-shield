@@ -367,3 +367,111 @@ cd ~/projects/iot-shield && python3 scripts/biology_fake_attack.py remove \
    - When it ends, the whole day shows again.
 6. Afterwards, remove the attack (see **Insert and remove**).
    `docker compose down -v` clears the 7 alerts from iot-shield.
+
+# Manual test: deep links with date ranges (URL examples)
+
+Every filter on the Monitor pages is kept in the URL, so each link below opens an exact view.
+Checked against the database on 2026-11-02.
+
+**What is in the database:** the OT data (563 SensiPro meters) runs from **2023-06-30 to 2023-07-21**.
+The IT flows are CICFlowMeter from 2023-06-20 to 2023-07-22, and the walkthrough's Zeek flows from
+2026-07-30 to 2026-08-03.
+
+**The run and alert ids below belong to this database.** After `docker compose down -v` they are
+different. Find the new ones on the **Runs** page, or with:
+
+```
+docker compose exec -T postgres psql -U iotshield -d iotshield \
+  -c "select run_id, name from runs order by run_at;" \
+  -c "select alert_id, severity, asset_id from alerts order by priority_score desc limit 4;"
+```
+
+## The parameters
+
+| Page | Parameters | Date format |
+|---|---|---|
+| Triage `/` | `run`, `alert`, `from`, `to` | `YYYY-MM-DDTHH:MM` (UTC) |
+| Assets & telemetry `/assets` | `asset`, `from`, `to` | `YYYY-MM-DDTHH:MM` (UTC) |
+| Data health `/data-health` | `from`, `to` | `YYYY-MM-DDTHH:MM` (UTC) |
+| IT / OT overview, meter page | `start`, `end` (plus `meter` on OT) | `YYYY-MM-DD` (whole UTC days, both included, at most 366) |
+
+Every parameter is optional. A badly formed value is ignored, so the page shows a wider view
+instead of an error. On the overview pages, a bad `start`/`end`, or `start` after `end`, falls
+back to the default week.
+
+## Which column each page filters on
+
+| Page | Table: column | Bounds |
+|---|---|---|
+| Triage | `alerts.window_start` | `from <= t < to` |
+| Assets: events / timeline | `events.timestamp` | `from <= t <= to` (end included, so a zero-length point anomaly still finds its events) |
+| Assets: detections | `detections.window_start` | `from <= t < to` |
+| Data health: malformed table | `malformed_records.created_at` (when it was stored: a malformed line has no timestamp of its own) | `from <= t < to` |
+| IT overview | `events.timestamp` (flow lane), `detections.window_start` | whole days |
+| OT overview | `events.timestamp` (meter formats), `detections.window_start`; rejected rows by the reading time in the error text, else `created_at` | whole days |
+
+Alerts and detections are matched on `window_start` only. One that starts just before `from` is
+left out even if it continues into the range.
+
+## Triage
+
+| What | URL |
+|---|---|
+| The whole queue | http://localhost:8080/ |
+| One walkthrough run only (8 detections, 2 alerts) | http://localhost:8080/?run=b10c13ba-f9d9-473f-9265-9a48f06be0b1 |
+| The other walkthrough run | http://localhost:8080/?run=dfd35fc7-7a0d-4f5a-b2c2-001f6b67b11c |
+| The camera's CRITICAL 80.0 alert, opened in the inspector | http://localhost:8080/?alert=8786ec2e-6f65-4784-93b7-ed219f4984fb |
+| Alerts of the walkthrough's day | http://localhost:8080/?from=2026-07-30T00:00&to=2026-07-31T00:00 |
+| The meter alerts (July 2023) | http://localhost:8080/?from=2023-06-30T00:00&to=2023-07-22T00:00 |
+| A run and a range together | http://localhost:8080/?run=b10c13ba-f9d9-473f-9265-9a48f06be0b1&from=2026-07-30T12:00&to=2026-07-30T13:00 |
+
+**Expected:** the Run filter shows the run by name and time. A run with no alerts says
+"No alert matches this filter." and keeps the filters on screen.
+
+## Assets & telemetry
+
+| What | URL |
+|---|---|
+| The compromised camera, all time | http://localhost:8080/assets?asset=10.0.0.24 |
+| The camera in the incident hour | http://localhost:8080/assets?asset=10.0.0.24&from=2026-07-30T12:00&to=2026-07-30T13:00 |
+| The gateway (inbound SSH) | http://localhost:8080/assets?asset=10.0.0.11 |
+| The quiet sensor | http://localhost:8080/assets?asset=10.0.0.31&from=2026-07-30T00:00&to=2026-08-04T00:00 |
+| A SensiPro meter, one week | http://localhost:8080/assets?asset=bw791&from=2023-07-01T00:00&to=2023-07-08T00:00 |
+| `pump-02` (stub telemetry) | http://localhost:8080/assets?asset=pump-02&from=2026-07-07T00:00&to=2026-07-31T00:00 |
+
+## Data health
+
+The range filters on **storage time**, so these dates are the days the data was loaded, not
+2023. The counts at the top are always all-time totals; only the malformed table is filtered.
+
+| What | URL |
+|---|---|
+| Everything | http://localhost:8080/data-health |
+| The walkthrough's two broken syslog lines (runs of 2026-11-02) | http://localhost:8080/data-health?from=2026-11-02T00:00&to=2026-11-03T00:00 |
+| The SensiPro rejects (38) and CICFlowMeter (2), stored 2026-10-21 | http://localhost:8080/data-health?from=2026-10-21T00:00&to=2026-10-22T00:00 |
+| The EOA meter rejects (97), stored 2026-10-14 | http://localhost:8080/data-health?from=2026-10-14T00:00&to=2026-10-15T00:00 |
+| An empty range (shows the empty message) | http://localhost:8080/data-health?from=2026-09-01T00:00&to=2026-09-02T00:00 |
+
+## OT overview and meter pages
+
+| What | URL |
+|---|---|
+| The whole period, all sensors | http://localhost:8080/overview/ot?start=2023-06-30&end=2023-07-21 |
+| One week | http://localhost:8080/overview/ot?start=2023-07-01&end=2023-07-07 |
+| One day (hourly bars) | http://localhost:8080/overview/ot?start=2023-07-17&end=2023-07-17 |
+| One sensor, whole period | http://localhost:8080/overview/ot?start=2023-06-30&end=2023-07-21&meter=bw791 |
+| Another sensor, last week | http://localhost:8080/overview/ot?start=2023-07-15&end=2023-07-21&meter=bw732 |
+| The window that contains the rejected SensiPro rows | http://localhost:8080/overview/ot?start=2023-07-17&end=2023-07-21 |
+| A meter's own page | http://localhost:8080/overview/ot/meter/bw791?start=2023-06-30&end=2023-07-21 |
+| Another meter, one week | http://localhost:8080/overview/ot/meter/e1e5e3?start=2023-07-08&end=2023-07-14 |
+
+**Expected:** the Sensor filter is searchable. Click it, type `bw7`, and the list narrows to
+the matching meters. Sensors with the most detections, to try: `bw791`, `bw80b1`, `e1e5e3`,
+`hm142`, `bw732`.
+
+## IT overview
+
+| What | URL |
+|---|---|
+| CICFlowMeter flows (98 flows, 8 detections) | http://localhost:8080/overview/it?start=2023-06-20&end=2023-07-22 |
+| The walkthrough's Zeek flows | http://localhost:8080/overview/it?start=2026-07-30&end=2026-08-03 |

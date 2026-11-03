@@ -230,13 +230,25 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         response: Response,
         session: SessionDep,
         account: AccountDep,
+        start: TimeParam = None,
+        end: TimeParam = None,
         run_id: UUID | None = None,
         limit: LimitParam = 1000,
         offset: OffsetParam = 0,
     ) -> list[MalformedRecord]:
-        """The audit view: inputs that failed normalization (never dropped)."""
+        """The audit view: inputs that failed normalization (never dropped).
+
+        `start`/`end` bound `created_at` — when the record was ingested — HALF-OPEN: a
+        malformed line has no timestamp of its own, since that is what failed to parse.
+        """
         return _paged(response, repository.list_malformed)(
-            session, org_id=account.org_id, run_id=run_id, limit=limit, offset=offset
+            session,
+            org_id=account.org_id,
+            start=start,
+            end=end,
+            run_id=run_id,
+            limit=limit,
+            offset=offset,
         )
 
     @app.get("/summary")

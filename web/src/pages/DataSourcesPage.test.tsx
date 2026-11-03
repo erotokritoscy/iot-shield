@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConnectionInfo, DataSourceInfo, MeResponse } from "@/lib/api/types";
 import * as seed from "@/test/fixtures";
-import { PIPELINE, server } from "@/test/msw";
+import { captured, PIPELINE, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
 const CAMERAS: DataSourceInfo = {
@@ -116,7 +116,7 @@ function connections(): void {
     http.post(`${PIPELINE}/data-sources/:id/pull`, async ({ request }) => {
       sent.pulls.push(await request.json());
       return HttpResponse.json({
-        content: PULLED_CSV,
+        sample: PULLED_CSV,
         normalizer: "meter",
         source_format: "sensipro-hourly-csv",
         rows: 2,
@@ -323,17 +323,31 @@ describe("Data sources page", () => {
   });
 });
 
+/** Open Compose and choose how source 1's data arrives. */
+async function composeWith(mode: "pull" | "sample" | "upload" | "paste"): Promise<void> {
+  renderApp("/compose");
+  await userEvent.click(await screen.findByTestId(`src_0_mode_${mode}`));
+}
+
+/** Pull 2023-07-01..`end` from the SensiPro source, on a card already set to pull. */
+async function pullMeters(end = "2023-07-02"): Promise<void> {
+  await userEvent.selectOptions(await screen.findByTestId("src_0_source"), METERS.source_id);
+  await userEvent.type(await screen.findByTestId("src_0_pull_start"), "2023-07-01");
+  await userEvent.type(screen.getByTestId("src_0_pull_end"), end);
+  await userEvent.click(screen.getByTestId("src_0_pull_go"));
+}
+
 describe("Compose — picking a data source", () => {
   it("fills in the source's normalizer and format, and says which it is", async () => {
     register([CAMERAS, BIOLOGY]);
-    renderApp("/compose");
+    await composeWith("paste");
     const picker = await screen.findByTestId("src_0_source");
     expect(screen.getByTestId("src_0_norm")).toHaveValue("stub");
 
     await userEvent.selectOptions(picker, CAMERAS.source_id);
     expect(screen.getByTestId("src_0_norm")).toHaveValue("flow");
     expect(screen.getByTestId("src_0_fmt")).toHaveValue("zeek-conn");
-    expect(screen.getByText("IT · read by flow (zeek-conn).")).toBeInTheDocument();
+    expect(screen.getByText("IT · read by flow (zeek-conn)")).toBeInTheDocument();
 
     // Choosing another reader by hand detaches it from the data source.
     await userEvent.selectOptions(screen.getByTestId("src_0_norm"), "syslog");
@@ -342,7 +356,7 @@ describe("Compose — picking a data source", () => {
 
   it("leaves the reader alone for a source that names none", async () => {
     register([BIOLOGY]);
-    renderApp("/compose");
+    await composeWith("upload");
     await userEvent.selectOptions(await screen.findByTestId("src_0_source"), BIOLOGY.source_id);
     expect(screen.getByTestId("src_0_norm")).toHaveValue("stub");
     expect(screen.getByText("OT · no normalizer set for it — choose one below.")).toBeInTheDocument();
@@ -351,9 +365,11 @@ describe("Compose — picking a data source", () => {
   it("pulls a date range from a connected source into the card, narrowed to chosen meters", async () => {
     register([METERS]);
     connections();
-    renderApp("/compose");
+    await composeWith("pull");
     await userEvent.selectOptions(await screen.findByTestId("src_0_source"), METERS.source_id);
-    expect(screen.getByTestId("src_0_norm")).toHaveValue("meter");
+    // A pull brings the connector's reader: stated, not offered.
+    expect(screen.queryByTestId("src_0_norm")).not.toBeInTheDocument();
+    expect(screen.getByTestId("src_0_reader")).toHaveTextContent("Read by meter (sensipro-hourly-csv)");
 
     const panel = await screen.findByTestId("src_0_pull");
     expect(within(panel).getByText("sensipro")).toBeInTheDocument();
@@ -377,11 +393,67 @@ describe("Compose — picking a data source", () => {
         },
       ]),
     );
-    expect(await screen.findByText("Pulled 2 rows into this source.")).toBeInTheDocument();
-    // Filled like an uploaded file: content, its origin, and the connector's reader.
+    expect(await screen.findByText(/2 rows in this window\. The run reads them from/)).toBeInTheDocument();
+    // The sample is shown and checked like a file, in the connector's reader and format.
     expect(screen.getByTestId("src_0_tab")).toHaveTextContent("SensiPro meters 2023-07-01..2023-07-02");
     expect(screen.getByTestId("src_0_preview")).toHaveTextContent("w1,2023-07-01 00:00:00,100.0,m3");
-    expect(screen.getByTestId("src_0_fmt")).toHaveValue("sensipro-hourly-csv");
+    expect(screen.getByTestId("src_0_pulled")).toHaveTextContent(
+      "2 rows of SensiPro meters 2023-07-01..2023-07-02, read from the database when the run starts.",
+    );
+  });
+
+  it("lists only connected sources to pull from", async () => {
+    register([CAMERAS, METERS]);
+    connections();
+    await composeWith("pull");
+    const options = within(await screen.findByTestId("src_0_source"))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(options).toEqual(["— none —", "OT · SensiPro meters"]);
+  });
+
+  it("sends the run the pull to read, never the rows (ADR-0047)", async () => {
+    // The point of the change: the browser holds a sample, the server reads the window. A run
+    // that posted `content` would look identical on screen and be capped again.
+    register([METERS]);
+    connections();
+    await composeWith("pull");
+    await pullMeters();
+    await screen.findByTestId("src_0_pulled");
+
+    await userEvent.click(screen.getByTestId("step_4"));
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+    await screen.findByText("Run complete.");
+    const body = captured.runBody as { inputs: unknown[] };
+    expect(body.inputs).toEqual([
+      {
+        pull: {
+          source_id: METERS.source_id,
+          start: "2023-07-01",
+          end: "2023-07-02",
+          params: {},
+        },
+        origin: "SensiPro meters 2023-07-01..2023-07-02",
+      },
+    ]);
+  });
+
+  it("drops the pull when the source switches to an upload", async () => {
+    register([METERS]);
+    connections();
+    await composeWith("pull");
+    await pullMeters();
+    await screen.findByTestId("src_0_pulled");
+    await userEvent.click(screen.getByTestId("src_0_mode_upload"));
+    // Kept behind the upload's fields, the pull would still have been sent with the run.
+    expect(screen.queryByTestId("src_0_pulled")).not.toBeInTheDocument();
+    expect(screen.getByText(/Source 1 needs content/)).toBeInTheDocument();
+    await userEvent.upload(
+      screen.getByTestId("src_0_file"),
+      new File([PULLED_CSV], "mine.csv", { type: "text/csv" }),
+    );
+    expect(await screen.findByText(/lines loaded from/)).toHaveTextContent("mine.csv");
   });
 
   it("shows why a pull was refused", async () => {
@@ -391,33 +463,31 @@ describe("Compose — picking a data source", () => {
       http.post(`${PIPELINE}/data-sources/:id/pull`, () =>
         HttpResponse.json(
           {
-            detail: "more than 100,000 rows in this window; pick fewer days or devices",
+            detail: "365 days asked for; one pull covers at most 92",
           },
           { status: 422 },
         ),
       ),
     );
-    renderApp("/compose");
-    await userEvent.selectOptions(await screen.findByTestId("src_0_source"), METERS.source_id);
-    await userEvent.type(await screen.findByTestId("src_0_pull_start"), "2023-07-01");
-    await userEvent.type(screen.getByTestId("src_0_pull_end"), "2023-07-31");
-    await userEvent.click(screen.getByTestId("src_0_pull_go"));
-    expect(await screen.findByText(/more than 100,000 rows/)).toBeInTheDocument();
-    expect(screen.getByTestId("src_0_text")).toHaveValue("");
+    await composeWith("pull");
+    await pullMeters("2023-07-31");
+    expect(await screen.findByText(/one pull covers at most 92/)).toBeInTheDocument();
+    expect(screen.queryByTestId("src_0_pulled")).not.toBeInTheDocument();
   });
 
-  it("offers no pull for a source without a connection", async () => {
+  it("offers no pull while no data source has a connection", async () => {
     register([CAMERAS]);
     connections();
     renderApp("/compose");
-    await userEvent.selectOptions(await screen.findByTestId("src_0_source"), CAMERAS.source_id);
-    expect(screen.queryByTestId("src_0_pull")).not.toBeInTheDocument();
+    await screen.findByTestId("src_0_mode_upload");
+    expect(screen.queryByTestId("src_0_mode_pull")).not.toBeInTheDocument();
   });
 
-  it("shows no picker while the organization has no data sources", async () => {
+  it("shows no data-source picker while the organization has no data sources", async () => {
     register([]);
-    renderApp("/compose");
+    await composeWith("paste");
     await screen.findByTestId("src_0_text");
     expect(screen.queryByTestId("src_0_source")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("src_0_mode_pull")).not.toBeInTheDocument();
   });
 });

@@ -10,11 +10,12 @@
  * No polling and no websockets (H5): a query refetches when a page mounts or a mutation
  * invalidates it, exactly as a Streamlit rerun re-read the API.
  */
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { dataSourcesApi, pipelineApi, readApi, type DayRange } from "./api/client";
 import { isPlaneAbsent, isUnreachable } from "./api/http";
 import type { Lane } from "./api/types";
+import { rangeQuery, type TimeRange } from "./timeRange";
 
 /**
  * The one thing a manual refresh must never touch.
@@ -26,16 +27,19 @@ import type { Lane } from "./api/types";
 export const isBenchmarkResult = (key: readonly unknown[]): boolean =>
   key[0] === "pipeline" && key[1] === "eval" && key[2] === "run";
 
+const OPEN: TimeRange = { from: null, to: null };
+
 export const keys = {
   readHealth: ["read", "health"] as const,
   summary: ["read", "summary"] as const,
   assets: ["read", "assets"] as const,
-  alerts: ["read", "alerts"] as const,
-  events: (assetId: string, lane?: Lane) => ["read", "events", assetId, lane ?? "all"] as const,
-  detections: (assetId: string, lane?: Lane) =>
-    ["read", "detections", assetId, lane ?? "all"] as const,
+  alerts: (range: TimeRange = OPEN) => ["read", "alerts", range.from, range.to] as const,
+  events: (assetId: string, lane?: Lane, range: TimeRange = OPEN) =>
+    ["read", "events", assetId, lane ?? "all", range.from, range.to] as const,
+  detections: (assetId: string, lane?: Lane, range: TimeRange = OPEN) =>
+    ["read", "detections", assetId, lane ?? "all", range.from, range.to] as const,
   alertDetections: (alertId: string) => ["read", "alert-detections", alertId] as const,
-  malformed: ["read", "malformed"] as const,
+  malformed: (range: TimeRange = OPEN) => ["read", "malformed", range.from, range.to] as const,
   /** One run's rows of one list (ADR-0045); under "read" so Refresh data re-reads them. */
   run: (runId: string, list: RunList) => ["read", "run", runId, list] as const,
   itOverview: (range: DayRange, bucket: string) => ["read", "overview", "it", range.start, range.end, bucket] as const,
@@ -67,23 +71,60 @@ export const keys = {
 export const useReadHealth = () => useQuery({ queryKey: keys.readHealth, queryFn: () => readApi.health() });
 export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: () => readApi.summary() });
 export const useAssets = () => useQuery({ queryKey: keys.assets, queryFn: () => readApi.assets() });
-export const useAlerts = () => useQuery({ queryKey: keys.alerts, queryFn: () => readApi.alerts() });
-export const useMalformed = () =>
-  useQuery({ queryKey: keys.malformed, queryFn: () => readApi.malformed() });
-
-export const useEvents = (assetId: string | undefined, lane?: Lane) =>
+/**
+ * The ranked queue — all of it, or one run's alerts (ADR-0045). The run filter is asked of
+ * the server rather than applied here: an alert carries no `run_id` (a run is a storage fact,
+ * not a contract field), and filtering the capped page would silently miss a run's alerts
+ * ranked below the cap. A run's key is the Run page's, so the two share one cache entry.
+ * Previous data is kept while a new run loads, so the filter row does not blink away.
+ */
+export const useAlerts = (runId?: string | null, range: TimeRange = OPEN) =>
   useQuery({
-    queryKey: keys.events(assetId ?? "", lane),
-    queryFn: () => readApi.events({ ...(assetId ? { assetId } : {}), ...(lane ? { lane } : {}) }),
-    enabled: Boolean(assetId),
+    // A run with an open range shares the Run page's cache entry; a ranged one is its own.
+    queryKey:
+      runId && range.from === null && range.to === null
+        ? keys.run(runId, "alerts")
+        : [...keys.alerts(range), runId ?? "all"],
+    queryFn: () => readApi.alerts({ ...(runId ? { runId } : {}), ...rangeQuery(range) }),
+    placeholderData: keepPreviousData,
+  });
+/**
+ * The time range (`lib/timeRange.ts`) is asked of the server on every list below, never
+ * applied to the fetched page: each list is capped, so filtering the page would silently
+ * miss rows beyond the cap. Previous data is kept while a new range loads, so the filter
+ * row does not blink away under the cursor.
+ */
+export const useMalformed = (range: TimeRange = OPEN) =>
+  useQuery({
+    queryKey: keys.malformed(range),
+    queryFn: () => readApi.malformed(rangeQuery(range)),
+    placeholderData: keepPreviousData,
   });
 
-export const useDetections = (assetId: string | undefined, lane?: Lane) =>
+export const useEvents = (assetId: string | undefined, lane?: Lane, range: TimeRange = OPEN) =>
   useQuery({
-    queryKey: keys.detections(assetId ?? "", lane),
+    queryKey: keys.events(assetId ?? "", lane, range),
     queryFn: () =>
-      readApi.detections({ ...(assetId ? { assetId } : {}), ...(lane ? { lane } : {}) }),
+      readApi.events({
+        ...(assetId ? { assetId } : {}),
+        ...(lane ? { lane } : {}),
+        ...rangeQuery(range),
+      }),
     enabled: Boolean(assetId),
+    placeholderData: keepPreviousData,
+  });
+
+export const useDetections = (assetId: string | undefined, lane?: Lane, range: TimeRange = OPEN) =>
+  useQuery({
+    queryKey: keys.detections(assetId ?? "", lane, range),
+    queryFn: () =>
+      readApi.detections({
+        ...(assetId ? { assetId } : {}),
+        ...(lane ? { lane } : {}),
+        ...rangeQuery(range),
+      }),
+    enabled: Boolean(assetId),
+    placeholderData: keepPreviousData,
   });
 
 export type RunList = "events" | "malformed" | "detections" | "alerts";
