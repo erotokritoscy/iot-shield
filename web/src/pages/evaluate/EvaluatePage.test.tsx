@@ -66,7 +66,7 @@ describe("claims the page is entitled to make", () => {
     ).not.toBeInTheDocument();
 
     // Drift the controls: now the two differ, and both are named for what they are.
-    await userEvent.click(screen.getByRole("radio", { name: /prefix/ }));
+    await userEvent.click(screen.getByRole("radio", { name: "prefix" }));
     expect(
       await screen.findByRole("button", { name: /Spec that produced the report below/ }),
     ).toBeInTheDocument();
@@ -194,8 +194,8 @@ describe("corpora (E2, E3)", () => {
   it("captions the corpus, offers both fit protocols and no holdout", async () => {
     await openEvaluate();
     expect(await screen.findByText(/11 case\(s\) ·/)).toBeInTheDocument();
-    const protocols = screen.getAllByRole("radio").filter((input) => ["none", "prefix"].includes((input as HTMLInputElement).value));
-    expect(protocols.map((input) => (input as HTMLInputElement).value)).toEqual(["none", "prefix"]);
+    const protocols = screen.getAllByRole("radio").filter((input) => ["none", "prefix", "clean-prefix"].includes((input as HTMLInputElement).value));
+    expect(protocols.map((input) => (input as HTMLInputElement).value)).toEqual(["none", "prefix", "clean-prefix"]);
     expect(screen.getByText(/Judge with each detector exactly as configured/)).toBeInTheDocument();
   });
 

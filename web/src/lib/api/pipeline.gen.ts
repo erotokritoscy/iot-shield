@@ -1104,7 +1104,7 @@ export interface components {
          * FitProtocol
          * @enum {string}
          */
-        FitProtocol: "none" | "prefix";
+        FitProtocol: "none" | "prefix" | "clean-prefix";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */

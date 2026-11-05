@@ -73,6 +73,7 @@ uv run python -m iotshield.eval list                 # what corpora exist here
 uv run python -m iotshield.eval generate             # (re)build every committed corpus
 uv run python -m iotshield.eval generate fleet_scan  # ...or just one
 uv run python -m iotshield.eval fetch skab           # convert SKAB into local bundles
+uv run python -m iotshield.eval fetch lead --source <dir with train.csv>  # real labels (ADR-0048)
 # Is the flow detector's hand-chosen threshold defensible? (ADR-0026)
 uv run python -m iotshield.eval --corpus fleet_scan --spec config/bench/flow.yaml \
     --sweep threshold=8,15,20,27,35
@@ -109,6 +110,13 @@ answer is "in precision, not in sensitivity": the forest scores evF1 0.23 (P 0.1
 79 detections), the z-score evF1 0.16 (P 0.09 / R **1.00**, 319 detections). The general
 detector finds every incident and speaks four times as often to do it. Both are modest, which
 is the other half of the finding — hourly metering at these operating points is a hard lane.
+
+**LEAD is the check on all of the above (ADR-0048).** 200 real buildings, human labels, run with
+`--fit-protocol clean-prefix` because `prefix` can fit only 46 of them, and an upper bound for that
+reason. There the general z-score leads (evF1 0.17; `meter_lof` 0.15, `meter_baseline` with
+`floor_percentile: 0` 0.13, `meter_iforest` 0.11), every fitted arm spends about **seven times** its
+budget of one alarm per meter-month, and `fused` ranks a true alert first 35% of the time against
+`weighted`'s 77% from the same detections. The overspend is the largest open problem for metering.
 
 Corpora are **bundles** under `data/eval/` — a manifest, gzipped readings in a real ingest
 format, and **per-asset** interval labels. They are *discovered*, not registered: anything under
@@ -296,6 +304,21 @@ for (ADR-0034), so pointing it at any other device is a skip, not a judgment. Bo
 *reported* rather than silent: `why_silent` (ADR-0033 D3) distinguishes "no model for this
 asset" from "model present, channels not covered". Compare detectors on `synthetic` with
 `stub_threshold`, on SKAB with `team3_zscore`.
+
+**The rest of meterdetect (ADR-0048).** `meter_baseline` is written checks with no fit (stuck,
+z-score, profile; the household leak rule is off because it fired 30,782 times on WBN's mains, and
+`floor_percentile: 0` is for a meter that never idles). `meter_lof` shares `PerMeterDetector` with the
+forest, with its threshold read from `negative_outlier_factor_` because a training row passed back in
+counts itself as a neighbour. `fused` is upstream's noisy-OR, registered to be measured and **not**
+the default. `convert/` turns WBN's workbooks (`uv sync --extra wbn`, `python -m
+iotshield.convert.wbn`) and LEAD's per-hour readings into `sensipro-hourly-csv` running counters. A
+counter cannot express the reading after a gap of **exactly one hour** without inventing a zero for
+the missing hour, so `representable` drops it and the caller counts it.
+
+**A real meter's fit lives on a shelf (ADR-0048 D3).** A run never fits and a fit holds readings, so
+`python -m iotshield.detect.meter.train --name <fleet> --source <csv> --source-format <dialect>`
+writes to `IOTSHIELD_METER_MODELS_PATH` (`config/meter-models`, gitignored). Ids resolve by membership
+of the listing, never as paths (ADR-0037's stance), and a re-fit needs no restart.
 
 **A baseline describes one device (ADR-0034).** team3's rolling/lag/FFT features read the
 previous row, so they only mean anything inside one asset's contiguous history — `fit`
@@ -577,7 +600,8 @@ on a chain `compute_run` refuses.
 D1), carried as that param's `choices` rather than as a field of its own — the ids are a
 closed vocabulary the registry knows and the annotation cannot express, so they go
 through the same door as presets and lanes and every form that renders one renders these.
-The product ships exactly two (`skab_zscore`, `demo_meter`); before this they existed nowhere
+The product ships three (`skab_zscore`, and a `demo_meter` each for the forest and LOF), and a
+deployment adds its own on the meter shelf; before this they existed nowhere
 a client could read, so the Evaluate page's artifact box was free text over a vocabulary
 nobody published, and it carried a hardcoded table naming one of the two. That field is the
 **one channel for a vocabulary that is found rather than declared**, and it holds callables
@@ -630,12 +654,14 @@ src/iotshield/
   enrichment.py    THREAT vocabulary: the typed Enrichment that crosses detect->alert (ADR-0032)
   normalize/    Normalizer port + adapters (stub, syslog, flow+dialects, meter+dialects=EOA/SensiPro cumulative counters -> hourly consumption, passthrough=validate-and-envelope pre-normalized JSONL, ...); a run routes each of its sources here by format (ADR-0019)
   detect/       Detector port + adapters (stub threshold, telemetry-ad, log burst, flow burst, meter iforest, rules,
-                meter_quality = SensiPro's heartbeat/high data-quality checks, ADR-0043, ...)
+                meter_quality = SensiPro's heartbeat/high data-quality checks, ADR-0043,
+                meter_baseline = stuck/z-score/profile with no fit, meter/lof.py = LOF, ADR-0048, ...)
                 rules/ = authored YAML signatures: fields.py (the checked field vocabulary),
                 model.py (the rule language), loader.py, library/ (the packaged rule set)
-  alert/        scoring/correlation port + adapters (stub, weighted, ...)
+  alert/        scoring/correlation port + adapters (stub, weighted, fused = upstream's noisy-OR, off by default, ...)
   sink/         ResultSink port + adapters (postgres default, file/JSONL, ...) — pluggable output;
                 a run arrives in parts: open(header) -> add(batch)... -> finish(totals) | abort (ADR-0047)
+  convert/      a source's own files -> text a normalizer reads: per-hour rates as counters, WBN workbooks (ADR-0048)
   connect/      connectors (ADR-0042): stream a window of a source's own DB (SensiPro Postgres, Biology
                 MySQL) as text a normalizer reads, chunk by chunk (ADR-0047); connections.py = the DBs
                 declared in config/connections.yaml (by name, read-only sessions, passwords from env)
@@ -666,6 +692,7 @@ tests/          mirrors src; port contract tests are parametrized over all adapt
 docs/adr/       architecture decision records (numbered, append-only)
 config/         pipeline configs (which adapters run); config/bench/ = benchmark specs
 config/connections.yaml  the source databases a data source may pull from (ADR-0042); passwords in .env
+config/meter-models/  the meter model shelf: deployment fits, one subdirectory per detector, gitignored (ADR-0048)
 config/rules/   the rule shelf: one subdirectory per DEPLOYMENT-authored rule set, named by `ruleset:` (ADR-0037)
 data/demo/      the walkthrough's inputs, GENERATED by scripts/make_demo_data.py (keep tiny; big datasets stay in ../reference/)
 data/samples/   the Compose wizard's sample library + scenarios (manifest.json), GENERATED by

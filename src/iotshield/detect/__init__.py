@@ -9,7 +9,8 @@ Forest over hour-of-week features, vendored from Panayiotis's meterdetect — AD
 and the first scikit-learn model in the runtime); RuleDetector (named authored signatures
 over single events, YAML rules ported from Antonia's alert-correlation project — ADR-0032,
 and the first detector extensible without writing Python); MeterQualityDetector (SensiPro's
-heartbeat and high meter data-quality anomalies, as written rules — ADR-0043).
+heartbeat and high meter data-quality anomalies, as written rules — ADR-0043);
+MeterBaselineDetector and MeterLofDetector (the rest of Panayiotis's detectors — ADR-0048).
 
 Every adapter above answers "is this unusual?" except the last, which answers "is this a
 known-bad thing?" — the two families fail in opposite directions and are complements, not
@@ -23,6 +24,8 @@ from iotshield.detect._runs import merge_runs
 from iotshield.detect.flow_burst import FlowBurstDetector
 from iotshield.detect.log_burst import LogBurstDetector
 from iotshield.detect.meter import MeterIForestDetector
+from iotshield.detect.meter.lof import MeterLofDetector
+from iotshield.detect.meter_baseline import MeterBaselineDetector
 from iotshield.detect.meter_quality import MeterQualityDetector
 from iotshield.detect.port import Detector, Fittable
 from iotshield.detect.rules import RuleDetector
@@ -34,7 +37,9 @@ __all__ = [
     "Fittable",
     "FlowBurstDetector",
     "LogBurstDetector",
+    "MeterBaselineDetector",
     "MeterIForestDetector",
+    "MeterLofDetector",
     "MeterQualityDetector",
     "RuleDetector",
     "StubThresholdDetector",

@@ -49,7 +49,7 @@ Two optional capabilities exist, both opt-in, both checked with `isinstance`:
 Not implementing either is not a defect. `log_burst` implements neither and is a first-class
 detector.
 
-## The six that ship
+## The nine that ship
 
 | Registry name | Lane | Payload | `method` | Learns? | Knobs |
 |---|---|---|---|---|---|
@@ -59,6 +59,14 @@ detector.
 | `flow_burst` | flow | `flow` | `flow_burst:<preset>` | no | `preset`, `window_minutes`, `threshold` |
 | `meter_iforest` | telemetry | `meter` | `meter_iforest` | yes | 7 + `artifact` |
 | `rules` | any (config) | follows lane | `rules:<lane>` | no | `lane`, `ruleset`, `merge_gap_minutes` |
+| `meter_quality` | telemetry | `meter` | `meter_quality` | no | `high_kwh`, `high_m3`, `max_silence_hours` |
+| `meter_baseline` | telemetry | `meter` | `meter_baseline` | no | 8, including `floor_percentile` and `leak_m3` |
+| `meter_lof` | telemetry | `meter` | `meter_lof` | yes | 6 + `artifact` |
+
+`meter_baseline` is the only anomaly judgment a meter gets without a fit. Its noise floor assumes a
+meter that idles, so on a building with a constant load set `floor_percentile: 0` or it will barely
+speak. `meter_lof` and `meter_iforest` need one fit per meter: see
+[fitting a real fleet](#fitting-a-real-fleet) and ADR-0048 for what each measured on real labels.
 
 Try them. Two of the six run on the product path, in the demo walkthrough:
 
@@ -87,6 +95,8 @@ committed bench spec instead, run through `uv run python -m iotshield.eval`:
 | `log_burst`, beside the other two | `--corpus device_trimodal --spec config/bench/trimodal_all.yaml` |
 | `meter_iforest` | `--corpus meter_fleet --fit-protocol prefix --spec config/bench/meter.yaml` |
 | `team3_zscore` | `--corpus skab_valve1 --fit-protocol prefix --spec config/bench/team3_scratch.yaml` |
+| `meter_baseline` | `--corpus meter_fleet --spec config/bench/meter_baseline.yaml` |
+| `meter_lof` | `--corpus meter_fleet --fit-protocol prefix --spec config/bench/meter_lof.yaml` |
 
 The SKAB corpora are GPLv3 and therefore not committed: `eval fetch skab` converts a local
 checkout, and an absent corpus is a skip rather than a failure. `docs/guide/evaluation.md`
@@ -94,7 +104,7 @@ reads the tables these print.
 
 ## Two families, and why both
 
-Five of the six answer *is this unusual?* One of them, `rules`, answers *is this a
+Most of them answer *is this unusual?* One of them, `rules`, answers *is this a
 known-bad thing?*
 
 They fail in opposite directions. Statistics catch what nobody anticipated but cannot say
@@ -106,6 +116,24 @@ The clearest single example is in `library/ssh-possible-break-in.yml`: sshd logs
 break-in warning at INFO severity, once. Unusual-severity is blind to it and unusual-rate is
 blind to it. Only a signature written by someone who knew the line mattered will ever catch
 it.
+
+
+## Fitting a real fleet
+
+A run never fits, and a fit stores the readings it learned from, so it cannot ship in the package.
+A deployment makes its own and files it on the shelf (`IOTSHIELD_METER_MODELS_PATH`, by default
+`config/meter-models`, gitignored):
+
+```
+uv run python -m iotshield.detect.meter.train --name wbn-2025 --preset wbn_fs \
+    --source wbn.csv --source-format sensipro-hourly-csv --until 2025-04-01
+```
+
+The name then appears in the detector's `artifact` param and the dashboard's dropdown, with no
+restart. `--detector meter_lof` fits LOF instead. `--until` keeps a fit out of the period it will
+judge, and nothing checks that the history was clean, so a fault inside it is learned as normal.
+Expect more alarms than the budget: on LEAD and WBN a fit on the first months overspent it about
+sevenfold, and re-fitting periodically is the likely remedy (ADR-0048).
 
 ## The shared skeleton
 

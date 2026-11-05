@@ -20,11 +20,14 @@ from iotshield.detect import (
     Fittable,
     FlowBurstDetector,
     LogBurstDetector,
+    MeterBaselineDetector,
+    MeterLofDetector,
     MeterQualityDetector,
     RuleDetector,
     StubThresholdDetector,
 )
 from iotshield.detect._fitted import NotFitted, is_fitted
+from iotshield.detect.meter.params import LofParams
 from iotshield.flow import METADATA_KEY, Direction, FlowRecord
 from iotshield.pipeline.registry import DETECTORS, build_detector
 from tests import meter_fixtures
@@ -213,6 +216,32 @@ CASES = [
             registry_name="meter_quality",
         ),
         id="meter-quality",
+    ),
+    pytest.param(
+        DetectorCase(
+            # A meter that reads zero for a day in hours its own profile says are active. Written
+            # checks over the events judged: nothing is fitted, so no ADR-0022 law applies.
+            make=MeterBaselineDetector,
+            triggering_events=meter_fixtures.stuck_events(),
+            registry_name="meter_baseline",
+        ),
+        id="meter-baseline",
+    ),
+    pytest.param(
+        DetectorCase(
+            make=lambda: MeterLofDetector(
+                LofParams.model_validate(meter_fixtures.LOF_FIXTURE_PARAMS)
+            ).fit(meter_fixtures.clean_events()),
+            triggering_events=meter_fixtures.leaking_events(),
+            fit_events=meter_fixtures.clean_events(),
+            # n_neighbors changes the fitted density estimate without changing the feature schema.
+            distinguishing_params=(
+                {**meter_fixtures.LOF_FIXTURE_PARAMS, "n_neighbors": 5},
+                {**meter_fixtures.LOF_FIXTURE_PARAMS, "n_neighbors": 100},
+            ),
+            registry_name="meter_lof",
+        ),
+        id="meter-lof",
     ),
     pytest.param(
         DetectorCase(

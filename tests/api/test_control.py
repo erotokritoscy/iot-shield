@@ -74,7 +74,7 @@ class TestHealthAndModules:
         normalizers = {n["name"]: n for n in body["normalizers"]}
         assert "format:syslog" in normalizers["syslog"]["consumes"]
         assert normalizers["syslog"]["formats"] == ["syslog"]  # decoded server-side
-        assert {e["name"] for e in body["alert_engines"]} == {"stub", "weighted"}
+        assert {e["name"] for e in body["alert_engines"]} == {"stub", "weighted", "fused"}
         sinks = {s["name"]: s for s in body["sinks"]}
         assert set(sinks) == {"postgres", "file"}
         assert sinks["postgres"]["params"] == []  # the injected 'resources' is not a param

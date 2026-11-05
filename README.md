@@ -100,6 +100,11 @@ What it keys on is the residual against the hour of the week, so the case it cat
 consumption that is unremarkable for an evening and extraordinary at 3am — the case a fixed
 magnitude threshold cannot express, because there is no single number that is both.
 
+**Real labels are worth more than our own.** On LEAD, 200 buildings with anomalies marked by people,
+a general z-score (evF1 0.17) beats the purpose-built forest (0.11), every fitted detector overspends
+its alarm budget about sevenfold, and upstream's fusion ranks a true alert first half as often as
+our engine does. ADR-0048 has the numbers, and what they mean for metering.
+
 **A purpose-built detector is worth measuring against a general one.** On the metering corpus,
 the isolation forest and a general-purpose z-score fitted per meter from the same reserved
 prefixes:
@@ -202,7 +207,7 @@ admin as the only way to create an organization.
 Data is added from the dashboard: **Operate → Compose & run** is a four-step wizard (data,
 detection, alerts & output, review & run). The quickest test is a **scenario** on its first step —
 compromised camera, port scan, SSH brute force, overheating pump, a quiet control that must find
-nothing, and broken input — which fills every step with sample data and the right detectors; Review
+nothing, broken input, and a stuck water meter — which fills every step with sample data and the right detectors; Review
 shows what it is tested to produce. Or pick a sample file per source, or upload your own. Results
 appear under **Monitor → Triage**. The samples live in `data/samples/` (and are served to the
 dashboard from `web/public/samples/`); `uv run python scripts/make_sample_data.py` rebuilds them.

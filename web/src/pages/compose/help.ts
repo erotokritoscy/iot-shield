@@ -61,8 +61,14 @@ export const ADAPTER_HELP: Readonly<Record<string, string>> = {
   "detector:meter_iforest": "meter_iforest flags unusual hourly consumption on a utility meter (needs meter data).",
   "detector:meter_quality":
     "meter_quality flags SensiPro's meter data-quality anomalies: a meter that stopped reporting (heartbeat) and an hour over a fixed limit (high). Needs meter data. Zero, negative, backwards and unreadable counters are refused earlier, at ingest, and listed on Data health.",
+  "detector:meter_baseline":
+    "meter_baseline runs written checks on a meter's own recent history, with no training: a meter stuck at zero in hours it is normally active, a level far from recent normal, and use at an unusual time. Needs meter data.",
+  "detector:meter_lof":
+    "meter_lof flags hours in a sparser neighbourhood than their neighbours, on the same features as meter_iforest. Needs a fit per meter.",
   "detector:rules": "rules matches authored signatures of known-bad behaviour — one match is enough, no rate needed.",
   "alert_engine:stub": "stub gives every alert a simple template score — the reference engine.",
+  "alert_engine:fused":
+    "fused scores each alert by how good its detectors are at the shape of anomaly they claimed, and raises the score when they agree. An experiment: its weights come from synthetic data and it ignores device criticality.",
   "alert_engine:weighted":
     "weighted multiplies explained factors: how far the strongest detection crossed its line, cross-lane agreement, how many detections, and the device's criticality.",
   "sink:postgres": "postgres: the database the Monitor pages read.",
@@ -101,6 +107,26 @@ const PARAM_HELP: Readonly<Record<string, string>> = {
     "Matches of the same rule on the same device closer together than this merge into one detection.",
   "alert_engine:stub.bucket_minutes":
     "Detections on the same device within this many minutes are grouped into one alert. Larger means fewer, bigger alerts.",
+  "alert_engine:fused.bucket_minutes":
+    "Detections on the same device within this many minutes are grouped into one alert. Larger means fewer, bigger alerts.",
+  "alert_engine:fused.other_weight":
+    "How much a detection counts when no competence has been measured for it, from 0 up to but not including 1. A chosen number, not a measured one.",
+  "detector:meter_baseline.z_threshold":
+    "How far from recent normal an hour must be, in robust standard deviations, to be flagged. Higher means fewer alerts.",
+  "detector:meter_baseline.window_hours":
+    "How many past hours count as recent normal. 168 is a week.",
+  "detector:meter_baseline.profile_k":
+    "How far above this hour of the week's usual use an hour must be to be flagged, on the same scale. Higher means fewer alerts.",
+  "detector:meter_baseline.stuck_min_hours":
+    "Hours of zero in a row, during normally active hours, before a meter counts as stuck.",
+  "detector:meter_baseline.min_history_hours":
+    "Meters with less history than this are skipped and named, because a few days cannot show a normal week.",
+  "detector:meter_baseline.floor_percentile":
+    "The smallest deviation worth reporting, as a percentile of the meter's non-zero readings. 0.95 suits meters that idle. Use 0 for a constant load such as a building, where any percentile sits near the load and hides surges.",
+  "detector:meter_baseline.leak_m3":
+    "Flag flow above this many m³ through both the 02:00 and 03:00 hours as a possible leak. Off when empty. 0.01 is the manufacturer's household rule, and it fires nightly on a district main.",
+  "detector:meter_baseline.leak_timezone":
+    "Which local clock the 02:00 and 03:00 hours of the leak rule are read on.",
   "alert_engine:weighted.bucket_minutes":
     "Detections on the same device within this many minutes are grouped into one alert. Larger means fewer, bigger alerts.",
   "detector:meter_quality.high_kwh":

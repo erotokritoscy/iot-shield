@@ -1,0 +1,16 @@
+# Benchmark spec: LOF on the forest's four features, fitted per meter (ADR-0048 D5). No artifact, so
+# it needs `--fit-protocol prefix`, for the reasons bench/meter.yaml gives.
+
+source_format: sensipro-hourly-csv
+normalizer: meter
+
+detectors:
+  - name: meter_lof
+
+alert_engine:
+  name: weighted
+  params:
+    # An hour, because this lane's events are hourly (see bench/meter.yaml).
+    bucket_minutes: 60
+
+# No `assets:`: asset_weight would be a number we typed in (ADR-0021 D7).

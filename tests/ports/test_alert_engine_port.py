@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
+from iotshield.alert import AlertEngine, FusedAlertEngine, StubAlertEngine, WeightedAlertEngine
 from iotshield.contracts import Asset, Criticality, DetectionResult, Lane
 
 T0 = datetime(2026, 7, 7, 12, 0, 0, tzinfo=UTC)
@@ -56,6 +56,7 @@ class AlertEngineCase:
 CASES = [
     pytest.param(AlertEngineCase(StubAlertEngine, "stub"), id="stub-alert-engine"),
     pytest.param(AlertEngineCase(WeightedAlertEngine, "weighted"), id="weighted-alert-engine"),
+    pytest.param(AlertEngineCase(FusedAlertEngine, "fused"), id="fused-alert-engine"),
 ]
 
 

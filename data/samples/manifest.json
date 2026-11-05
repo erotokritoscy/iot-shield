@@ -80,6 +80,14 @@
       "description": "Six good lines and four malformed ones, to see quarantine at work.",
       "normalizer": "syslog",
       "source_format": "syslog"
+    },
+    {
+      "id": "stuck_meter",
+      "file": "stuck_meter.csv",
+      "title": "Stuck water meter — hourly readings",
+      "description": "Four weeks from one water meter; its counter freezes for 48 hours, then jumps to catch up.",
+      "normalizer": "meter",
+      "source_format": "eoa-meter-csv"
     }
   ],
   "scenarios": [
@@ -283,6 +291,44 @@
         "malformed": 4,
         "detections": 0,
         "alerts": 0
+      }
+    },
+    {
+      "id": "stuck_meter",
+      "title": "Stuck water meter",
+      "description": "A water meter freezes for 48 hours, then jumps to catch up. meter_baseline's written checks flag the freeze and the jump, meter_lof flags both from what it learned of this meter, and meter_iforest stays silent. To compare engines, choose fused in the Alerts step.",
+      "samples": [
+        "stuck_meter"
+      ],
+      "detectors": [
+        {
+          "name": "meter_baseline",
+          "params": {}
+        },
+        {
+          "name": "meter_lof",
+          "params": {
+            "artifact": "demo_meter"
+          }
+        },
+        {
+          "name": "meter_iforest",
+          "params": {
+            "artifact": "demo_meter"
+          }
+        }
+      ],
+      "alert_engine": {
+        "name": "weighted",
+        "params": {
+          "bucket_minutes": 60
+        }
+      },
+      "expected": {
+        "events": 672,
+        "malformed": 0,
+        "detections": 8,
+        "alerts": 8
       }
     }
   ]

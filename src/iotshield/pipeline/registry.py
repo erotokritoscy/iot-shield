@@ -20,6 +20,8 @@ from typing import Any, Generic, Literal, TypeVar
 from pydantic import BaseModel
 
 from iotshield.alert import AlertEngine, StubAlertEngine, WeightedAlertEngine
+from iotshield.alert.fused import CAPABILITY as _FUSED_ALERT_CAPABILITY
+from iotshield.alert.fused import FusedAlertEngine
 from iotshield.alert.stub import CAPABILITY as _STUB_ALERT_CAPABILITY
 from iotshield.alert.weighted import CAPABILITY as _WEIGHTED_ALERT_CAPABILITY
 from iotshield.capabilities import Capability, CapabilityProvider, static
@@ -42,6 +44,12 @@ from iotshield.detect.meter import MeterParams
 from iotshield.detect.meter.artifact import available_artifacts as _meter_artifacts
 from iotshield.detect.meter.artifact import load_artifact as _load_meter_artifact
 from iotshield.detect.meter.detector import CAPABILITY as _METER_CAPABILITY
+from iotshield.detect.meter.lof import MeterLofDetector
+from iotshield.detect.meter.lof import available_lof_artifacts as _lof_artifacts
+from iotshield.detect.meter.lof import load_lof_artifact as _load_lof_artifact
+from iotshield.detect.meter.params import LofParams
+from iotshield.detect.meter_baseline import CAPABILITY as _METER_BASELINE_CAPABILITY
+from iotshield.detect.meter_baseline import MeterBaselineDetector
 from iotshield.detect.meter_quality import CAPABILITY as _METER_QUALITY_CAPABILITY
 from iotshield.detect.meter_quality import MeterQualityDetector
 from iotshield.detect.rules.detector import DEFAULT_LANE as _DEFAULT_RULES_LANE
@@ -169,6 +177,12 @@ def _weighted_alert_engine(bucket_minutes: float = 5.0) -> WeightedAlertEngine:
     return WeightedAlertEngine(bucket=_bucket_timedelta(bucket_minutes))
 
 
+def _fused_alert_engine(bucket_minutes: float = 5.0, other_weight: float = 0.5) -> FusedAlertEngine:
+    return FusedAlertEngine(
+        bucket=_bucket_timedelta(bucket_minutes), other_weight=float(other_weight)
+    )
+
+
 def _team3_zscore(
     artifact: str | None = None,
     window_size: int | None = None,
@@ -228,6 +242,29 @@ def _meter_quality(
     # scalars may arrive quoted, and a bad value is refused, named, by _construct.
     return MeterQualityDetector(
         high_kwh=float(high_kwh), high_m3=float(high_m3), max_silence_hours=float(max_silence_hours)
+    )
+
+
+def _meter_baseline(
+    z_threshold: float = 3.5,
+    window_hours: int = 168,
+    profile_k: float = 3.0,
+    stuck_min_hours: int = 12,
+    min_history_hours: int = 336,
+    floor_percentile: float = 0.95,
+    leak_m3: float | None = None,
+    leak_timezone: str = "Europe/Nicosia",
+) -> MeterBaselineDetector:
+    # Coerced like _meter_quality; a bad value is refused, named, by _construct (ADR-0048 D4).
+    return MeterBaselineDetector(
+        z_threshold=float(z_threshold),
+        window_hours=int(window_hours),
+        profile_k=float(profile_k),
+        stuck_min_hours=int(stuck_min_hours),
+        min_history_hours=int(min_history_hours),
+        floor_percentile=float(floor_percentile),
+        leak_m3=None if leak_m3 is None else float(leak_m3),
+        leak_timezone=str(leak_timezone),
     )
 
 
@@ -372,6 +409,32 @@ def _meter_iforest(
     return MeterIForestDetector(params, dict(loaded.fitted) if loaded else None)
 
 
+def _meter_lof(
+    artifact: str | None = None,
+    profile_window_hours: int | None = None,
+    n_neighbors: int | None = None,
+    metric: str | None = None,
+    fp_budget: float | None = None,
+    min_episode_hours: int | None = None,
+    min_train_hours: int | None = None,
+) -> MeterLofDetector:
+    """As ``_meter_iforest``: an artifact is atomic, and naming none yields an untrained model."""
+    loaded = _load_lof_artifact(str(artifact)) if artifact else None
+    params = resolve_params(
+        LofParams,
+        {
+            "profile_window_hours": profile_window_hours,
+            "n_neighbors": n_neighbors,
+            "metric": metric,
+            "fp_budget": fp_budget,
+            "min_episode_hours": min_episode_hours,
+            "min_train_hours": min_train_hours,
+        },
+        loaded.params if loaded else None,
+    )
+    return MeterLofDetector(params, dict(loaded.fitted) if loaded else None)
+
+
 NORMALIZERS: dict[str, AdapterSpec[Normalizer]] = {
     "stub": AdapterSpec(StubCsvNormalizer, static(_STUB_NORMALIZER_CAPABILITY)),
     "syslog": AdapterSpec(SyslogNormalizer, static(_SYSLOG_NORMALIZER_CAPABILITY)),
@@ -400,11 +463,20 @@ DETECTORS: dict[str, AdapterSpec[Detector]] = {
     ),
     "rules": AdapterSpec(_rules, _rules_capability, discovered={"ruleset": available_rulesets}),
     "meter_quality": AdapterSpec(_meter_quality, static(_METER_QUALITY_CAPABILITY)),
+    "meter_baseline": AdapterSpec(_meter_baseline, static(_METER_BASELINE_CAPABILITY)),
+    "meter_lof": AdapterSpec(
+        _meter_lof,
+        static(_METER_CAPABILITY),
+        params_type=LofParams,
+        artifact_param="artifact",
+        discovered={"artifact": _lof_artifacts},
+    ),
 }
 
 ALERT_ENGINES: dict[str, AdapterSpec[AlertEngine]] = {
     "stub": AdapterSpec(_stub_alert_engine, static(_STUB_ALERT_CAPABILITY)),
     "weighted": AdapterSpec(_weighted_alert_engine, static(_WEIGHTED_ALERT_CAPABILITY)),
+    "fused": AdapterSpec(_fused_alert_engine, static(_FUSED_ALERT_CAPABILITY)),
 }
 
 

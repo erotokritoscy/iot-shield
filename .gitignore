@@ -45,6 +45,12 @@ reports/
 # declares no licence). `iotshield.eval fetch skab` rebuilds them locally in seconds; the
 # corpora we own — data/eval/synthetic — are committed and stay that way (ADR-0021 D5).
 data/eval/skab_*/
+data/eval/lead/
+data/eval/lead_sample/
+
+# Deployment-fitted meter models: a fit stores the history it learned from (ADR-0030 D6), so these
+# are operator data rather than source (ADR-0048 D3).
+config/meter-models/*/
 
 # OS noise
 .DS_Store

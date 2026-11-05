@@ -212,4 +212,66 @@ def test_holdout_is_not_offered_at_all() -> None:
     API and the dashboard all advertised it, and it could only ever print a table of zeros
     with one line of explanation.
     """
-    assert [protocol.value for protocol in FitProtocol] == ["none", "prefix"]
+    assert [protocol.value for protocol in FitProtocol] == ["none", "prefix", "clean-prefix"]
+
+
+class TestCleanPrefix:
+    """ADR-0048 D7: the head, not capped at the first fault, with its labelled hours withheld."""
+
+    @staticmethod
+    def truth(flagged: set[int], hours: int = 100):
+        from datetime import UTC, datetime, timedelta
+
+        from iotshield.eval.truth import GroundTruth
+
+        t0 = datetime(2026, 1, 1, tzinfo=UTC)
+        rows = [(t0 + timedelta(hours=h), h in flagged) for h in range(hours)]
+        return t0, GroundTruth.from_timeline(rows, asset_id="m")
+
+    def test_the_head_is_not_capped_at_the_first_fault(self) -> None:
+        from datetime import timedelta
+
+        from iotshield.eval.fit import FitProtocol, reserve
+
+        t0, truth = self.truth({5, 6})
+        assert reserve(truth, FitProtocol.PREFIX).cutoffs["m"] == t0 + timedelta(hours=5)
+        assert reserve(truth, FitProtocol.CLEAN_PREFIX).cutoffs["m"] == t0 + timedelta(hours=20)
+
+    def test_labelled_instants_are_withheld_from_training(self) -> None:
+        from datetime import timedelta
+
+        from iotshield.eval.fit import FitProtocol, reserve
+        from tests.meter_fixtures import meter_event
+
+        t0, truth = self.truth({5, 6})
+        reservation = reserve(truth, FitProtocol.CLEAN_PREFIX)
+        events = [
+            meter_event(t0 + timedelta(hours=h), 1.0, float(h)).model_copy(update={"asset_id": "m"})
+            for h in range(100)
+        ]
+        kept = {event.timestamp for event in reservation.training(events)}
+        assert kept == {t0 + timedelta(hours=h) for h in range(20) if h not in (5, 6)}
+
+    def test_an_incident_inside_the_head_leaves_the_answer_key(self) -> None:
+        from iotshield.eval.fit import FitProtocol, reserve
+
+        _, truth = self.truth({5, 6, 50})
+        assert len(truth.incidents) == 2
+        assert len(reserve(truth, FitProtocol.CLEAN_PREFIX).truth.incidents) == 1
+
+    def test_an_incident_across_the_cut_keeps_only_the_scored_part(self) -> None:
+        from datetime import timedelta
+
+        from iotshield.eval.fit import FitProtocol, reserve
+
+        t0, truth = self.truth({18, 19, 20, 21})
+        kept = reserve(truth, FitProtocol.CLEAN_PREFIX).truth.incidents
+        assert [(i.start, i.end) for i in kept] == [
+            (t0 + timedelta(hours=20), t0 + timedelta(hours=21))
+        ]
+
+    def test_prefix_is_unchanged_by_all_this(self) -> None:
+        from iotshield.eval.fit import FitProtocol, reserve
+
+        _, truth = self.truth({50})
+        assert reserve(truth, FitProtocol.PREFIX).withheld == {}

@@ -43,6 +43,11 @@ by accident. See "Keeping monotonicity" below.
 |---|---|---|---|
 | `stub` | additive, four terms | LOW to EMERGENCY | one sentence of context |
 | `weighted` | multiplicative, four factors | LOW to CRITICAL | the arithmetic, factor by factor |
+| `fused` | noisy-OR of measured detector competence | LOW to EMERGENCY | each detector's weight |
+
+`fused` is an experiment for metering, not a recommendation. On LEAD's real labels it put a true
+alert on top of a building's queue 35% of the time against `weighted`'s 77%, from identical
+detections (ADR-0048).
 
 Both share correlation, ranking, severity labelling and threat classification. Only the
 per-bucket number differs, which is roughly fifteen lines in each adapter.

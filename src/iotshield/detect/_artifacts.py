@@ -18,10 +18,8 @@ members are files discovered at import time rather than literals. So they are pu
 ``ParamInfo.choices`` through the same door ADR-0023 D9 opened for presets and lanes, and
 every form that already renders a closed vocabulary as a ``<select>`` renders this one too.
 
-Scope: package resources only, which is exactly what ``load_artifact`` resolves. The day an
-adapter can load a fit from a path (ADR-0030 anticipates deployment-fitted meters, which are
-data we may not commit), the namespace stops being closed and this becomes the *shipped*
-half of a wider answer.
+Scope: package resources only. Deployment-fitted meters, which are data we may not commit, live on
+a shelf (ADR-0048 D3), and this is the *shipped* half of the answer ``available_artifacts`` gives.
 """
 
 from __future__ import annotations
