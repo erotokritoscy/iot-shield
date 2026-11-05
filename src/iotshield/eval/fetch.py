@@ -23,12 +23,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 
 from iotshield._paths import REPO_ROOT
+from iotshield.convert._rates import HEADER as RATE_HEADER
+from iotshield.convert._rates import SOURCE_FORMAT as RATE_FORMAT
+from iotshield.convert._rates import counter_rows, representable
 from iotshield.detect.team3.train import DEFAULT_ASSET_ID
-from iotshield.eval.corpus import Case, Corpus, CorpusUnavailable, write_bundle
+from iotshield.eval.corpus import Case, CaseInput, Corpus, CorpusUnavailable, write_bundle
 from iotshield.eval.generate.telemetry import to_stub_csv
 from iotshield.eval.truth import GroundTruth
 from iotshield.pipeline.registry import lookup
@@ -49,6 +53,21 @@ _DROP = (_LABEL, "changepoint")
 # a CI *skip*, and the mismatch would surface only as an unexplained empty benchmark.
 # eval -> detect is the legal direction of the dependency arrow (ADR-0021).
 _ASSET = DEFAULT_ASSET_ID
+
+# LEAD reports a per-hour reading rather than a counter, so it arrives through the same rate
+# conversion as WBN (ADR-0048 D1). It is the only meter corpus whose labels are not ours: a human
+# marked these hours, so it is what can falsify a number the generator produced.
+LEAD_URL = "https://www.kaggle.com/competitions/energy-anomaly-detection"
+LEAD_LICENCE = (
+    f"LEAD1.0 (Gulati & Arjunan). Terms not reviewed by this project; not redistributed. {LEAD_URL}"
+)
+_LEAD_FILE = "train.csv"
+_LEAD_BUILDING = "building_id"
+_LEAD_TIME = "timestamp"
+_LEAD_READING = "meter_reading"
+_LEAD_LABEL = "anomaly"
+_LEAD_UNIT = "kwh"
+_LEAD_SAMPLE_EVERY = 10
 
 _SKAB_SUBSETS = {
     "skab_valve1": ("valve1", "SKAB valve1 closure faults (one fault per recording)"),
@@ -133,11 +152,88 @@ def _convert_skab(source: Path) -> list[Corpus]:
     return corpora
 
 
+def _lead_case(building: int, rows: pd.DataFrame) -> Case:
+    """One building as one case, its hour flags collapsed into incidents by ``from_timeline``.
+
+    A blank reading is a gap rather than a row: 6% of LEAD's cells are empty, and rejecting each
+    as malformed would bury the corpus's notes under something the dataset says plainly. Its flag
+    goes with it, because truth is indexed by what was observed (ADR-0028 D1), and so does the
+    flag of a reading a counter cannot carry (``representable``). The roster is the one building,
+    and the column is exhaustive for it, so an unflagged hour is asserted clean.
+    """
+    asset = f"LEAD_{building}"
+    observed = rows.dropna(subset=[_LEAD_READING]).sort_values(_LEAD_TIME)
+    stamps = [
+        moment.to_pydatetime().replace(tzinfo=UTC)
+        for moment in pd.to_datetime(observed[_LEAD_TIME])
+    ]
+    flag_at = dict(zip(stamps, (bool(value) for value in observed[_LEAD_LABEL]), strict=True))
+    kept = representable(
+        list(zip(stamps, observed[_LEAD_READING].astype(float).tolist(), strict=True))
+    )
+    lines = counter_rows(kept, meter_id=asset, unit=_LEAD_UNIT)
+    return Case(
+        name=f"building-{building}",
+        inputs=[CaseInput(RATE_FORMAT, "\n".join([RATE_HEADER, *lines]) + "\n")],
+        truth=GroundTruth.from_timeline(
+            [(stamp, flag_at[stamp]) for stamp, _ in kept], asset_id=asset
+        ),
+    )
+
+
+def _convert_lead(source: Path) -> list[Corpus]:
+    path = source / _LEAD_FILE
+    if not path.is_file():
+        raise CorpusUnavailable(
+            f"{_LEAD_FILE} not found under {source}. Obtain LEAD1.0 from {LEAD_URL} and pass "
+            "--source <directory holding it>."
+        )
+    frame = pd.read_csv(path)
+    cases = [
+        _lead_case(int(cast("int", building)), rows)
+        for building, rows in frame.groupby(_LEAD_BUILDING, sort=True)
+        if bool(rows[_LEAD_READING].notna().any())
+    ]
+    provenance = f"LEAD1.0 (Gulati & Arjunan, CIKM 2022) — {LEAD_URL}"
+    return [
+        Corpus(
+            name="lead",
+            description=(
+                "LEAD1.0: a year of hourly electricity on commercial buildings, with "
+                "human-labelled anomalous hours"
+            ),
+            cases=cases,
+            provenance=provenance,
+            licence=LEAD_LICENCE,
+        ),
+        Corpus(
+            name="lead_sample",
+            description=f"Every {_LEAD_SAMPLE_EVERY}th building of LEAD1.0, for a quick run",
+            cases=cases[::_LEAD_SAMPLE_EVERY],
+            provenance=provenance,
+            licence=LEAD_LICENCE,
+        ),
+    ]
+
+
 # Where SKAB sits in the internship workspace, as a convenience default only — a standalone
-# clone of this repository has no such tree and must pass --source.
+# clone of this repository has no such tree and must pass --source. LEAD likewise.
 _WORKSPACE_SKAB = REPO_ROOT.parent / "reference" / "team3-telemetry-ad" / "Datasets" / "SKAB"
+_WORKSPACE_LEAD = (
+    REPO_ROOT.parent
+    / "ML-Based-Anomaly-and-Attack-Detection-for-Smart-Meter-Telemetry"
+    / "data/raw"
+)
 
 DATASETS: dict[str, Dataset] = {
+    "lead": Dataset(
+        describe="LEAD1.0 — hourly building electricity with human-labelled anomalies",
+        url=LEAD_URL,
+        licence=LEAD_LICENCE,
+        corpora=("lead", "lead_sample"),
+        default_source=_WORKSPACE_LEAD,
+        convert=_convert_lead,
+    ),
     "skab": Dataset(
         describe="SKAB — Skoltech Anomaly Benchmark (valve faults + anomaly-free)",
         url=SKAB_URL,
@@ -145,7 +241,7 @@ DATASETS: dict[str, Dataset] = {
         corpora=tuple(_SKAB_SUBSETS),
         default_source=_WORKSPACE_SKAB,
         convert=_convert_skab,
-    )
+    ),
 }
 
 

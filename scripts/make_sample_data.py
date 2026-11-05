@@ -196,6 +196,31 @@ def broken_syslog() -> str:
     return "\n".join(rows) + "\n"
 
 
+# --- metering: the EOA per-meter export -----------------------------------------------------
+
+_METER_HISTORY = REPO_ROOT / "data" / "demo" / "demo_meter_history.csv"
+_METER_HOURS = 28 * 24  # the newest four weeks: meter_baseline needs two to judge at all
+_FREEZE_FIRST, _FREEZE_LAST = 252, 299  # rows, newest first: 48 hours in the file's middle
+_COUNTER_COLUMN = 4
+
+
+def stuck_meter() -> str:
+    """The demo meter's newest four weeks, with its counter frozen for 48 hours, then catching up.
+
+    It is the meter the committed ``demo_meter`` artifacts were fitted on (a fit judges only its
+    own asset, ADR-0030 D7), so a run needs no fit first. The file is newest-first, as the export
+    is. A frozen counter reads as zero consumption, and the hour it resumes reads as all 48 at once.
+    """
+    header, *rows = _METER_HISTORY.read_text(encoding="utf-8").splitlines()
+    rows = rows[: _METER_HOURS + 1]  # N events are the differences of N + 1 readings
+    frozen = rows[_FREEZE_LAST + 1].split(",")[_COUNTER_COLUMN]
+    for index in range(_FREEZE_FIRST, _FREEZE_LAST + 1):
+        cells = rows[index].split(",")
+        cells[_COUNTER_COLUMN] = frozen
+        rows[index] = ",".join(cells)
+    return "\n".join([header, *rows]) + "\n"
+
+
 # --- the manifest ---------------------------------------------------------------------------
 
 SAMPLES: list[dict[str, Any]] = [
@@ -291,6 +316,16 @@ SAMPLES: list[dict[str, Any]] = [
         "source_format": "syslog",
         "render": broken_syslog,
     },
+    {
+        "id": "stuck_meter",
+        "file": "stuck_meter.csv",
+        "title": "Stuck water meter — hourly readings",
+        "description": "Four weeks from one water meter; its counter freezes for 48 hours, "
+        "then jumps to catch up.",
+        "normalizer": "meter",
+        "source_format": "eoa-meter-csv",
+        "render": stuck_meter,
+    },
 ]
 
 _WEIGHTED = {"name": "weighted", "params": {"bucket_minutes": 5}}
@@ -367,6 +402,23 @@ SCENARIOS: list[dict[str, Any]] = [
         "detectors": [{"name": "rules", "params": {"lane": "log"}}],
         "alert_engine": _WEIGHTED,
         "expected": {"events": 6, "malformed": 4, "detections": 0, "alerts": 0},
+    },
+    {
+        "id": "stuck_meter",
+        "title": "Stuck water meter",
+        "description": "A water meter freezes for 48 hours, then jumps to catch up. "
+        "meter_baseline's written checks flag the freeze and the jump, meter_lof flags both from "
+        "what it learned of this meter, and meter_iforest stays silent. To compare engines, "
+        "choose fused in the Alerts step.",
+        "samples": ["stuck_meter"],
+        "detectors": [
+            {"name": "meter_baseline", "params": {}},
+            {"name": "meter_lof", "params": {"artifact": "demo_meter"}},
+            {"name": "meter_iforest", "params": {"artifact": "demo_meter"}},
+        ],
+        # An hour, because this lane's events are hourly (see config/bench/meter.yaml).
+        "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
+        "expected": {"events": 672, "malformed": 0, "detections": 8, "alerts": 8},
     },
 ]
 

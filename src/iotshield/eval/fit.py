@@ -13,6 +13,22 @@ the harness happens to work (ADR-0021 D4):
 - ``prefix``  — relearn from a reserved head of each asset's own clock, which is then **not
                 scored**. This is what a real deployment does: learn this asset's recent clean
                 history, then watch what comes next.
+- ``clean-prefix`` — the same head, not capped at the first fault: its labelled instants are
+                withheld from training instead (ADR-0048 D7).
+
+## Why ``clean-prefix`` exists
+
+``prefix`` stops at an asset's first incident, which is right when faults are rare and arrive
+late, and is the one thing a real labelled dataset refuses to do. LEAD's median building has its
+first labelled hour 453 hours in, under the 883 a default meter fit needs, so only 46 of 200
+buildings could be fitted at all, and the other 154 rows read as a bad detector rather than an
+unfitted one. Withholding the labelled hours fits 198 of them.
+
+**It is optimistic, and the name is the disclosure.** A deployment has no labels to withhold
+anomalies with, so it trains on whatever its history held. This measures a detector given a
+history cleaner than any deployment's, so a number from it is an upper bound on that score. The
+withheld hours become holes rather than imputed values, which a rolling feature already treats as
+missing (``detect/meter/_features.regrid``), and nothing in the head is scored either way.
 
 Running ``none`` against ``prefix`` on the same corpus is therefore a real experiment: it
 answers whether an artifact generalizes across recordings of the same rig, which decides
@@ -51,14 +67,14 @@ and belongs in an ADR rather than in a dropdown (ADR-0022, ADR-0026 both record 
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 
 from iotshield.contracts import NormalizedEvent
 from iotshield.detect import Detector, Fittable
 from iotshield.detect._fitted import is_fitted
-from iotshield.eval.truth import AssetTruth, FindingT, GroundTruth
+from iotshield.eval.truth import AssetTruth, FindingT, GroundTruth, Incident
 
 TRAIN_FRACTION = 0.2
 """How much of each asset's clock ``prefix`` reserves for training.
@@ -73,6 +89,7 @@ order of magnitude, and still scores 80% of every recording.
 class FitProtocol(StrEnum):
     NONE = "none"
     PREFIX = "prefix"
+    CLEAN_PREFIX = "clean-prefix"
 
 
 @dataclass(frozen=True)
@@ -111,6 +128,9 @@ class Reservation:
 
     truth: GroundTruth
     """The answer key with the reserved rows removed, for scoring."""
+
+    withheld: Mapping[str, frozenset[datetime]] = field(default_factory=dict)
+    """Per asset, instants inside the head that training must not see (``clean-prefix``)."""
 
     @classmethod
     def leading(cls, truth: GroundTruth, fraction: float = TRAIN_FRACTION) -> "Reservation":
@@ -153,6 +173,42 @@ class Reservation:
             )
         return cls(cutoffs=cutoffs, truth=GroundTruth.from_assets(assets))
 
+    @classmethod
+    def leading_clean(cls, truth: GroundTruth, fraction: float = TRAIN_FRACTION) -> "Reservation":
+        """Reserve the first ``fraction`` of each clock, withholding its labelled instants.
+
+        The answer key loses the head on both sides. An incident wholly inside it is gone, since
+        it can be neither caught nor missed in a region nothing is scored in, and one straddling
+        the cut keeps only the part after it, so the denominator counts what can be judged.
+        """
+        cutoffs: dict[str, datetime] = {}
+        withheld: dict[str, frozenset[datetime]] = {}
+        assets: list[AssetTruth] = []
+        for asset in truth.assets:
+            clock = asset.clock
+            index = int(len(clock) * fraction)
+            if index == 0 or index >= len(clock):
+                assets.append(asset)
+                continue
+            limit = clock[index]
+            cutoffs[asset.asset_id] = limit
+            withheld[asset.asset_id] = frozenset(
+                moment
+                for moment in clock[:index]
+                if any(incident.overlaps(moment, moment) for incident in asset.incidents)
+            )
+            assets.append(
+                AssetTruth(
+                    asset_id=asset.asset_id,
+                    timelines={
+                        lane: tuple(row for row in rows if row[0] >= limit)
+                        for lane, rows in asset.timelines.items()
+                    },
+                    incidents=_after(asset.incidents, limit),
+                )
+            )
+        return cls(cutoffs=cutoffs, truth=GroundTruth.from_assets(assets), withheld=withheld)
+
     def training(self, events: Sequence[NormalizedEvent]) -> list[NormalizedEvent]:
         """The events a detector may learn from: each asset's reserved head, and nothing else.
 
@@ -167,11 +223,16 @@ class Reservation:
         28 ms over 163k events and 30 assets).
         """
         labelled = self.truth.labelled_assets
+        nothing: frozenset[datetime] = frozenset()
         return [
             event
             for event in events
             if event.asset_id not in labelled
-            or ((limit := self.cutoffs.get(event.asset_id)) is not None and event.timestamp < limit)
+            or (
+                (limit := self.cutoffs.get(event.asset_id)) is not None
+                and event.timestamp < limit
+                and event.timestamp not in self.withheld.get(event.asset_id, nothing)
+            )
         ]
 
     def scoreable(self, findings: Sequence[FindingT]) -> list[FindingT]:
@@ -189,6 +250,16 @@ class Reservation:
         ]
 
 
+def _after(incidents: Sequence[Incident], limit: datetime) -> tuple[Incident, ...]:
+    """Each incident's extent at or after ``limit``; one with none left is not in the key."""
+    kept: list[Incident] = []
+    for incident in incidents:
+        spans = tuple((max(start, limit), end) for start, end in incident.spans if end >= limit)
+        if spans:
+            kept.append(replace(incident, spans=spans))
+    return tuple(kept)
+
+
 def reserve(truth: GroundTruth, protocol: FitProtocol) -> Reservation:
     """What this protocol takes out of the recording before anything is judged.
 
@@ -197,6 +268,8 @@ def reserve(truth: GroundTruth, protocol: FitProtocol) -> Reservation:
     """
     if protocol is FitProtocol.PREFIX:
         return Reservation.leading(truth)
+    if protocol is FitProtocol.CLEAN_PREFIX:
+        return Reservation.leading_clean(truth)
     return Reservation(cutoffs={}, truth=truth)
 
 

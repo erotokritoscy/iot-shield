@@ -17,7 +17,7 @@ is right, and this is the shape that agrees with him: no threshold input, and th
 calibration stays reproducible on our side from a budget plus clean history.
 """
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -32,6 +32,9 @@ from iotshield.detect.meter._iforest import (
 METHOD = "meter_iforest"
 """The judging method stamped on every detection; also this adapter's registry key."""
 
+LOF_METHOD = "meter_lof"
+DEFAULT_N_NEIGHBORS = 168
+
 DEFAULT_FP_BUDGET = 0.0014
 """~1 false alarm per meter-month (730 hours), the upstream project's operating budget."""
 
@@ -45,8 +48,12 @@ a fleet threw away every meter already fitted in that call. Deriving the default
 budget is what stops them drifting apart again — change ``fp_budget`` and this follows."""
 
 
-class MeterParams(BaseModel):
-    """Feature construction, then the model, then the decision rule — in that order."""
+class PerMeterParams(BaseModel):
+    """What every per-meter model shares: its features, its decision rule, its history gate.
+
+    Split out when LOF joined (ADR-0048 D5): the two models differ only in what scores a row, and
+    the two gates' agreement below is a fact about the budget rather than about a forest.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -54,14 +61,6 @@ class MeterParams(BaseModel):
         default=WEEK_HOURS,
         ge=24,
         description="Rolling-statistics window in hours (168 = one week)",
-    )
-    n_estimators: int = Field(
-        default=DEFAULT_N_ESTIMATORS, ge=10, description="Trees in the forest"
-    )
-    max_samples: int = Field(
-        default=DEFAULT_MAX_SAMPLES,
-        ge=16,
-        description="Rows subsampled per tree; capped at the training rows available",
     )
     fp_budget: float = Field(
         default=DEFAULT_FP_BUDGET,
@@ -76,9 +75,6 @@ class MeterParams(BaseModel):
         default=DEFAULT_MIN_TRAIN_HOURS,
         ge=WEEK_HOURS,
         description="Refuse to fit a meter with less clean history than this",
-    )
-    random_state: int = Field(
-        default=DEFAULT_RANDOM_STATE, description="Seed, so a fit is reproducible"
     )
 
     @model_validator(mode="after")
@@ -111,3 +107,34 @@ class MeterParams(BaseModel):
                 f"at least {1 / max(1, self.min_train_hours - self.profile_window_hours):.5f}"
             )
         return self
+
+
+class MeterParams(PerMeterParams):
+    """The Isolation Forest's own knobs, on top of what every per-meter model shares."""
+
+    n_estimators: int = Field(
+        default=DEFAULT_N_ESTIMATORS, ge=10, description="Trees in the forest"
+    )
+    max_samples: int = Field(
+        default=DEFAULT_MAX_SAMPLES,
+        ge=16,
+        description="Rows subsampled per tree; capped at the training rows available",
+    )
+    random_state: int = Field(
+        default=DEFAULT_RANDOM_STATE, description="Seed, so a fit is reproducible"
+    )
+
+
+class LofParams(PerMeterParams):
+    """Local Outlier Factor's own knobs (ADR-0048 D5).
+
+    ``n_neighbors`` defaults to 168, which upstream's calibration chose on both WBN families;
+    its sources ranged from 80 to 320, and sklearn's default of 20 won on none of them.
+    """
+
+    n_neighbors: int = Field(
+        default=DEFAULT_N_NEIGHBORS, ge=2, description="Neighbourhood size; capped at the history"
+    )
+    metric: Literal["minkowski", "manhattan", "chebyshev"] = Field(
+        default="minkowski", description="Distance between scaled feature rows"
+    )

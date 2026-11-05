@@ -92,7 +92,7 @@ class TestConversion:
 
 class TestFailures:
     def test_an_unknown_dataset_names_the_known_ones(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="known: skab"):
+        with pytest.raises(ValueError, match="known: lead, skab"):
             fetch("nope", tmp_path, tmp_path)
 
     def test_a_missing_source_points_at_the_upstream_project(self, tmp_path: Path) -> None:

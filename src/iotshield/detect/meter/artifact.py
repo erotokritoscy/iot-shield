@@ -26,6 +26,17 @@ committed artifact is only appropriate for data we may commit. Our demo meter is
 synthetic, so it is; a customer's meter would be fitted at deployment instead, which is
 the deployment shape for metering anyway (see the module docstring in ``detector.py``).
 
+The shelf (ADR-0048 D3)
+-----------------------
+A real meter's history cannot be committed, so a real fit cannot be a package resource, and a
+run never fits. Before the shelf that left a real meter with no ML judgment at all. So fits made
+at deployment (``python -m iotshield.detect.meter.train --name <fleet>``) live on a directory the
+deployment designates, ``IOTSHIELD_METER_MODELS_PATH``, one subdirectory per detector. A
+``artifact`` value arrives from a posted spec exactly as a ``ruleset`` does, so it gets the same
+treatment (ADR-0037): resolved by **membership** of a listing, never joined into a path. Packaged
+ids win a name collision, and ``train`` refuses to create one. A shelved file is cached by its
+modification time, so a re-fit is picked up without a restart.
+
 Per-meter, by construction
 --------------------------
 A meter's model is fitted to *that meter* — upstream fits one model per meter because
@@ -39,19 +50,26 @@ from __future__ import annotations
 import importlib.resources
 import json
 import math
-from functools import cache, cached_property
+from functools import cache, cached_property, lru_cache
+from pathlib import Path
 from typing import Self
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from iotshield._paths import REPO_ROOT, configured_root
 from iotshield.detect._artifacts import packaged_artifact_ids
 from iotshield.detect.meter._attribution import robust_stats
 from iotshield.detect.meter._iforest import fit_forest, score, threshold_at_budget
-from iotshield.detect.meter.params import MeterParams
+from iotshield.detect.meter.params import METHOD, MeterParams, PerMeterParams
 
 _ARTIFACTS_PACKAGE = "iotshield.detect.meter.artifacts"
 _SCHEMA_VERSION = 1
+
+MODELS_PATH_ENV = "IOTSHIELD_METER_MODELS_PATH"
+DEFAULT_MODELS_ROOT = REPO_ROOT / "config" / "meter-models"
+_SHELF_CACHE_SIZE = 4
+"""A fleet artifact re-fits every meter it holds, so only a few are kept alive per process."""
 
 
 class _ArtifactModel(BaseModel):
@@ -148,7 +166,7 @@ class FittedMeter:
         feature_columns: list[str],
         profile: np.ndarray,
         matrix: np.ndarray,
-        params: MeterParams,
+        params: PerMeterParams,
         provenance: str,
     ) -> None:
         """Fitting **is** construction: the forest, threshold and baseline are derived here.
@@ -166,23 +184,34 @@ class FittedMeter:
         # the data rather than the weights: it is what makes fit -> persist -> load
         # reproduce the same model (see the module docstring).
         self.training_rows = np.asarray(matrix, dtype=float)
+        self.threshold = threshold_at_budget(self._learn(params), params.fp_budget)
+        self.median, self.scale = robust_stats(self.training_rows)
+
+    def _learn(self, params: PerMeterParams) -> np.ndarray:
+        """Fit this meter's model and return its scores on its own clean rows.
+
+        The one thing a second model overrides, beside ``score``: the threshold, baseline and
+        persistence above mean the same whichever model produced the scores.
+        """
+        if not isinstance(params, MeterParams):
+            raise TypeError(f"an Isolation Forest needs MeterParams, got {type(params).__name__}")
         self.forest = fit_forest(
             self.training_rows,
             n_estimators=params.n_estimators,
             max_samples=params.max_samples,
             random_state=params.random_state,
         )
-        self.threshold = threshold_at_budget(
-            score(self.forest, self.training_rows), params.fp_budget
-        )
-        self.median, self.scale = robust_stats(self.training_rows)
+        return self.score(self.training_rows)
+
+    def score(self, rows: np.ndarray) -> np.ndarray:
+        """Anomaly scores for ``rows``; higher is more anomalous."""
+        return score(self.forest, rows)
 
 
-class MeterArtifact(_ArtifactModel):
-    """A cached fit: the hyperparameters used, and the per-meter states they produced."""
+class MetersArtifact(_ArtifactModel):
+    """The per-meter half of a cached fit, whichever model it re-fits into."""
 
     schema_version: int = _SCHEMA_VERSION
-    params: MeterParams
     meters: list[MeterState] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -192,24 +221,33 @@ class MeterArtifact(_ArtifactModel):
             raise ValueError("each meter must appear once; duplicate asset_id(s) in the artifact")
         return self
 
-    @cached_property
-    def fitted(self) -> dict[str, FittedMeter]:
-        """Re-fit every stored meter. Cached, so the cost is paid once per artifact."""
+    def _refit(self, model: type[FittedMeter], params: PerMeterParams) -> dict[str, FittedMeter]:
         return {
-            state.asset_id: FittedMeter(
+            state.asset_id: model(
                 asset_id=state.asset_id,
                 feature_columns=list(state.feature_columns),
                 profile=state.profile_array,
                 matrix=state.matrix,
-                params=self.params,
+                params=params,
                 provenance=state.provenance,
             )
             for state in self.meters
         }
 
 
-def parse_artifact(text: str, label: str = "artifact") -> MeterArtifact:
-    """Validate artifact JSON, version-checking *before* the shape.
+class MeterArtifact(MetersArtifact):
+    """A cached fit: the hyperparameters used, and the per-meter states they produced."""
+
+    params: MeterParams
+
+    @cached_property
+    def fitted(self) -> dict[str, FittedMeter]:
+        """Re-fit every stored meter. Cached, so the cost is paid once per artifact."""
+        return self._refit(FittedMeter, self.params)
+
+
+def _version_checked(text: str, label: str) -> dict[str, object]:
+    """Artifact JSON, version-checking *before* the shape.
 
     Order matters for the same reason it does in team3's loader: an older layout would
     otherwise fail on ``extra="forbid"`` with a list of unexpected keys, burying the one
@@ -223,27 +261,65 @@ def parse_artifact(text: str, label: str = "artifact") -> MeterArtifact:
             f"(expected {_SCHEMA_VERSION}); regenerate it with"
             " `python -m iotshield.detect.meter.train`"
         )
-    return MeterArtifact.model_validate(raw)
+    return raw
+
+
+def parse_artifact(text: str, label: str = "artifact") -> MeterArtifact:
+    return MeterArtifact.model_validate(_version_checked(text, label))
+
+
+def models_root(root: Path | None = None) -> Path:
+    """The shelf: explicit argument, else env, else the repo's own ``config/meter-models``."""
+    return configured_root(MODELS_PATH_ENV, DEFAULT_MODELS_ROOT, root)
+
+
+def shelved(detector: str, root: Path | None = None) -> dict[str, Path]:
+    """Id -> file for every fit on the shelf for ``detector``. **The one answer to what is there.**
+
+    Listing and loading read this same mapping, so an offered id is one that resolves, and a
+    traversal, an absolute path and a typo all fail alike: none of them is a key.
+    """
+    directory = models_root(root) / detector
+    if not directory.is_dir():
+        return {}
+    return {path.stem: path for path in sorted(directory.glob("*.json")) if path.is_file()}
+
+
+@lru_cache(maxsize=_SHELF_CACHE_SIZE)
+def _load_shelved(path: Path, _modified_ns: int) -> MeterArtifact:
+    return parse_artifact(path.read_text(encoding="utf-8"), path.stem)
 
 
 @cache
+def _load_packaged(artifact_id: str) -> MeterArtifact | None:
+    resource = importlib.resources.files(_ARTIFACTS_PACKAGE).joinpath(f"{artifact_id}.json")
+    if not resource.is_file():
+        return None
+    return parse_artifact(resource.read_text(encoding="utf-8"), artifact_id)
+
+
 def load_artifact(artifact_id: str) -> MeterArtifact:
-    """Load ``artifacts/<artifact_id>.json`` from this package.
+    """Resolve an id: one this package ships, else one on the shelf.
 
     Raises ``ValueError`` (not FileNotFoundError) for an unknown id, so the registry
     surfaces it as a configuration error like every other adapter.
     """
-    resource = importlib.resources.files(_ARTIFACTS_PACKAGE).joinpath(f"{artifact_id}.json")
-    if not resource.is_file():
-        raise ValueError(f"unknown meter artifact id: {artifact_id!r}")
-    return parse_artifact(resource.read_text(encoding="utf-8"), artifact_id)
+    if artifact_id in packaged_artifact_ids(_ARTIFACTS_PACKAGE):
+        packaged = _load_packaged(artifact_id)
+        if packaged is not None:
+            return packaged
+    path = shelved(METHOD).get(artifact_id)
+    if path is None:
+        known = ", ".join(available_artifacts()) or "none"
+        raise ValueError(f"unknown meter artifact id: {artifact_id!r}; known: {known}")
+    return _load_shelved(path, path.stat().st_mtime_ns)
 
 
 def available_artifacts() -> tuple[str, ...]:
     """Every id ``load_artifact`` will accept — the registry publishes these as choices.
 
-    One meter model is one *meter*, not one fleet (ADR-0030 D7), so this list is short by
-    design and says so: the shipped ``demo_meter`` covers a single synthetic meter, which a
-    one-item dropdown communicates and an empty text box does not.
+    One meter model is one *meter*, not one fleet (ADR-0030 D7), so the packaged half is short
+    by design: ``demo_meter`` covers a single synthetic meter. Everything else here is a fit the
+    deployment made, read afresh per call because operators add them while the process runs.
     """
-    return packaged_artifact_ids(_ARTIFACTS_PACKAGE)
+    return tuple(sorted({*packaged_artifact_ids(_ARTIFACTS_PACKAGE), *shelved(METHOD)}))

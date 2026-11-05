@@ -1,0 +1,18 @@
+# Benchmark spec: all three meter detectors under upstream's noisy-OR (ADR-0048 D6). Read against
+# bench/meter_ensemble.yaml, with LEAD as the check its synthetic weights never had.
+
+source_format: sensipro-hourly-csv
+normalizer: meter
+
+detectors:
+  - name: meter_iforest
+  - name: meter_lof
+  - name: meter_baseline
+
+alert_engine:
+  name: fused
+  params:
+    # An hour, because this lane's events are hourly (see bench/meter.yaml).
+    bucket_minutes: 60
+
+# No `assets:`: asset_weight would be a number we typed in (ADR-0021 D7).

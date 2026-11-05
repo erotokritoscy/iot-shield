@@ -198,6 +198,39 @@ general one, so it is documented at that call site instead of listed here.
 """
 
 
+class Signature(StrEnum):
+    """What shape of anomaly a meter detection is (ADR-0048 D6).
+
+    Upstream's taxonomy, and the key its reliability figures are indexed by: a detector that is
+    near-perfect on a sustained rise can be blind to a stuck meter, so a detector's competence
+    cannot be read without knowing which of these it is claiming. Values are wire format: they
+    ride in ``evidence`` and reach the API.
+    """
+
+    SPIKE = "spike"
+    SUSTAINED = "sustained"
+    PROFILE = "profile"
+    STUCK = "stuck"
+
+
+SIGNATURE_KEY = "signature"
+"""Where a meter detection names its ``Signature`` in ``evidence``."""
+
+_IDLE_FRACTION = 0.02
+"""Expected use below this fraction of what was observed means "normally idle at this hour"."""
+
+
+def signature_of_episode(hours: int, *, observed: float, expected: float | None) -> Signature:
+    """Classify an ML episode from its shape, as upstream's ``classify_signature_type`` does.
+
+    Use in an hour that is normally idle is a matter of timing, whatever its length; otherwise
+    one hour is a spike and a contiguous block is sustained.
+    """
+    if observed > 0 and expected is not None and expected < _IDLE_FRACTION * observed:
+        return Signature.PROFILE
+    return Signature.SPIKE if hours == 1 else Signature.SUSTAINED
+
+
 @dataclass(frozen=True, slots=True)
 class MeterReading:
     """One meter's consumption over one closed interval.

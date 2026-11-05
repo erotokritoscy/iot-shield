@@ -31,6 +31,9 @@ export const PROTOCOL_HELP: Record<string, string> = {
   prefix:
     "Relearn 'normal' from a reserved head of each asset's clock, which is then NOT scored — " +
     "what a real deployment does. Detectors that cannot train are used as configured and say so.",
+  "clean-prefix":
+    "The same head, not stopped by the first fault: its labelled hours are withheld from training instead. " +
+    "For a corpus whose faults start early. Optimistic: a real deployment has no labels to withhold faults with.",
 };
 
 export type SweptValue = boolean | number | string;

@@ -2591,7 +2591,8 @@
         "type": "string",
         "enum": [
           "none",
-          "prefix"
+          "prefix",
+          "clean-prefix"
         ],
         "title": "FitProtocol"
       },

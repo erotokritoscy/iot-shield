@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar, Generic, Self, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -56,11 +56,10 @@ from iotshield.detect._group import group_by_asset
 from iotshield.detect._runs import classify_run, merge_runs
 from iotshield.detect.meter._attribution import attribute_row, summarise
 from iotshield.detect.meter._features import build_features, feature_matrix, model_columns
-from iotshield.detect.meter._iforest import score
 from iotshield.detect.meter._profile import as_datetime_index, build_profile
 from iotshield.detect.meter.artifact import FittedMeter, MeterState
-from iotshield.detect.meter.params import METHOD, MeterParams
-from iotshield.meter import METADATA_KEY, reading_of
+from iotshield.detect.meter.params import METHOD, MeterParams, PerMeterParams
+from iotshield.meter import METADATA_KEY, SIGNATURE_KEY, reading_of, signature_of_episode
 
 # Telemetry is necessary and not sufficient: `_is_meter_reading` below rejects any reading
 # without a `MeterReading`, so a bare numeric telemetry source reaches this detector and is
@@ -72,6 +71,8 @@ CAPABILITY = Capability.of(
 )
 
 _TOP_FEATURES = 2
+
+P = TypeVar("P", bound=PerMeterParams)
 
 
 def _at(index: pd.DatetimeIndex, position: int) -> datetime:
@@ -125,8 +126,18 @@ def consumption_series(events: Sequence[NormalizedEvent]) -> tuple[pd.Series, fl
     return series, interval
 
 
-class MeterIForestDetector:
-    def __init__(self, params: MeterParams, fitted: dict[str, FittedMeter] | None = None) -> None:
+class PerMeterDetector(Generic[P]):
+    """One fitted model per meter, an absolute threshold, merged episodes, attribution.
+
+    A subclass names its method and the ``FittedMeter`` that scores a row; everything else
+    about judging a meter is shared, so a second model cannot mean something different by
+    "fitted", "skipped" or "an episode" (ADR-0048 D5).
+    """
+
+    _method: ClassVar[str]
+    _model_type: ClassVar[type[FittedMeter]]
+
+    def __init__(self, params: P, fitted: dict[str, FittedMeter] | None = None) -> None:
         self._params = params
         self._fitted = fitted
 
@@ -140,12 +151,12 @@ class MeterIForestDetector:
 
     @property
     def method(self) -> str:
-        return METHOD
+        return self._method
 
     def detect(self, events: Sequence[NormalizedEvent]) -> list[DetectionResult]:
         if self._fitted is None:
             raise NotFitted(
-                f"{METHOD} was built from hyperparameters with no fitted meters; name an "
+                f"{self.method} was built from hyperparameters with no fitted meters; name an "
                 "'artifact' in its params, or fit it first (--fit-protocol prefix)"
             )
         detections: list[DetectionResult] = []
@@ -199,7 +210,7 @@ class MeterIForestDetector:
                 # in two places in one report.
                 return None
             return (
-                f"{METHOD} judges consumption readings carrying a {METADATA_KEY!r} payload; "
+                f"{self.method} judges consumption readings carrying a {METADATA_KEY!r} payload; "
                 f"none of the {len(lane_assets)} telemetry asset(s) here carry one, so "
                 f"nothing was scored - this input is telemetry but not metering"
             )
@@ -208,11 +219,11 @@ class MeterIForestDetector:
         if not unmodelled:
             return None
         return (
-            f"{METHOD} has no fitted model for {', '.join(unmodelled)}: those meters were "
+            f"{self.method} has no fitted model for {', '.join(unmodelled)}: those meters were "
             f"skipped, not scored - one model per meter means each needs its own clean history"
         )
 
-    def fit(self, events: Sequence[NormalizedEvent]) -> MeterIForestDetector:
+    def fit(self, events: Sequence[NormalizedEvent]) -> Self:
         """Fit one model per meter from ``events`` (assumed clean); return a new detector.
 
         The optional ``Fittable`` capability. Never called by the pipeline — only by a
@@ -247,7 +258,7 @@ class MeterIForestDetector:
                 "no meter had enough clean history to fit "
                 f"(need {self._params.min_train_hours}h each); short: {', '.join(too_short)}"
             )
-        return MeterIForestDetector(self._params, fitted)
+        return type(self)(self._params, fitted)
 
     def _fit_one(self, asset_id: str, events: list[NormalizedEvent]) -> FittedMeter | None:
         """Fit one meter, or ``None`` when its clean history is too short to learn from."""
@@ -266,7 +277,7 @@ class MeterIForestDetector:
         if not rows.size:
             return None
         span = as_datetime_index(series.index)
-        return FittedMeter(
+        return self._model_type(
             asset_id=asset_id,
             feature_columns=list(columns),
             profile=profile,
@@ -295,7 +306,7 @@ class MeterIForestDetector:
         return tuple(sorted(self._fitted)) if self._fitted else ()
 
     @property
-    def params(self) -> MeterParams:
+    def params(self) -> P:
         """The hyperparameters this instance was constructed with (ADR-0022)."""
         return self._params
 
@@ -307,7 +318,7 @@ class MeterIForestDetector:
         future explainability view.
         """
         if self._fitted is None or asset_id not in self._fitted:
-            raise NotFitted(f"{METHOD} has no fitted model for meter {asset_id!r}")
+            raise NotFitted(f"{self.method} has no fitted model for meter {asset_id!r}")
         return self._fitted[asset_id]
 
     def _detect_asset(
@@ -333,7 +344,7 @@ class MeterIForestDetector:
         if not rows.size:
             return []
 
-        scores = score(model.forest, rows)
+        scores = model.score(rows)
         anomaly = np.isfinite(scores) & (scores > model.threshold)
         if not anomaly.any():
             return []
@@ -378,6 +389,8 @@ class MeterIForestDetector:
             model.scale,
             top_k=_TOP_FEATURES,
         )
+        by_name = dict(zip(model.feature_columns, peak_row.tolist(), strict=True))
+        observed = by_name["consumption"]
         return {
             "peak_timestamp": peak_stamp.isoformat(),
             "peak_score": float(peak_score),
@@ -385,4 +398,12 @@ class MeterIForestDetector:
             # The analyst-readable headline; the features below are the supporting detail.
             "explanation": summarise(top),
             "top_features": top,
+            SIGNATURE_KEY: signature_of_episode(
+                length, observed=observed, expected=observed - by_name["deviation"]
+            ).value,
         }
+
+
+class MeterIForestDetector(PerMeterDetector[MeterParams]):
+    _method = METHOD
+    _model_type = FittedMeter

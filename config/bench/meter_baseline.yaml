@@ -1,0 +1,19 @@
+# Benchmark spec: upstream's written checks (stuck, z-score, profile), which need no fit (ADR-0048 D4).
+# The leak rule stays off, as it does by default: its threshold is a household's.
+#
+#   uv run python -m iotshield.eval --corpus meter_fleet --spec config/bench/meter_baseline.yaml \
+#       --spec config/bench/meter.yaml --fit-protocol prefix
+
+source_format: sensipro-hourly-csv
+normalizer: meter
+
+detectors:
+  - name: meter_baseline
+
+alert_engine:
+  name: weighted
+  params:
+    # An hour, because this lane's events are hourly (see bench/meter.yaml).
+    bucket_minutes: 60
+
+# No `assets:`: asset_weight would be a number we typed in (ADR-0021 D7).

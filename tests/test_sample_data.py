@@ -8,6 +8,7 @@ generator writes today.
 
 import importlib.util
 import json
+from collections import Counter
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -82,3 +83,31 @@ def test_the_quiet_control_is_quiet_with_every_detector_on() -> None:
     quiet = next(s for s in MANIFEST["scenarios"] if s["id"] == "quiet")
     assert quiet["expected"]["detections"] == 0
     assert {d["name"] for d in quiet["detectors"]} >= {"rules", "flow_burst", "log_burst"}
+
+
+def test_the_stuck_meter_scenario_finds_what_its_description_says() -> None:
+    scenario = next(s for s in MANIFEST["scenarios"] if s["id"] == "stuck_meter")
+    sample = SAMPLES["stuck_meter"]
+    spec = PipelineSpec.model_validate(
+        {
+            "sources": [
+                {"normalizer": sample["normalizer"], "source_format": sample["source_format"]}
+            ],
+            "detectors": scenario["detectors"],
+            "alert_engine": scenario["alert_engine"],
+        }
+    )
+    text = (COPIES[0] / sample["file"]).read_text(encoding="utf-8")
+    detections = compute_run(spec, [text], origins=[sample["file"]]).detections
+
+    by_method = Counter(detection.method for detection in detections)
+    assert by_method == {"meter_baseline": 2, "meter_lof": 6}  # meter_iforest: silent, as it says
+    baseline = {
+        str(detection.evidence["signature"]): detection.window_start.isoformat()
+        for detection in detections
+        if detection.method == "meter_baseline"
+    }
+    assert baseline == {
+        "stuck": "2026-05-19T03:00:00+00:00",  # inside the freeze
+        "spike": "2026-05-20T09:00:00+00:00",  # the hour the counter catches up
+    }

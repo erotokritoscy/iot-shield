@@ -43,6 +43,14 @@ FIXTURE_PARAMS: dict[str, object] = {
 }
 
 
+LOF_FIXTURE_PARAMS: dict[str, object] = {
+    "profile_window_hours": 24,
+    "min_train_hours": 168,
+    "fp_budget": 0.02,
+    "n_neighbors": 20,
+}
+
+
 def meter_event(stamp: datetime, consumption: float, counter: float) -> NormalizedEvent:
     reading = MeterReading(
         meter_type=MeterType.WATER, unit="m3", counter=counter, interval_hours=1.0
@@ -100,6 +108,18 @@ def leaking_events(hours: int = 24 * 10, seed: int = 11) -> list[NormalizedEvent
     # Hour 24*9 + 2 is 02:00 on the last-but-one day: past the 24h rolling warm-up, and
     # in a bucket whose profile expects nothing.
     return meter_events(hours, seed=seed, leak_at=24 * 9 + 2)
+
+
+def stuck_events(hours: int = 24 * 21, seed: int = 13) -> list[NormalizedEvent]:
+    """Three weeks of normal use with the last-but-one day's readings frozen at zero."""
+    frozen = range(hours - 48, hours - 24)
+    events = []
+    counter = 100.0
+    for hour, event in enumerate(meter_events(hours, seed=seed)):
+        used = 0.0 if hour in frozen else float(event.value or 0.0)
+        counter = round(counter + used, 4)
+        events.append(meter_event(event.timestamp, used, counter))
+    return events
 
 
 def make_params(**overrides: object) -> MeterParams:

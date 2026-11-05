@@ -340,6 +340,7 @@ Hence the protocol is an explicit, reportable choice:
 |---|---|
 | `none` (default) | judge with the adapter exactly as configured, shipped artifact and all |
 | `prefix` | relearn from a reserved head of each asset's own clock, which is then **not scored** |
+| `clean-prefix` | the same head, not stopped by the first fault: its labelled hours are withheld from training |
 
 `prefix` is what a real deployment does: learn this asset's recent clean history, then watch
 what comes next. Running the two against each other is a real experiment. It answers whether
@@ -495,6 +496,35 @@ which is a more useful answer than a win: it says what the extra machinery is ac
 Both figures are modest, and that is the other half of the result. Hourly metering at these
 operating points is a hard lane for either, and a table printing only the winner would have
 hidden it.
+
+## Real labels: LEAD
+
+Everything above is scored against faults we generated. LEAD1.0 is a year of hourly electricity on
+200 commercial buildings with anomalies marked by people, so it can contradict us. Its terms were
+not reviewed, so like SKAB it is converted locally and never committed:
+
+```
+uv run python -m iotshield.eval fetch lead --source <directory holding train.csv>
+uv run python -m iotshield.eval --corpus lead --fit-protocol clean-prefix \
+    --spec config/bench/meter.yaml --spec config/bench/meter_lof.yaml \
+    --spec config/bench/meter_team3.yaml
+```
+
+`lead_sample` is every tenth building, for a run in seconds. Use `clean-prefix` rather than `prefix`:
+LEAD's faults start so early that `prefix` can fit only 46 of the 200 buildings. It trains on a
+history cleaner than any deployment has, so treat its numbers as an upper bound.
+
+| detector | evF1 | evP | evR | per meter-month |
+|---|---|---|---|---|
+| `team3_zscore` | **0.17** | 0.10 | 0.53 | 7.3 |
+| `meter_lof` | 0.15 | 0.09 | 0.57 | 6.9 |
+| `meter_baseline`, `floor_percentile: 0` | 0.13 | 0.08 | 0.40 | 9.4 |
+| `meter_iforest` | 0.11 | 0.07 | 0.37 | 7.6 |
+
+The general detector leads, and every fitted arm spends about seven times the one alarm per
+meter-month the forest was budgeted for. ADR-0048 has the rest, including `fused` against `weighted`
+on the same detections, which is read from `precision_at_k` and not from these columns, because an
+engine only changes the order.
 
 ## Sweeps
 

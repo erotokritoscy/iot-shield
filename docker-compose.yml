@@ -80,6 +80,7 @@ services:
       IOTSHIELD_SEED_DEMO_CONFIG: ${IOTSHIELD_SEED_DEMO_CONFIG-config/demo.yaml}
       # The demo config names a rule-detector shelf; same value the runner states.
       IOTSHIELD_RULES_PATH: "/app/config/rules"
+      IOTSHIELD_METER_MODELS_PATH: "/app/config/meter-models"
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,6 +138,7 @@ services:
       # and never a path, so this variable is the only thing that decides which directories a
       # run can read rules from.
       IOTSHIELD_RULES_PATH: "/app/config/rules"
+      IOTSHIELD_METER_MODELS_PATH: "/app/config/meter-models"
       # The source databases a data source may pull from (ADR-0042): declared in this file,
       # bind-mounted read-only, so editing it needs no rebuild. The passwords stay out of it —
       # each entry names one of these variables, which come from .env (see .env.example).
@@ -153,6 +155,10 @@ services:
       - ./results:/app/results
       - ./data/eval:/app/data/eval:ro
       - ./config/rules:/app/config/rules:ro
+      # Fits made at deployment (ADR-0048 D3): `docker compose run --rm runner python -m
+      # iotshield.detect.meter.train --name <fleet> ...` writes here, and the next dashboard load
+      # offers them. Read-only because a run judges with a fit and never makes one.
+      - ./config/meter-models:/app/config/meter-models:ro
       - ./config/connections.yaml:/app/config/connections.yaml:ro
     depends_on:
       init:
@@ -208,6 +214,7 @@ services:
       # REPO_ROOT /app) — but a rule shelf that silently comes back empty is indistinguishable
       # from one that is merely unused, so the shelf a run may read is named on purpose.
       IOTSHIELD_RULES_PATH: "/app/config/rules"
+      IOTSHIELD_METER_MODELS_PATH: "/app/config/meter-models"
     depends_on:
       init:
         condition: service_completed_successfully
