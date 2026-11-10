@@ -36,7 +36,7 @@ navigation scheme somebody chose:
 | Group | Plane | Talks to |
 |---|---|---|
 | **Monitor** (Triage, Assets & telemetry, Data health) | read | the read API, `/api/*` |
-| **Operate** (Compose & run, Runs, Data sources) | write | the Pipeline API, `/pipeline/*` |
+| **Operate** (Compose & run, Runs, Jobs, Data sources) | write | the Pipeline API, `/pipeline/*` |
 | **Evaluate** (Benchmarks) | evaluation | the Pipeline API's `/eval/*` router, or a local file |
 
 Monitor browses what the pipeline produced. Operate composes a chain and triggers a run. Evaluate
@@ -45,7 +45,8 @@ and the sidebar is the first place a new operator meets it.
 
 The routes are flat, one per view: `/`, `/assets`, `/data-health`, `/compose`, `/evaluate`, with
 anything else redirecting to Triage. `/runs` lists every saved run (ADR-0046) and `/runs/:runId`
-opens one — reached from that list or from a run's result tiles (ADR-0045). When the deployment requires login, a fourth group,
+opens one — reached from that list or from a run's result tiles (ADR-0045). `/jobs` lists the
+organization's saved jobs (ADR-0050). When the deployment requires login, a fourth group,
 **Organization**, holds `/account` (everyone) and `/users` (admins), and `/login` and `/register`
 sit outside the shell. A **super admin** (ADR-0040) with no home organization gets a different sidebar altogether —
 *Platform → Organizations, Account* — because they see no organization's data: `TenantOnly`
@@ -321,7 +322,12 @@ and receipt follow. The current step rides in the URL (`?step=`), clamped to the
 prerequisites are unmet; **Next** is disabled with the reason beside it (a source with no content,
 no detector or an untrained one, no sink), and the stepper only lets you jump to reachable steps.
 Detectors your sources can feed are listed first, and one nothing feeds is labelled so — offered,
-not hidden, because a deliberately silent run is still a real measurement (ADR-0038 D1).
+not hidden, because a deliberately silent run is still a real measurement (ADR-0038 D1). Every
+detector in the open list has its own (i), so they can be compared before one is chosen — which an
+`<option>` cannot hold, so the picker is `components/ui/controls.tsx: InfoSelect`, not a native
+`<select>`. Its text is `ADAPTER_HELP` plus what the detector reads (`detectorHelp`). The alert
+engine on step 3 stays a native dropdown; instead its label's (i) lists every engine's
+`ADAPTER_HELP` line, so `stub`, `weighted` and `fused` can still be compared before one is chosen.
 
 **Step 1 is a wizard of sources** (`pages/compose/SourceCard.tsx`). The sources are its steps —
 Source 1, Source 2, … in a row with a status each (✓, *needs content*, *wrong format?*, *has an error*), then
@@ -335,7 +341,7 @@ way's fields are drawn below it:
 
 | Way | Fields |
 |---|---|
-| Pull | the data source (only those with a connection) → the pull panel → the reader it brings, stated |
+| Pull | the data source (only those with a connection or an HTTP API) → the pull panel → the reader it brings, stated |
 | Sample | the sample → the reader it brings, stated |
 | Upload | optional data-source tag → normalizer and format → file and origin |
 | Paste | optional data-source tag → normalizer and format → the text box |
@@ -390,9 +396,21 @@ spec and inputs are still exactly the scenario's; change anything and the promis
 | Overheating pump | `pump_telemetry.csv` | 4 detections (`stub_threshold`), 1 alert |
 | Quiet network (control) | three quiet files, every detector on | 0 detections — any is a false alarm |
 | Broken input | `broken_syslog.log` | 6 events, 4 malformed (see Data health) |
+| SensiPro water meters | live pull: water, 2023-07-01 → 2023-07-30 | none promised |
+| SensiPro electricity meters, one quarter | live pull: electricity, 2023-06-01 → 2023-08-31 (92 days, the maximum; ~1M rows — the deliberately slow one) | none promised |
+| Biology network flows | live pull: 2023-07-21 → 2023-07-22 | none promised |
 
 Those numbers are not captions: `tests/test_sample_data.py` runs every scenario through the real
 pipeline and asserts them, and holds both copies of the files to what the generator writes.
+
+**A scenario can pull instead of loading a file.** Its `pulls` name a *connection*, and the wizard
+finds the organization's data source on it, because a shipped manifest cannot know an org's source
+ids. Without one the card stays visible and disabled, naming what is missing. The source row is the
+one a reopened saved run gets (ADR-0047): the window is a reference and nothing is read until the
+run reads it, so the first step shows "A window" rather than a row count. `expected` is null because
+nothing in the repo can say what a live database holds: Review says so, and there is no match or
+differ notice after the run. The tests instead check what they can without the database: the
+connection is declared, its params and window are legal, and the chain has no guard issues.
 
 **Live chain validation.** The assembled spec is sent to `/runs/validate` on every change, debounced
 350 ms, and the guard's issues render inline as errors or warnings with the stage that raised them.
@@ -442,6 +460,21 @@ stored, after a confirm). **Open in Compose** goes to `/compose?from=<run_id>`, 
 `compose/model.ts: specToState`, the inverse of `buildSpec` — params laid over the widget
 defaults, exactly as a scenario's are. The sources come back empty, because a saved run keeps
 its chain and not its data; a notice names the files it read.
+
+**A chain of pulls can be saved as a job (ADR-0050).** Under Validate & run, **Save as a job**
+(`pages/jobs/SaveAsJob.tsx`, fields in `JobForm.tsx`, rules in `jobDraft.ts`) names the chain,
+gives each pull a window — *the last N days* (ending yesterday or today, UTC, worked out at every
+run) or *these exact days* — and a schedule: only when asked, hourly at a minute, or daily/weekly
+at a UTC time, with the viewer's local time beside it. It is offered only when every source is a
+pull (an upload is not kept, so the panel says which source is in the way), and saving is
+refused with the run's own message for anything that would refuse the run. **Operate → Jobs**
+(`JobsPage.tsx`) lists each job with its schedule, window, next run and last result (linked to the
+run it made); **Run now** queues it for the compose `worker` service — a job never runs in the
+browser's request, so it has no proxy timeout — **Pause/Resume** toggles its schedule, the name
+opens its history (failures with their reason), **Edit** reopens it on Compose as
+`/compose?job=<id>` (windows resolved as of today) with **Update job** on the last step, and admins
+**Delete** it (its runs stay). The list and the history poll every 5 s while anything is queued or
+running.
 
 **This page is where the demo lives.** The thirteen `config/demo*.yaml` that indexed the adapters
 one at a time are gone; `config/demo.yaml` survives as the same walkthrough without a browser,
@@ -499,6 +532,28 @@ the answer fills the source exactly as an uploaded file would: its content, its 
 wrong-format check and the run see no difference. A refused pull (too many days or rows) says why
 and leaves the source as it was. On the Data sources page, an admin picks the connection; the
 normalizer fields then disappear, because the connector decides how the source is read.
+
+**An HTTP API is the other thing a source can be pulled from** (ADR-0049). On the Data sources
+form, *Pull from → An HTTP API…* opens `datasources/ApiFields.tsx` (state in
+`datasources/apiDraft.ts`): the https URL; the authentication — none, *Username and password*
+(HTTP basic) or *API key / bearer token* (sent in a header you name, `Authorization` with prefix
+`Bearer ` by default); the window's two query parameters and their form (dates, ISO instants,
+Unix seconds or milliseconds); an optional dotted path to the next page's URL; and the
+**mapping** — readings or log lines, the records path, the timestamp path and format (plus a zone
+for ISO times without an offset, which are otherwise refused), the asset id path, and for
+readings one `name = path` per metric, for logs the message and level paths. Save stays disabled,
+with the reason underneath, until the mapping could produce an event.
+
+The secret fields are **write-only**: the server never returns them, so an edit opens them blank
+with *Leave blank to keep the stored one*, and the list shows `(pulled from <host>, <lane>)`.
+Saving is refused when the URL is not public https (an operator can allow a host with
+`IOTSHIELD_API_ALLOWED_HOSTS`) or when the server has no `IOTSHIELD_SECRET_KEY` to seal the
+credentials with. On Compose the source appears in the pull list beside connected ones; its panel
+has only the dates (an API takes no params and lists no devices), it is read by `passthrough`
+(`normalized-jsonl`) with the mapped **lane** set on the source — a log API read as telemetry
+would reject every line, and the run refuses it — and the pulled caption says it is read from the
+API when the run starts. Records the mapping cannot fill (no timestamp, a missing reading, an
+unknown level) arrive on Data Health as rejects naming the field, never silently dropped.
 
 ## Evaluate: Benchmarks
 
@@ -719,11 +774,13 @@ Recorded rather than fixed, because this guide is documentation and these are co
 | The in-page failure boundary | `web/src/components/QueryState.tsx` |
 | The queue and the alert inspector | `web/src/pages/TriagePage.tsx` |
 | One run's results, behind the Compose tiles (ADR-0045) | `web/src/pages/RunPage.tsx` |
+| Saved jobs: save, schedule, run, follow (ADR-0050) | `web/src/pages/JobsPage.tsx`, `web/src/pages/jobs/`, `src/iotshield/api/jobs.py`, `src/iotshield/jobs/worker.py` |
 | Saved runs: the list, and reopening a chain (ADR-0046) | `web/src/pages/RunsPage.tsx`, `web/src/pages/compose/model.ts: specToState`, `src/iotshield/storage/runs.py` |
 | Enrichment's read path in TypeScript | `web/src/lib/evidence.ts` |
 | Compose: preselection, live validation, the untrained warning | `web/src/pages/ComposePage.tsx` |
 | Compose: the (i) text behind every field | `web/src/pages/compose/help.ts` |
 | Data sources: the IT/OT register and its form | `web/src/pages/DataSourcesPage.tsx`, `src/iotshield/api/data_sources.py` |
+| Data sources: an HTTP API's fields, mapping and write-only credentials (ADR-0049) | `web/src/pages/datasources/`, `src/iotshield/connect/api/`, `src/iotshield/storage/secrets.py` |
 | IT/OT overviews: the pages, the chart builders, the counting | `web/src/pages/overview/`, `web/src/charts/overview.ts`, `src/iotshield/storage/overview.py` |
 | Pulling from a source database: connectors and the Pull panel | `src/iotshield/connect/`, `web/src/pages/compose/PullPanel.tsx`, `config/connections.yaml` |
 | The walkthrough's three inputs, and the scenario they encode | `scripts/make_demo_data.py` |

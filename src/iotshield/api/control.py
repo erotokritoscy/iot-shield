@@ -19,29 +19,32 @@ import inspect
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import date
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 from uuid import UUID
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 
 import iotshield
 from iotshield.api._auth import AccountDep, auth_enabled, authenticate
 from iotshield.api._eval_gate import eval_api_enabled
+from iotshield.api.execution import (
+    MAX_SOURCE_CHARS,
+    IssueInfo,
+    SourceInput,
+    issue_info,
+    perform_run,
+)
 from iotshield.capabilities import formats_in
-from iotshield.connect import ConnectionUnavailable, PullRefused, check_pull, pull_chunks
 from iotshield.contracts import MalformedRecord, PrioritizedAlert
 from iotshield.pipeline.compat import (
-    CompatIssue,
-    IncompatiblePipelineError,
     check_compatibility,
     has_errors,
 )
-from iotshield.pipeline.config import PipelineConfig, PipelineSpec, SourceSpec, config_from_spec
+from iotshield.pipeline.config import PipelineSpec, SourceSpec, config_from_spec
 from iotshield.pipeline.registry import (
     ALERT_ENGINES,
     DETECTORS,
@@ -52,20 +55,16 @@ from iotshield.pipeline.registry import (
     config_parameters,
 )
 from iotshield.pipeline.runner import (
-    Feed,
     RejectionLevel,
     RunReport,
-    execute_run,
     preview_source,
 )
-from iotshield.sink import SinkResources
 from iotshield.storage import (
     database_url_from_env,
     describe_location,
     make_engine,
     make_session_factory,
 )
-from iotshield.storage.accounts import Account
 from iotshield.storage.runs import MAX_NAME_LENGTH as MAX_RUN_NAME_LENGTH
 
 # --- Wire models: the Pipeline API's request/response schema -----------------
@@ -128,12 +127,6 @@ class ModulesResponse(BaseModel):
     sinks: list[SinkInfo]
 
 
-class IssueInfo(BaseModel):
-    level: str
-    stage: str
-    message: str
-
-
 class ValidateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -143,59 +136,6 @@ class ValidateRequest(BaseModel):
 class ValidateResponse(BaseModel):
     ok: bool  # True when there are no ERROR-level issues (WARNINGs still ok)
     issues: list[IssueInfo]
-
-
-MAX_SOURCE_CHARS = 4_000_000
-"""Ceiling on one source's payload — a declared limit, not an OOM.
-
-A run executes synchronously inside the request and holds the whole payload plus the events
-it fans out into, each retaining its `raw` line: measured at ~41x amplification (4.3 MB of
-CSV -> ~177 MB of heap, 3.5 s of one worker). Unbounded, a handful of concurrent requests
-takes the container down, and the caller learns nothing. Declared here so the failure is a
-422 naming the field instead.
-
-Keep this, nginx's `client_max_body_size` and the README's stated limit in agreement — three
-places that must not drift, which is why each names the others (ADR-0033).
-"""
-
-
-class PullInput(BaseModel):
-    """A window of an organization's data source, read by the server when the run starts."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    source_id: UUID = Field(description="The data source to pull from (it names a connection)")
-    start: date = Field(description="First day, inclusive, in the source's own clock")
-    end: date = Field(description="Last day, inclusive")
-    params: dict[str, Any] = Field(default_factory=dict, description="The connector's pull params")
-
-
-class SourceInput(BaseModel):
-    """One source's input, aligned to ``spec.sources`` by position: its text, or a pull.
-
-    A pull is a *reference* (ADR-0047): the server streams the window from the source's
-    database during the run, a batch of assets at a time, so it has no size limit beyond the
-    pull's 92-day window. ``content`` is text the caller already holds — an upload, a paste —
-    and keeps its ceiling, because it travels in this request.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    content: str | None = Field(
-        default=None,
-        max_length=MAX_SOURCE_CHARS,
-        description=(f"Raw input payload for this source, at most {MAX_SOURCE_CHARS:,} characters"),
-    )
-    pull: PullInput | None = Field(
-        default=None, description="Read this source from a data source instead (ADR-0047)"
-    )
-    origin: str = Field(default="api-run", description="Provenance label for this source")
-
-    @model_validator(mode="after")
-    def _one_input(self) -> "SourceInput":
-        if (self.content is None) == (self.pull is None):
-            raise ValueError("give a source exactly one of 'content' and 'pull'")
-        return self
 
 
 class RunRequest(BaseModel):
@@ -440,14 +380,6 @@ def _sink_info(name: str, spec: SinkSpec) -> SinkInfo:
     return SinkInfo(name=name, params=describe_params(spec.factory))
 
 
-def _refused(message: str) -> HTTPException:
-    return HTTPException(status_code=422, detail={"message": message, "issues": []})
-
-
-def _issue_info(issue: CompatIssue) -> IssueInfo:
-    return IssueInfo(level=issue.level.value, stage=issue.stage, message=issue.message)
-
-
 def _run_response(report: RunReport) -> RunResponse:
     return RunResponse(
         run_id=report.run_id,
@@ -524,7 +456,7 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         """Dry-run the compatibility guard: no execution, just the issues (for live UI feedback)."""
         config = config_from_spec(request.spec, app.state.database_url)
         issues = check_compatibility(config)
-        return ValidateResponse(ok=not has_errors(issues), issues=[_issue_info(i) for i in issues])
+        return ValidateResponse(ok=not has_errors(issues), issues=[issue_info(i) for i in issues])
 
     @app.post("/runs/preview")
     def preview_run_source(request: PreviewRequest) -> PreviewResponse:
@@ -545,131 +477,20 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     def create_run(request: RunRequest, account: AccountDep) -> RunResponse:
         """Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
 
-        The guard runs once, inside execute_run, which raises IncompatiblePipelineError on
-        an ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map
-        its typed error to a structured 422. It raises before any row is written.
+        The checks, the streaming of pulls and the mapping of failures to statuses are
+        ``api/execution.py``'s, shared with the job worker (ADR-0050).
         """
         config = config_from_spec(request.spec, app.state.database_url)
-        if len(request.inputs) != len(config.sources):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": (
-                        f"expected {len(config.sources)} input(s) to match spec.sources, "
-                        f"got {len(request.inputs)}"
-                    ),
-                    "issues": [],
-                },
-            )
-        feeds = _resolve_inputs(config, request.inputs, account)
-        try:
-            report = execute_run(
-                config,
-                feeds,
-                resources=SinkResources(
-                    session_factory=app.state.session_factory,
-                    output_dir=app.state.output_dir,
-                    # Who asked decides whose run it is — never anything in the request body.
-                    org_id=account.org_id,
-                    run_name=request.name,
-                    run_by=account.user.username,
-                ),
-            )
-        except IncompatiblePipelineError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": "incompatible pipeline configuration",
-                    "issues": [_issue_info(i).model_dump() for i in exc.issues],
-                },
-            ) from exc
-        except ConnectionUnavailable as exc:
-            # A pulled source's database failed mid-run. Every writer was aborted, so nothing
-            # was stored; the message names the connection and nothing about where it is.
-            raise HTTPException(
-                status_code=502, detail={"message": str(exc), "issues": []}
-            ) from exc
-        except ValueError as exc:
-            # A bad param *value* (min_count=1, a negative threshold, an artifact combined
-            # with hyperparameters) is refused at construction, inside execute_run and
-            # before any sink runs. The guard cannot catch it — it reads declared
-            # capabilities without building adapters — so validate() legitimately passes and
-            # this is the first point the run is known to be impossible. That is a caller
-            # error, not a server fault: without this it left as a bare 500 and the adapter's
-            # own carefully worded message ("min_count must be >= 2") reached nobody. Mirrors
-            # how the evaluation router already maps construction failures.
-            raise HTTPException(
-                status_code=422,
-                detail={"message": str(exc), "issues": []},
-            ) from exc
-        except Exception as exc:
-            # Everything else — an OSError from a sink, the database going away mid-write —
-            # used to escape as a bare 500 with an empty body. Sinks run in config order and
-            # there is no cross-store atomicity, so the caller could get that opaque 500 for a
-            # run whose Postgres rows were already committed, with nothing saying so. Naming
-            # the failure — quoting the sink's own error — is what makes the outcome legible
-            # instead of ambiguous (ADR-0033). Listing the destinations that DID complete
-            # would say more, and needs `execute_run` to carry them out of the failure path;
-            # today they exist only on a successful RunReport.
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": f"the run failed while writing its result: {exc}",
-                    "issues": [],
-                },
-            ) from exc
+        report = perform_run(
+            config,
+            request.inputs,
+            session_factory=app.state.session_factory,
+            output_dir=app.state.output_dir,
+            org_id=account.org_id,
+            run_name=request.name,
+            run_by=account.user.username,
+        )
         return _run_response(report)
-
-    def _resolve_inputs(
-        config: PipelineConfig, inputs: Sequence[SourceInput], account: Account
-    ) -> list[str | Feed]:
-        """Each input as the runner takes it: text as it came, a pull as a lazy stream.
-
-        Every pull is checked before any is read — the data source is this organization's,
-        its connection is allowed, the spec reads it with its connector's own normalizer and
-        format, the window and params are valid — so a bad third source is refused before the
-        first is streamed, and before anything is stored.
-        """
-        from iotshield.api.data_sources import connected_source  # it imports this module
-
-        resolved: list[str | Feed] = []
-        with app.state.session_factory() as session:
-            for index, (item, source) in enumerate(zip(inputs, config.sources, strict=True)):
-                if item.pull is None:
-                    resolved.append(Feed(chunks=[item.content or ""], origin=item.origin))
-                    continue
-                pulled = item.pull
-                data_source, connection, connector = connected_source(
-                    pulled.source_id, account, session
-                )
-                if (source.normalizer, source.source_format) != (
-                    connector.normalizer,
-                    connector.source_format,
-                ):
-                    raise _refused(
-                        f"source {index + 1} is read with {source.normalizer!r} "
-                        f"({source.source_format}), but its pull is "
-                        f"{connector.source_format} for {connector.normalizer!r}"
-                    )
-                try:
-                    check_pull(connector, pulled.start, pulled.end, pulled.params)
-                except PullRefused as exc:
-                    raise _refused(f"source {index + 1}: {exc}") from exc
-                origin = (
-                    item.origin
-                    if item.origin != "api-run"
-                    else f"{data_source.name} {pulled.start.isoformat()}..{pulled.end.isoformat()}"
-                )
-                resolved.append(
-                    Feed(
-                        chunks=pull_chunks(
-                            connector, connection, pulled.start, pulled.end, pulled.params
-                        ),
-                        origin=origin,
-                        pull=pulled.model_dump(mode="json"),
-                    )
-                )
-        return resolved
 
     # An organization's register of its IT and OT data sources (ADR-0041). Always mounted:
     # with auth off it is the default organization's, like every other route here. Imported
@@ -683,6 +504,12 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     from iotshield.api.runs import create_runs_router
 
     app.include_router(create_runs_router())
+
+    # Saved jobs (ADR-0050): a chain of pulls run again on demand or on a schedule, by the
+    # `worker` service. Always mounted; with no worker running, a queued job simply waits.
+    from iotshield.api.jobs import create_jobs_router
+
+    app.include_router(create_jobs_router())
 
     # The evaluation plane is opt-in and *absent* otherwise: no route to reach or probe in a
     # product deployment, rather than a guard inside a live handler (ADR-0021 D1). Imported

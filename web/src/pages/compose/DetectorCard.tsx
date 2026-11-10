@@ -1,11 +1,11 @@
 import { ArtifactField } from "@/components/ArtifactField";
 import { ParamFields } from "@/components/ParamFields";
-import { Button, Field, Select } from "@/components/ui/controls";
+import { Button, Field, InfoSelect } from "@/components/ui/controls";
 import { InfoLines } from "@/components/ui/info";
 import { Collapsible } from "@/components/ui/surfaces";
 import type { ModuleInfo } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
-import { ADAPTER_HELP, FIELD_HELP, paramHelp } from "@/pages/compose/help";
+import { ADAPTER_HELP, detectorHelp, FIELD_HELP, paramHelp } from "@/pages/compose/help";
 import { feeds, missingInputs, type DetectorRow } from "@/pages/compose/model";
 
 /**
@@ -17,7 +17,8 @@ import { feeds, missingInputs, type DetectorRow } from "@/pages/compose/model";
  * The list is ordered with the detectors your sources can feed first, and each option says
  * whether it can: a detector whose inputs no source produces is offered, not hidden (a
  * deliberately silent run is a real measurement — ADR-0038 D1), but it should never look like
- * an equal choice.
+ * an equal choice. Each option also carries its own (i), so detectors can be compared before
+ * one is chosen; the (i) on the label explains the field and the current choice.
  */
 export function DetectorCard({
   index,
@@ -53,19 +54,23 @@ export function DetectorCard({
           className="flex-1"
           info={<InfoLines lines={[FIELD_HELP.detector, ADAPTER_HELP[`detector:${row.name}`]]} />}
         >
-          <Select
+          <InfoSelect
             id={`det_${index}_name`}
             data-testid={`det_${index}_name`}
+            aria-label={`Detector ${index + 1}: ${row.name}`}
             options={ordered.map((item) => item.name)}
             labelFor={(name) => {
               const item = detectors.find((candidate) => candidate.name === name);
               return item && !feeds(item, produced) ? `${name} — no source feeds it` : name;
             }}
-            value={row.name}
-            onChange={(event) => {
-              const name = event.target.value;
-              onChange({ name, params: judgeOnlyValues(detectors.find((item) => item.name === name)) });
+            infoFor={(name) => {
+              const item = detectors.find((candidate) => candidate.name === name);
+              return item ? <InfoLines lines={detectorHelp(item)} /> : null;
             }}
+            value={row.name}
+            onChange={(name) =>
+              onChange({ name, params: judgeOnlyValues(detectors.find((item) => item.name === name)) })
+            }
           />
         </Field>
         {onRemove ? (

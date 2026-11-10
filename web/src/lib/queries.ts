@@ -53,6 +53,10 @@ export const keys = {
   /** Saved runs (ADR-0046): the list, and one run's record. Rename and delete invalidate both. */
   savedRuns: ["pipeline", "runs"] as const,
   savedRun: (runId: string) => ["pipeline", "runs", runId] as const,
+  /** Saved jobs (ADR-0050): the list, one job, and its executions. */
+  jobs: ["pipeline", "jobs"] as const,
+  job: (jobId: string) => ["pipeline", "jobs", jobId] as const,
+  jobExecutions: (jobId: string) => ["pipeline", "jobs", jobId, "executions"] as const,
   dataSources: ["pipeline", "data-sources"] as const,
   connections: ["pipeline", "data-sources", "connections"] as const,
   devices: (sourceId: string, params: Record<string, string>) =>
@@ -145,6 +149,33 @@ export const useSavedRun = (runId: string | undefined) =>
     queryKey: keys.savedRun(runId ?? ""),
     queryFn: () => pipelineApi.savedRun(runId as string),
     enabled: Boolean(runId),
+  });
+
+/**
+ * A job's state changes while nobody touches the page (the worker runs it), so the list and a
+ * job's history poll while anything is queued or running, and stop when nothing is.
+ */
+const JOB_POLL_MS = 5_000;
+const busy = (status: string | undefined) => status === "queued" || status === "running";
+
+export const useJobs = () =>
+  useQuery({
+    queryKey: keys.jobs,
+    queryFn: () => pipelineApi.jobs(),
+    refetchInterval: (query) => (query.state.data?.some((job) => busy(job.last?.status)) ? JOB_POLL_MS : false),
+  });
+export const useJob = (jobId: string | undefined) =>
+  useQuery({
+    queryKey: keys.job(jobId ?? ""),
+    queryFn: () => pipelineApi.job(jobId as string),
+    enabled: Boolean(jobId),
+  });
+export const useJobExecutions = (jobId: string, enabled = true) =>
+  useQuery({
+    queryKey: keys.jobExecutions(jobId),
+    queryFn: () => pipelineApi.jobExecutions(jobId),
+    enabled,
+    refetchInterval: (query) => (query.state.data?.some((run) => busy(run.status)) ? JOB_POLL_MS : false),
   });
 
 export const useAlertDetections = (alertId: string | undefined) =>

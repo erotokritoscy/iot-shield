@@ -13,7 +13,9 @@ copies, byte for byte:
 
 ``tests/test_sample_data.py`` holds the two to identity and **runs every scenario through the
 real pipeline**, asserting the counts the manifest promises — so a description in the wizard
-cannot drift from what the bytes actually do.
+cannot drift from what the bytes actually do. The exception is a scenario that **pulls** from a
+data source's live database (ADR-0047) rather than loading a file here: nothing in this repo can
+say what that database holds, so it promises no counts, and is tested for being well formed.
 
 Like ``make_demo_data.py`` (whose camera walkthrough is reused here verbatim, as the first
 scenario) this is curation, not the evaluation generator: no labels, no world model, just
@@ -419,6 +421,76 @@ SCENARIOS: list[dict[str, Any]] = [
         # An hour, because this lane's events are hourly (see config/bench/meter.yaml).
         "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
         "expected": {"events": 672, "malformed": 0, "detections": 8, "alerts": 8},
+    },
+    # Live pulls: the data is the source's own database, not a file here, so there is nothing to
+    # promise (`expected` is None). What can be tested is that each one is well formed.
+    {
+        "id": "sensipro_water",
+        "title": "SensiPro water meters (live data)",
+        "description": "Pulls every SensiPro water meter for July 2023 from the live database, "
+        "the month its faulty meters begin failing. meter_quality reports meters that went "
+        "silent or ran over the hourly limit, and meter_baseline reports stuck meters and unusual "
+        "use. A large run, and each run stores its results again.",
+        "samples": [],
+        "pulls": [
+            {
+                "connection": "sensipro",
+                "start": "2023-07-01",
+                "end": "2023-07-30",
+                "params": {"utility": "water"},
+            }
+        ],
+        "detectors": [
+            {"name": "meter_quality", "params": {}},
+            {"name": "meter_baseline", "params": {}},
+        ],
+        # An hour, because this lane's events are hourly (see config/bench/meter.yaml).
+        "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
+        "expected": None,
+    },
+    {
+        "id": "sensipro_electricity",
+        "title": "SensiPro electricity meters, one quarter (live data, slow)",
+        "description": "Pulls every SensiPro electricity meter for June to August 2023 from the "
+        "live database: 92 days, the most one pull may cover, about a million hourly readings "
+        "across some 750 meters. meter_quality reports meters that went silent or ran over the "
+        "hourly limit, and meter_baseline reports stuck meters and unusual use. Expect it to "
+        "take several minutes, and each run stores its results again.",
+        "samples": [],
+        "pulls": [
+            {
+                "connection": "sensipro",
+                "start": "2023-06-01",
+                "end": "2023-08-31",
+                "params": {"utility": "electricity"},
+            }
+        ],
+        "detectors": [
+            {"name": "meter_quality", "params": {}},
+            {"name": "meter_baseline", "params": {}},
+        ],
+        "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
+        "expected": None,
+    },
+    {
+        "id": "biology_flows",
+        "title": "Biology network flows (live data)",
+        "description": "Pulls the Biology capture for 21 and 22 July 2023 from the live database "
+        "and judges it with the flow rules and all three burst presets. If the synthetic attack "
+        "from scripts/biology_fake_attack.py is inserted, this window carries it. Each run stores "
+        "its results again, which doubles the counts on the IT overview.",
+        "samples": [],
+        "pulls": [
+            {"connection": "biology", "start": "2023-07-21", "end": "2023-07-22", "params": {}}
+        ],
+        "detectors": [
+            {"name": "rules", "params": {"lane": "flow"}},
+            {"name": "flow_burst", "params": {"preset": "port_scan"}},
+            {"name": "flow_burst", "params": {"preset": "fan_out"}},
+            {"name": "flow_burst", "params": {"preset": "exfiltration"}},
+        ],
+        "alert_engine": _WEIGHTED,
+        "expected": None,
     },
 ]
 

@@ -47,6 +47,7 @@ definition.
 | `POST /runs/preview` | one source read by its normalizer, nothing judged or stored | "is this file in the format I said?" |
 | `POST /runs` | run it, return a summary | the only path that writes results |
 | `/data-sources` | the organization's IT/OT data sources: list (anyone), add/edit/remove (admins) | see *Data sources* below |
+| `/jobs` | saved chains of pulls, run again on demand or on a schedule by the `worker` service | see *Jobs* below |
 | `GET /docs` | generated API docs | |
 
 With `IOTSHIELD_AUTH` set, a seventh group appears: the account routes under `/auth`, and every
@@ -399,7 +400,28 @@ query sorts a whole fleet). A window over 92 days is a 422. A database that does
 was stored. A connection not declared, or reserved for another organization, is a 422 either way.
 
 A run is still synchronous, and nginx gives the Pipeline API 600 s; a very large window written
-to Postgres can take longer. That is the next limit, recorded in ADR-0047.
+to Postgres can take longer. That is the next limit, recorded in ADR-0047. A **job** (below) has no
+such limit, because the worker runs it and no request waits.
+
+## Jobs (ADR-0050)
+
+A job is a chain whose inputs are all pulls, saved to run again. Each pull has a window rule —
+`{"kind": "fixed", "start", "end"}` or `{"kind": "rolling", "days": 1..92, "through":
+"yesterday" | "today"}`, resolved in UTC when the run starts — and the job an optional
+`schedule`: `{"every": "hour" | "day" | "week", "minute", "hour", "weekday"}` (UTC, 0 = Monday).
+
+| | |
+|---|---|
+| `GET /jobs` | the organization's jobs by name, each with its `last` execution |
+| `POST /jobs` | 201; 422 with the run's own message for anything that would refuse its run — checked without reading |
+| `GET /jobs/{id}` · `PUT /jobs/{id}` | read; replace (chain, pulls, schedule, `enabled`) |
+| `DELETE /jobs/{id}` | admins; 204; the runs it made are kept |
+| `POST /jobs/{id}/run` | 202 with a `queued` execution; 409 while one is queued or running |
+| `GET /jobs/{id}/executions` | newest first, `X-Total-Count`; `status` queued/running/succeeded/failed, `run_id`, `error` |
+
+Nothing here runs a job: the compose `worker` (`python -m iotshield.jobs.worker`) queues due jobs,
+fails executions whose heartbeat stopped, and runs queued ones through `api/execution.py` — the
+code `POST /runs` uses — so a job's run is an ordinary saved run named `<job> · <time> UTC`.
 
 ## Where results go
 
@@ -526,7 +548,7 @@ a truthy value. Unset, they are not registered at all:
 
 ```
 GET /eval/detectors        -> 404
-app routes: /data-sources, /data-sources/{source_id}, /docs, /health, /modules, /openapi.json, /redoc, /runs, /runs/preview, /runs/validate
+app routes: /data-sources, /data-sources/{source_id}, /docs, /health, /jobs, /jobs/{job_id}, /modules, /openapi.json, /redoc, /runs, /runs/preview, /runs/validate
 ```
 
 Absent rather than guarded, which is a stronger property: there is no route to probe, no

@@ -34,9 +34,12 @@ from iotshield.storage.orm import (
     AlertDetectionRow,
     AlertRow,
     AssetRow,
+    DataSourceEndpointRow,
     DataSourceRow,
     DetectionRow,
     EventRow,
+    JobExecutionRow,
+    JobRow,
     MalformedRow,
     OrganizationRow,
     RunRow,
@@ -485,8 +488,11 @@ def delete_organization(session: Session, org_id: str) -> bool:
     members = select(UserRow.user_id).where(UserRow.org_id == org_id)
     session.execute(delete(SessionRow).where(SessionRow.user_id.in_(members)))
     session.execute(delete(UserRow).where(UserRow.org_id == org_id))
+    session.execute(delete(DataSourceEndpointRow).where(DataSourceEndpointRow.org_id == org_id))
     session.execute(delete(DataSourceRow).where(DataSourceRow.org_id == org_id))
     session.execute(delete(RunRow).where(RunRow.org_id == org_id))
+    session.execute(delete(JobExecutionRow).where(JobExecutionRow.org_id == org_id))
+    session.execute(delete(JobRow).where(JobRow.org_id == org_id))
     session.execute(delete(OrganizationRow).where(OrganizationRow.org_id == org_id))
     session.flush()
     return True

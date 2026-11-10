@@ -42,6 +42,21 @@ class LineParseError(Exception):
     """Raised by a per-line parser to reject a line; the message is the reason."""
 
 
+def validation_message(exc: ValidationError) -> str:
+    """Each problem with the field it is about: ``timestamp: Field required``.
+
+    The bare message alone ("Field required") left Data Health unable to say *which* field a
+    record lacked — harmless for a parser that always fills every field, useless for input
+    another system shaped (``passthrough``, an API source's mapping — ADR-0049).
+    """
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+        if error["loc"]
+        else error["msg"]
+        for error in exc.errors()
+    )
+
+
 def normalize_linewise(
     text: str,
     *,
@@ -76,7 +91,7 @@ def normalize_linewise(
         except LineParseError as exc:
             reject(line, str(exc))
         except ValidationError as exc:
-            reject(line, "; ".join(error["msg"] for error in exc.errors()))
+            reject(line, validation_message(exc))
         else:
             result.events.append(event)
     return result

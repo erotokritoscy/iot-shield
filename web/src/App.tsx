@@ -18,6 +18,7 @@ import { ItOverviewPage } from "@/pages/overview/ItOverviewPage";
 import { MeterPage } from "@/pages/overview/MeterPage";
 import { OtOverviewPage } from "@/pages/overview/OtOverviewPage";
 import { RunPage } from "@/pages/RunPage";
+import { JobsPage } from "@/pages/JobsPage";
 import { RunsPage } from "@/pages/RunsPage";
 import { TriagePage } from "@/pages/TriagePage";
 import { UsersPage } from "@/pages/UsersPage";
@@ -62,6 +63,7 @@ export function AppRoutes() {
             </Route>
             <Route path="/compose" element={<ComposePage />} />
             <Route path="/runs" element={<RunsPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
             <Route path="/data-sources" element={<DataSourcesPage />} />
             <Route path="/evaluate" element={<EvaluatePage />} />
             <Route path="/users" element={<UsersPage />} />

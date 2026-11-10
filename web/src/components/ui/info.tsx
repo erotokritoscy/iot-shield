@@ -15,11 +15,18 @@ export function InfoTip({
   label,
   children,
   className,
+  placement = "below",
 }: {
   /** The field it explains — names the button ("About Normalizer") for assistive tech. */
   readonly label: string;
   readonly children: React.ReactNode;
   readonly className?: string;
+  /**
+   * `left` is for a column of tips (InfoSelect's rows). Opening below would lay this tip over the
+   * next row's (i), and since a tip counts as hovering its own wrapper the pointer could never
+   * reach it. To the left it covers only names, and it lets the pointer through to them.
+   */
+  readonly placement?: "below" | "left";
 }) {
   const id = React.useId();
   const wrapper = React.useRef<HTMLSpanElement>(null);
@@ -59,6 +66,8 @@ export function InfoTip({
         onBlur={() => setFocused(false)}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
+            // Escape closes one thing at a time: this tip, not also the dropdown it sits in.
+            if (open) event.stopPropagation();
             setPinned(false);
             setFocused(false);
             setHovered(false);
@@ -71,7 +80,10 @@ export function InfoTip({
         <span
           id={id}
           role="tooltip"
-          className="absolute left-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-line bg-raised p-2.5 text-xs font-normal normal-case leading-relaxed tracking-normal text-ink shadow-lg"
+          className={cn(
+            "absolute z-30 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-line bg-raised p-2.5 text-xs font-normal normal-case leading-relaxed tracking-normal text-ink shadow-lg",
+            placement === "left" ? "pointer-events-none right-full top-0 mr-1.5" : "left-0 top-full mt-1",
+          )}
         >
           {children}
         </span>

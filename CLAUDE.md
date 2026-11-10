@@ -315,6 +315,33 @@ iotshield.convert.wbn`) and LEAD's per-hour readings into `sensipro-hourly-csv` 
 counter cannot express the reading after a gap of **exactly one hour** without inventing a zero for
 the missing hour, so `representable` drops it and the caller counts it.
 
+**A data source may be an HTTP API (ADR-0049).** Beside a connection the deployment declares, an
+org admin can register an API on the Data sources page: an https URL, authentication (none,
+username + password, or an API key / bearer token in a named header), the window's two query
+parameters, an optional next-page path, and a **mapping** from its JSON to events (records path,
+timestamp, asset, and per-metric readings or a log message + level). The mapper writes
+`normalized-jsonl` and the run reads it with **`passthrough`**, so contract validation and
+Data Health come for free; the mapped lane rides as `DataSourceInfo.reader_params` and a run
+refuses a pull read in another lane. Both kinds of pull reach a run as a `connect.target.PullTarget`
+(`DatabaseTarget`, `ApiTarget`). Credentials are **write-only**: sealed with Fernet under
+`IOTSHIELD_SECRET_KEY` in `data_source_endpoints` (a new table, no `down -v`), never returned
+(`has_credentials`), and a blank field on edit keeps them; no key, no API source. This gives up
+ADR-0042's "never a host in a request", so `connect/api/guard.py` refuses non-https and every
+non-public address (operator allowlist: `IOTSHIELD_API_ALLOWED_HOSTS`) at save and before every
+request, redirects are never followed, a next page must share the origin, and errors never quote
+the response body. DNS rebinding is the recorded residual risk.
+
+**A chain of pulls can be saved as a job (ADR-0050).** Compose's Validate & run step has *Save
+as a job*: the chain, a window rule per pull (`fixed` days, or `rolling` — the last N days to
+yesterday/today, resolved in UTC at each run) and an optional schedule (hourly/daily/weekly, UTC,
+no cron). Only pulls — an upload is not kept. Saving runs the guard and the pull checks without
+reading anything, through `api/execution.py`, the code `POST /runs` now uses too. Jobs run in the
+compose **`worker`** service (`python -m iotshield.jobs.worker`), never in the API: `POST
+/jobs/{id}/run` only queues; the worker fails executions whose heartbeat stopped, queues due jobs
+(a missed slot runs once, a busy job's slot is skipped, never stacked), and runs queued ones one
+at a time, each producing an ordinary saved run. Tables `jobs` + `job_executions` (no `down -v`);
+members create and run, admins delete; Operate → Jobs polls while anything is queued or running.
+
 **A real meter's fit lives on a shelf (ADR-0048 D3).** A run never fits and a fit holds readings, so
 `python -m iotshield.detect.meter.train --name <fleet> --source <csv> --source-format <dialect>`
 writes to `IOTSHIELD_METER_MODELS_PATH` (`config/meter-models`, gitignored). Ids resolve by membership
@@ -368,7 +395,7 @@ reason instead of reading like a bad detector. Reported, not refused: a delibera
 detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
-docker compose up -d            # postgres -> init -> read API (:8000) + Pipeline API (:8100) -> dashboard (:8080)
+docker compose up -d            # postgres (127.0.0.1:5432) -> init -> read API (:8000) + Pipeline API (:8100) + job worker -> dashboard (:8080)
 docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
 IOTSHIELD_DEMO_ORG=<org-id> docker compose run --rm runner   # the walkthrough, into YOUR org
@@ -452,7 +479,7 @@ depend on in compose); the read-only API never creates the schema, and the
 runner still creates it for standalone host runs. The runtime dependency surface was
 numpy-only from team3 (ADR-0012) until the meter detector brought **scikit-learn** in
 (ADR-0030) — the first model library in the image, ~100 MB with scipy, which makes image
-hardening more valuable rather than less. `statsmodels` stays out (MSTL only). torch is
+hardening more valuable rather than less. `statsmodels` stays out (MSTL only). `cryptography` joined for ADR-0049's sealed API credentials. torch is
 still deferred to its own per-model ADR.
 
 A run ingests **one or more sources** (ADR-0019): `PipelineSpec.sources` is a list of
@@ -664,10 +691,16 @@ src/iotshield/
   convert/      a source's own files -> text a normalizer reads: per-hour rates as counters, WBN workbooks (ADR-0048)
   connect/      connectors (ADR-0042): stream a window of a source's own DB (SensiPro Postgres, Biology
                 MySQL) as text a normalizer reads, chunk by chunk (ADR-0047); connections.py = the DBs
-                declared in config/connections.yaml (by name, read-only sessions, passwords from env)
+                declared in config/connections.yaml (by name, read-only sessions, passwords from env);
+                api/ = an org's HTTP API sources (endpoint, JSON mapping, URL guard, client — ADR-0049);
+                target.py = PullTarget, what a run pulls from (a database or an API)
+  jobs/         saved, schedulable jobs (ADR-0050): model.py = windows + schedule, run.py = check a job /
+                run one execution, worker.py = the compose `worker` service that queues and runs them
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests); accounts.py = orgs/users/sessions,
                 data_sources.py = each org's IT/OT data-source register (ADR-0041),
+                endpoints.py + secrets.py = an API source's settings and sealed credentials (ADR-0049),
                 runs.py = saved runs: name, author, chain, counts (ADR-0046),
+                jobs.py = saved jobs and their executions (ADR-0050),
                 overview.py = the IT/OT overview counts behind the read API's /overview (ADR-0044)
   auth/         passwords.py (stdlib scrypt), superadmin.py (the CLI that creates super admins) —
                 the access-control layer the pipeline never sees (ADR-0039/0040)
@@ -675,7 +708,8 @@ src/iotshield/
                 batches.py = the asset partition a product run is judged through, a batch at a time (ADR-0047)
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py);
                 _auth.py = the login gate both share, auth.py = the /auth router, admin.py = the
-                super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources; runs.py = saved /runs
+                super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources; runs.py = saved /runs;
+                execution.py = checking + running a chain for an org, shared by POST /runs and jobs; jobs.py = /jobs
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)
@@ -684,7 +718,7 @@ web/            the React dashboard (ADR-0031) — the product UI, served by ngi
   src/lib/api/    the ONE door into both APIs: types generated from their /openapi.json
                   (committed) + zod validation per response, so drift fails loudly here
   src/charts/     the six Vega-Lite builders, ported one-to-one from the Streamlit app's charts
-  src/pages/      Monitor (Triage/Assets/DataHealth, overview/ = IT/OT overviews + meter page), Operate (Compose wizard; compose/ = its model + cards; Data sources), evaluate/, auth/, admin/
+  src/pages/      Monitor (Triage/Assets/DataHealth, overview/ = IT/OT overviews + meter page), Operate (Compose wizard; compose/ = its model + cards; Data sources; Jobs, jobs/ = the job form), evaluate/, auth/, admin/
   src/index.css   the design tokens — change the look here, never with a hex in a component
   nginx.conf.template  serves the SPA and proxies /api + /pipeline, which is why the
                   browser makes only same-origin requests and neither API needs CORS
@@ -697,7 +731,8 @@ config/rules/   the rule shelf: one subdirectory per DEPLOYMENT-authored rule se
 data/demo/      the walkthrough's inputs, GENERATED by scripts/make_demo_data.py (keep tiny; big datasets stay in ../reference/)
 data/samples/   the Compose wizard's sample library + scenarios (manifest.json), GENERATED by
                 scripts/make_sample_data.py; an identical copy in web/public/samples/ is served at /samples/.
-                tests/test_sample_data.py runs every scenario and asserts the counts its manifest promises
+                tests/test_sample_data.py runs every file scenario and asserts the counts its manifest promises;
+                a scenario that pulls from a live database promises none and is checked for being well formed
 data/eval/      corpus bundles (manifest + gzipped readings + interval labels)
 ```
 

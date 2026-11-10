@@ -13,6 +13,10 @@ Two connectors ship, one per source the iotShield prototype read:
 - ``biology`` (IT) — the Biology capture's ``packets`` table (cicflowmeter rows), rendered as
   ``cicflowmeter-csv`` for the ``flow`` normalizer.
 
+A data source may instead be pulled from an **HTTP API** an org admin registers (ADR-0049,
+``api/``): JSON mapped to ``normalized-jsonl`` for the ``passthrough`` normalizer. Both kinds
+reach a run as a ``target.PullTarget``.
+
 *Where* a database is — host, user, the variable holding its password — is a deployment fact
 declared in ``config/connections.yaml`` and never accepted from a request (``connections.py``).
 """
@@ -37,17 +41,22 @@ from iotshield.connect.port import (
     pull_summary,
 )
 from iotshield.connect.registry import CONNECTORS
+from iotshield.connect.target import API_NORMALIZER, ApiTarget, DatabaseTarget, PullTarget
 
 __all__ = [
+    "API_NORMALIZER",
     "CONNECTIONS_PATH_ENV",
     "CONNECTORS",
     "MAX_PULL_DAYS",
+    "ApiTarget",
     "Connection",
     "ConnectionUnavailable",
     "ConnectorSpec",
+    "DatabaseTarget",
     "Device",
     "PullRefused",
     "PullSummary",
+    "PullTarget",
     "Pulled",
     "check_pull",
     "list_devices",

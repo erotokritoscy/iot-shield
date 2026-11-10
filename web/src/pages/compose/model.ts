@@ -9,7 +9,7 @@ import * as React from "react";
 
 import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
-import type { ModuleInfo, ModulesResponse, PreviewResponse } from "@/lib/api/types";
+import type { ConnectionInfo, DataSourceInfo, ModuleInfo, ModulesResponse, PreviewResponse } from "@/lib/api/types";
 import { judgeOnlyValues, learnsWeights } from "@/lib/artifact";
 import { initialValues, submittedParams, type ParamValue, type ParamValues } from "@/lib/params";
 import type { Sample, Scenario } from "@/lib/samples";
@@ -224,6 +224,83 @@ export function sourceFromSample(
     content,
     fileName: sample.file,
     mode: "sample",
+  };
+}
+
+type ScenarioPull = Scenario["pulls"][number];
+
+/** Whether a data source can be pulled from here: by a connection offered to this organization,
+ * or from its own HTTP API (ADR-0049), which needs no connection. */
+export const isPullable = (source: DataSourceInfo, connections: readonly ConnectionInfo[]): boolean =>
+  Boolean(source.api) || connections.some((item) => item.name === source.connection);
+
+/**
+ * The params a data source's reader starts from: the catalogue's defaults, with what the source
+ * requires laid over them. An API source mapped to log lines must be read by `passthrough` with
+ * `lane: log` — the default (telemetry) would reject every line, and the run refuses it.
+ */
+export function readerValues(reader: ModuleInfo | undefined, source: DataSourceInfo | undefined): ParamValues {
+  return { ...initialValues(reader?.params), ...(source?.reader_params ?? {}) };
+}
+
+/**
+ * An API source's pull described the way a connection's is, so one pull panel serves both: it
+ * takes no params and has no device list — the window is the whole request.
+ */
+export function apiConnection(source: DataSourceInfo): ConnectionInfo | undefined {
+  if (!source.api) return undefined;
+  let host = source.api.url;
+  try {
+    host = new URL(source.api.url).host;
+  } catch {
+    // keep the URL as written
+  }
+  return {
+    name: host,
+    connector: "http-api",
+    description: `HTTP API, mapped to ${source.api.mapping.lane === "log" ? "log lines" : "readings"}.`,
+    normalizer: source.normalizer ?? "passthrough",
+    source_format: source.source_format ?? "normalized-jsonl",
+    params: [],
+    has_devices: false,
+  };
+}
+
+/**
+ * The data source a scenario's pull reads in this organization: on that connection, one the
+ * organization may use, and saying how it is read. `undefined` when there is none, so the
+ * scenario can say what is missing instead of failing when it runs.
+ */
+export function dataSourceForPull(
+  pull: ScenarioPull,
+  dataSources: readonly DataSourceInfo[],
+  connections: readonly ConnectionInfo[],
+): DataSourceInfo | undefined {
+  if (!connections.some((item) => item.name === pull.connection)) return undefined;
+  return dataSources.find(
+    (source) => source.connection === pull.connection && source.normalizer && source.source_format,
+  );
+}
+
+/**
+ * A scenario's pull as a source row: the same row a reopened saved run gets (`restorePulls`), so
+ * nothing is read until the run reads it. `rows` stays null, which the card shows as "A window".
+ */
+export function sourceFromPull(
+  pull: ScenarioPull,
+  source: DataSourceInfo,
+  normalizers: readonly ModuleInfo[],
+): SourceRow {
+  const module = normalizers.find((item) => item.name === source.normalizer);
+  return {
+    normalizer: source.normalizer ?? "",
+    format: source.source_format ?? "",
+    params: readerValues(module, source),
+    content: "",
+    fileName: `${source.name} ${pull.start}..${pull.end}`,
+    mode: "pull",
+    dataSource: source.source_id,
+    pull: { source_id: source.source_id, start: pull.start, end: pull.end, params: pull.params, rows: null },
   };
 }
 

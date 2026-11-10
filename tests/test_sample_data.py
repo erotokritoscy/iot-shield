@@ -9,6 +9,7 @@ generator writes today.
 import importlib.util
 import json
 from collections import Counter
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -16,6 +17,10 @@ from typing import Any
 import pytest
 
 from iotshield._paths import REPO_ROOT
+from iotshield.connect.connections import load_connections
+from iotshield.connect.port import MAX_PULL_DAYS
+from iotshield.connect.registry import CONNECTORS
+from iotshield.pipeline.compat import check_compatibility
 from iotshield.pipeline.config import PipelineSpec
 from iotshield.pipeline.registry import DETECTORS, NORMALIZERS
 from iotshield.pipeline.runner import compute_run
@@ -49,7 +54,50 @@ def test_every_sample_names_a_real_normalizer_and_format() -> None:
         assert (COPIES[0] / sample["file"]).is_file(), sample["file"]
 
 
-@pytest.mark.parametrize("scenario", MANIFEST["scenarios"], ids=lambda s: s["id"])
+FILE_SCENARIOS = [s for s in MANIFEST["scenarios"] if s["samples"]]
+PULL_SCENARIOS = [s for s in MANIFEST["scenarios"] if s.get("pulls")]
+
+
+def test_a_scenario_reads_files_with_a_promise_or_pulls_without_one() -> None:
+    for scenario in MANIFEST["scenarios"]:
+        assert bool(scenario["samples"]) != bool(scenario.get("pulls")), scenario["id"]
+        # A live database's contents are not ours to promise; a file's always are.
+        assert (scenario["expected"] is None) == bool(scenario.get("pulls")), scenario["id"]
+
+
+def test_sensipro_and_biology_each_have_a_live_scenario() -> None:
+    connections = {pull["connection"] for s in PULL_SCENARIOS for pull in s["pulls"]}
+    assert connections == {"sensipro", "biology"}
+
+
+@pytest.mark.parametrize("scenario", PULL_SCENARIOS, ids=lambda s: s["id"])
+def test_each_pull_scenario_is_a_pull_and_a_chain_that_would_be_accepted(
+    scenario: dict[str, Any],
+) -> None:
+    # Everything checkable without the database: a typo here would otherwise surface only when
+    # someone clicks the card with that database running.
+    declared = load_connections(REPO_ROOT / "config" / "connections.yaml")
+    sources: list[dict[str, str]] = []
+    for pull in scenario["pulls"]:
+        connector = CONNECTORS[declared[pull["connection"]].connector]
+        connector.params_type.model_validate(pull["params"])
+        start, end = date.fromisoformat(pull["start"]), date.fromisoformat(pull["end"])
+        assert 0 <= (end - start).days < MAX_PULL_DAYS, scenario["id"]
+        sources.append(
+            {"normalizer": connector.normalizer, "source_format": connector.source_format}
+        )
+    spec = PipelineSpec.model_validate(
+        {
+            "sources": sources,
+            "detectors": scenario["detectors"],
+            "alert_engine": scenario["alert_engine"],
+        }
+    )
+    # Warnings too: a duplicate detector or one no source feeds has no place in a ready scenario.
+    assert check_compatibility(spec) == []
+
+
+@pytest.mark.parametrize("scenario", FILE_SCENARIOS, ids=lambda s: s["id"])
 def test_each_scenario_produces_exactly_what_it_promises(scenario: dict[str, Any]) -> None:
     sources = [SAMPLES[sample_id] for sample_id in scenario["samples"]]
     assert all(detector["name"] in DETECTORS for detector in scenario["detectors"])

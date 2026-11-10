@@ -33,6 +33,7 @@ const MONITOR: NavItem[] = [
 const OPERATE: NavItem[] = [
   { to: "/compose", label: "Compose & run" },
   { to: "/runs", label: "Runs" },
+  { to: "/jobs", label: "Jobs" },
   { to: "/data-sources", label: "Data sources" },
 ];
 const EVALUATE: NavItem[] = [{ to: "/evaluate", label: "Benchmarks" }];

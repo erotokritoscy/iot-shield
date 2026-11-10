@@ -28,8 +28,11 @@ import { fetchSampleText, type Sample } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { ADAPTER_HELP, FIELD_HELP, FORMAT_HELP, paramHelp } from "@/pages/compose/help";
 import {
+  apiConnection,
   isFilled,
+  isPullable,
   MAX_UPLOAD_BYTES,
+  readerValues,
   sourceFromSample,
   withMode,
   type PulledWindow,
@@ -280,11 +283,11 @@ export function SourceCard({
   };
 
   const chosenSource = dataSources.find((source) => source.source_id === row.dataSource);
-  const connection = connections.find((item) => item.name === chosenSource?.connection);
-  // Only a source whose connection this organization may use can be pulled from.
-  const pullable = dataSources.filter((source) =>
-    connections.some((item) => item.name === source.connection),
-  );
+  const connection =
+    connections.find((item) => item.name === chosenSource?.connection) ??
+    (chosenSource ? apiConnection(chosenSource) : undefined);
+  // Only a source whose connection this organization may use, or that has its own API, can be pulled from.
+  const pullable = dataSources.filter((source) => isPullable(source, connections));
   // A way that cannot apply here is not offered — except the one already chosen.
   const offered = MODES.map((item) => item.mode).filter(
     (mode) =>
@@ -305,7 +308,7 @@ export function SourceCard({
             dataSource: source.source_id,
             normalizer: reader.name,
             format: source.source_format,
-            params: initialValues(reader.params),
+            params: readerValues(reader, source),
             pull: null,
           }
         : { ...row, dataSource: source.source_id, pull: null },
@@ -322,7 +325,10 @@ export function SourceCard({
       ...row,
       normalizer: pulled.normalizer,
       format: pulled.source_format,
-      params: row.normalizer === pulled.normalizer ? row.params : initialValues(reader?.params),
+      params:
+        row.normalizer === pulled.normalizer
+          ? { ...row.params, ...(chosenSource?.reader_params ?? {}) }
+          : readerValues(reader, chosenSource),
       content: pulled.sample,
       fileName: pulled.origin,
       pull: { ...window, source_id: row.dataSource ?? "", rows: pulled.rows },
@@ -413,6 +419,7 @@ export function SourceCard({
               index={index}
               source={chosenSource}
               connection={connection}
+              held={row.pull ?? null}
               onPulled={onPulled}
             />
           ) : null}
@@ -573,7 +580,8 @@ export function SourceCard({
       {row.pull ? (
         <p className="caption" data-testid={`src_${index}_pulled`}>
           {row.pull.rows === null ? "A window" : `${row.pull.rows.toLocaleString("en-US")} rows`} of{" "}
-          <span className="font-mono">{row.fileName}</span>, read from the database when the run starts.
+          <span className="font-mono">{row.fileName}</span>, read from the{" "}
+          {chosenSource?.api ? "API" : "database"} when the run starts.
         </p>
       ) : row.fileName !== null && row.mode === "upload" ? (
         <p className="caption">

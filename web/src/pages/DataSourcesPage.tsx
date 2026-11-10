@@ -6,6 +6,8 @@
  * the same catalogue a run uses; Compose's source card then fills both in from it. Or it may
  * name a **connection** (ADR-0042) — a database the server declares — and then its reader is
  * whatever that connection's connector writes, and Compose can pull a date range from it.
+ * Or it may be an **HTTP API** (ADR-0049): the admin enters its URL, authentication and a
+ * mapping from its JSON to events, and Compose pulls from it the same way.
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
@@ -20,10 +22,14 @@ import type { ConnectionInfo, DataSourceInfo, ModuleInfo, SourceType } from "@/l
 import { isOrgAdmin, useAuth } from "@/lib/auth";
 import { keys, useConnections, useDataSources, useModules } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { ApiFields } from "@/pages/datasources/ApiFields";
+import { apiBody, apiDraftOf, apiProblem, EMPTY_API, type ApiDraft } from "@/pages/datasources/apiDraft";
 
 const TYPES: readonly SourceType[] = ["IT", "OT"];
 const NO_READER = "";
 const NO_CONNECTION = "";
+/** The "Pull from" choice that means an HTTP API rather than a declared connection. */
+const VIA_API = "(http-api)";
 
 export const TYPE_HELP: Readonly<Record<SourceType, string>> = {
   IT: "IT — information technology: network traffic (flows, packet captures) and system logs.",
@@ -39,7 +45,7 @@ const HELP = {
     "Optional: the reader for this source's data. When set, picking this source on Compose fills in the normalizer and format for you.",
   format: "The exact dialect this normalizer reads for this source.",
   connection:
-    "Optional: a database the server is set up to read (config/connections.yaml). With one, Compose can pull a date range of this source straight from it, and the reader is whatever that database's connector writes.",
+    "Optional: where Compose can pull a date range of this source from. Either a database the server is set up to read (config/connections.yaml) — then the reader is whatever its connector writes — or an HTTP API you describe here, whose JSON records you map to events.",
 } as const;
 
 interface Draft {
@@ -48,7 +54,9 @@ interface Draft {
   readonly description: string;
   readonly normalizer: string;
   readonly format: string;
+  /** A declared connection's name, `VIA_API`, or `NO_CONNECTION`. */
   readonly connection: string;
+  readonly api: ApiDraft;
 }
 
 const EMPTY: Draft = {
@@ -58,6 +66,7 @@ const EMPTY: Draft = {
   normalizer: NO_READER,
   format: "",
   connection: NO_CONNECTION,
+  api: EMPTY_API,
 };
 
 const draftOf = (source: DataSourceInfo): Draft => ({
@@ -66,8 +75,18 @@ const draftOf = (source: DataSourceInfo): Draft => ({
   description: source.description ?? "",
   normalizer: source.normalizer ?? NO_READER,
   format: source.source_format ?? "",
-  connection: source.connection ?? NO_CONNECTION,
+  connection: source.api ? VIA_API : (source.connection ?? NO_CONNECTION),
+  api: source.api ? apiDraftOf(source.api) : EMPTY_API,
 });
+
+/** The host of a URL, for a compact label; the URL itself when it does not parse. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
 
 export function TypeBadge({ type }: { readonly type: SourceType }) {
   return (
@@ -100,11 +119,14 @@ function SourceForm({
   const formats = normalizers.find((item) => item.name === draft.normalizer)?.formats ?? [];
   const connection = connections.find((item) => item.name === draft.connection);
   // A connection the server no longer declares stays visible, so saving does not drop it silently.
+  const viaApi = draft.connection === VIA_API;
   const connectionOptions = [
     NO_CONNECTION,
     ...connections.map((item) => item.name),
-    ...(draft.connection && !connection ? [draft.connection] : []),
+    ...(draft.connection && !connection && !viaApi ? [draft.connection] : []),
+    VIA_API,
   ];
+  const problem = viaApi ? apiProblem(draft.api) : null;
 
   const save = useMutation({
     mutationFn: () => {
@@ -112,10 +134,12 @@ function SourceForm({
         name: draft.name.trim(),
         type: draft.type,
         description: draft.description.trim() || null,
-        // A connected source is read the way its connector writes; the server fills that in.
+        // A connected or API source is read the way it writes; the server fills that in.
         normalizer: draft.connection ? null : draft.normalizer || null,
         source_format: draft.connection ? null : draft.normalizer ? draft.format || null : null,
-        connection: draft.connection || null,
+        connection: draft.connection && !viaApi ? draft.connection : null,
+        // Omitted rather than null for any other source: leaving it out removes an API.
+        ...(viaApi ? apiBody(draft.api) : {}),
       };
       return editing ? dataSourcesApi.update(editing.source_id, body) : dataSourcesApi.add(body);
     },
@@ -128,7 +152,7 @@ function SourceForm({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (draft.name.trim()) save.mutate();
+    if (draft.name.trim() && problem === null) save.mutate();
   };
 
   return (
@@ -166,28 +190,37 @@ function SourceForm({
           onChange={(event) => setDraft({ ...draft, description: event.target.value })}
         />
       </Field>
-      {connectionOptions.length > 1 ? (
-        <Field
-          label="Connection"
-          htmlFor="ds-connection"
-          info={HELP.connection}
-          hint={
-            connection
+      <Field
+        label="Pull from"
+        htmlFor="ds-connection"
+        info={HELP.connection}
+        hint={
+          viaApi
+            ? "An HTTP API, read by passthrough (normalized-jsonl) after your mapping."
+            : connection
               ? `${connection.description} Read by ${connection.normalizer} (${connection.source_format}).`
               : draft.connection
                 ? "This connection is no longer declared on the server."
-                : "None: upload or paste this source's data on Compose."
+                : "Nothing: upload or paste this source's data on Compose."
+        }
+      >
+        <Select
+          id="ds-connection"
+          data-testid="ds_connection"
+          options={connectionOptions}
+          labelFor={(option) =>
+            option === NO_CONNECTION ? "— nothing —" : option === VIA_API ? "An HTTP API…" : option
           }
-        >
-          <Select
-            id="ds-connection"
-            data-testid="ds_connection"
-            options={connectionOptions}
-            labelFor={(option) => (option === NO_CONNECTION ? "— none —" : option)}
-            value={draft.connection}
-            onChange={(event) => setDraft({ ...draft, connection: event.target.value })}
-          />
-        </Field>
+          value={draft.connection}
+          onChange={(event) => setDraft({ ...draft, connection: event.target.value })}
+        />
+      </Field>
+      {viaApi ? (
+        <ApiFields
+          draft={draft.api}
+          hasCredentials={Boolean(editing?.api) && Boolean(editing?.has_credentials)}
+          onChange={(api) => setDraft({ ...draft, api })}
+        />
       ) : null}
       {draft.connection ? null : (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -221,9 +254,19 @@ function SourceForm({
           ) : null}
         </div>
       )}
+      {problem && draft.api.url.trim() ? (
+        <p className="caption" data-testid="ds_api_problem">
+          {problem}
+        </p>
+      ) : null}
       {save.isError ? <Notice tone="error">{describeRefusal(save.error)}</Notice> : null}
       <div className="flex gap-2">
-        <Button type="submit" variant="primary" data-testid="ds_save" disabled={save.isPending || !draft.name.trim()}>
+        <Button
+          type="submit"
+          variant="primary"
+          data-testid="ds_save"
+          disabled={save.isPending || !draft.name.trim() || problem !== null}
+        >
           {save.isPending ? "Saving…" : editing ? "Save changes" : "Add data source"}
         </Button>
         {editing ? (
@@ -268,6 +311,11 @@ export function DataSourcesPage() {
           <span className="font-mono text-xs">
             {row.normalizer} · {row.source_format}
             {row.connection ? <span className="caption ml-1">(pulled from {row.connection})</span> : null}
+            {row.api ? (
+              <span className="caption ml-1" title={row.api.url}>
+                (pulled from {hostOf(row.api.url)}, {row.api.mapping.lane})
+              </span>
+            ) : null}
           </span>
         ) : (
           <span className="caption">not set</span>

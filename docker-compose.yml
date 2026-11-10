@@ -1,7 +1,7 @@
 # Full-compose MVP: Postgres + a one-shot schema init + both APIs + the
 # dashboard, plus the pipeline runner as an on-demand job (profile "jobs").
 #
-#   docker compose up                 # postgres -> init -> APIs -> dashboard
+#   docker compose up                 # postgres -> init -> APIs + job worker -> dashboard
 #   docker compose run --rm runner    # populate the DB with the walkthrough (config/demo.yaml)
 #
 # Login is ON in this stack (IOTSHIELD_AUTH, ADR-0039): open :8080, register an organization,
@@ -47,6 +47,34 @@ x-db-env: &db-env
 x-auth-env: &auth-env
   IOTSHIELD_AUTH: "1"
 
+# What a run needs to read its sources and write its results: the same on the Pipeline API,
+# which runs what the Compose page sends, and on the job worker, which runs saved jobs
+# (ADR-0050). One anchor so the two can never disagree about a shelf, a password or the key.
+x-run-env: &run-env
+  # File-sink output dir (ADR-0018): each service bind-mounts it to the host, so a file-sink
+  # run's JSONL is visible on the host and survives container recreation. A
+  # caller-supplied filename is confined to this dir (sink/file.py).
+  IOTSHIELD_OUTPUT_DIR: "/app/results"
+  # The rule shelf (ADR-0037): where a DEPLOYMENT's own detection rules live, as opposed
+  # to the library packaged inside the product. Bind-mounted read-only, so adding a
+  # rule set is creating a directory on the host — no rebuild, no restart, and it shows up
+  # in the dashboard's `ruleset` dropdown on the next page load. Config names a rule set
+  # and never a path, so this variable is the only thing that decides which directories a
+  # run can read rules from.
+  IOTSHIELD_RULES_PATH: "/app/config/rules"
+  IOTSHIELD_METER_MODELS_PATH: "/app/config/meter-models"
+  # The source databases a data source may pull from (ADR-0042): declared in this file,
+  # bind-mounted read-only, so editing it needs no rebuild. The passwords stay out of it —
+  # each entry names one of these variables, which come from .env (see .env.example).
+  IOTSHIELD_CONNECTIONS_PATH: "/app/config/connections.yaml"
+  SENSIPRO_DB_PASSWORD: ${SENSIPRO_DB_PASSWORD:-}
+  BIOLOGY_DB_PASSWORD: ${BIOLOGY_DB_PASSWORD:-}
+  # HTTP API data sources (ADR-0049). The key seals the credentials an org admin enters;
+  # unset, saving an API source that needs credentials is refused. The allowlist exempts
+  # named hosts (e.g. host.docker.internal, a plant's LAN API) from the public-address rule.
+  IOTSHIELD_SECRET_KEY: ${IOTSHIELD_SECRET_KEY:-}
+  IOTSHIELD_API_ALLOWED_HOSTS: ${IOTSHIELD_API_ALLOWED_HOSTS:-}
+
 services:
   postgres:
     image: postgres:16
@@ -54,6 +82,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-iotshield}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iotshield}
       POSTGRES_DB: ${POSTGRES_DB:-iotshield}
+    # Published for a DB client on the host (psql, DBeaver, pgAdmin):
+    #   psql postgresql://iotshield:iotshield@localhost:5432/iotshield
+    # Loopback only, like every other port here. Set POSTGRES_HOST_PORT in .env if the host
+    # already runs a Postgres on 5432. Services inside compose still use postgres:5432.
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -111,16 +145,12 @@ services:
     <<: *app
     command: ["python", "-m", "iotshield.api.control"]
     environment:
-      <<: [*db-env, *auth-env]
+      <<: [*db-env, *auth-env, *run-env]
       IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
       # Whether anyone may register an organization (ADR-0040). On by default; set it to 0 in
       # the shell or .env and only the super admin can create organizations.
       IOTSHIELD_OPEN_REGISTRATION: ${IOTSHIELD_OPEN_REGISTRATION:-1}
       IOTSHIELD_PIPELINE_API_PORT: "8100"
-      # File-sink output dir (ADR-0018): bind-mounted to the host below, so a file-sink
-      # run's JSONL is visible on the host and survives container recreation. A
-      # caller-supplied filename is confined to this dir (sink/file.py).
-      IOTSHIELD_OUTPUT_DIR: "/app/results"
       # The evaluation plane (ADR-0021). This compose stack IS the research/dev stack, so
       # it opts in; the default when unset stays off, which is what a product image gets.
       # Without it the /eval routes are never registered — absent, not merely guarded.
@@ -131,20 +161,6 @@ services:
       # fetched locally (`iotshield.eval fetch skab`) visible to the API without ever
       # baking it into a shippable artifact.
       IOTSHIELD_CORPUS_PATH: "/app/data/eval"
-      # The rule shelf (ADR-0037): where a DEPLOYMENT's own detection rules live, as opposed
-      # to the library packaged inside the product. Bind-mounted read-only below, so adding a
-      # rule set is creating a directory on the host — no rebuild, no restart, and it shows up
-      # in the dashboard's `ruleset` dropdown on the next page load. Config names a rule set
-      # and never a path, so this variable is the only thing that decides which directories a
-      # run can read rules from.
-      IOTSHIELD_RULES_PATH: "/app/config/rules"
-      IOTSHIELD_METER_MODELS_PATH: "/app/config/meter-models"
-      # The source databases a data source may pull from (ADR-0042): declared in this file,
-      # bind-mounted read-only, so editing it needs no rebuild. The passwords stay out of it —
-      # each entry names one of these variables, which come from .env (see .env.example).
-      IOTSHIELD_CONNECTIONS_PATH: "/app/config/connections.yaml"
-      SENSIPRO_DB_PASSWORD: ${SENSIPRO_DB_PASSWORD:-}
-      BIOLOGY_DB_PASSWORD: ${BIOLOGY_DB_PASSWORD:-}
     # The SensiPro and Biology databases are other compose stacks publishing on the host;
     # this name is how a container reaches the host on Linux (Docker Desktop has it built in).
     extra_hosts:
@@ -168,6 +184,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # The job worker (ADR-0050): queues saved jobs when their schedule comes and runs every
+  # queued one — "Run now" included — one at a time, through the same code as POST /runs.
+  # Nothing waits on a browser, so a job has no proxy timeout. It publishes no port; it only
+  # talks to Postgres and to the sources a job pulls from. More than one may run (rows are
+  # claimed with SKIP LOCKED); one is plenty here.
+  worker:
+    <<: *app
+    command: ["python", "-m", "iotshield.jobs.worker"]
+    environment:
+      <<: [*db-env, *run-env]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./results:/app/results
+      - ./config/rules:/app/config/rules:ro
+      - ./config/meter-models:/app/config/meter-models:ro
+      - ./config/connections.yaml:/app/config/connections.yaml:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   # The dashboard (ADR-0031): the product's three planes as a single-page app served by
   # nginx, which also reverse-proxies /api and /pipeline so the browser makes only

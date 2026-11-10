@@ -29,15 +29,16 @@ import { Card, Collapsible, ErrorState, Notice, PageHeader, Section, Spinner } f
 import { StatTile } from "@/components/ui/table";
 import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
-import type { ModulesResponse, SavedRunInfo, SinkInfo } from "@/lib/api/types";
+import type { JobInfo, ModulesResponse, SavedRunInfo, SinkInfo } from "@/lib/api/types";
 import { initialValues, type ParamValues } from "@/lib/params";
-import { keys, useConnections, useDataSources, useModules, useSavedRun, type RunList } from "@/lib/queries";
+import { keys, useConnections, useDataSources, useJob, useModules, useSavedRun, type RunList } from "@/lib/queries";
 import { fetchManifest, fetchSampleText, type SampleManifest, type Scenario } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 import { DetectorCard } from "@/pages/compose/DetectorCard";
 import {
   buildSpec,
   byName,
+  dataSourceForPull,
   detectorFromScenario,
   fitted,
   isFilled,
@@ -46,6 +47,7 @@ import {
   newDetector,
   newSource,
   restorePulls,
+  sourceFromPull,
   sourceFromSample,
   sourceInput,
   specToState,
@@ -55,8 +57,10 @@ import {
   type DetectorRow,
   type SourceRow,
 } from "@/pages/compose/model";
-import { ADAPTER_HELP, FIELD_HELP, paramHelp } from "@/pages/compose/help";
+import { ADAPTER_HELP, FIELD_HELP, paramHelp, RESULT_HELP } from "@/pages/compose/help";
 import { SourceCard, SourceTabs, unreadable } from "@/pages/compose/SourceCard";
+import { jobPulls } from "@/pages/jobs/jobDraft";
+import { SaveAsJob } from "@/pages/jobs/SaveAsJob";
 
 const STEPS = ["Data", "Detection", "Alerts & output", "Review & run"] as const;
 
@@ -125,46 +129,56 @@ function Stepper({
 function ScenarioPicker({
   scenarios,
   loading,
+  unavailable,
   onPick,
 }: {
   readonly scenarios: readonly Scenario[];
   readonly loading: string | null;
+  /** Why this scenario cannot be used here, or null when it can. */
+  readonly unavailable: (scenario: Scenario) => string | null;
   readonly onPick: (scenario: Scenario) => void;
 }) {
   if (scenarios.length === 0) return null;
   return (
     <Section
       title="Start from a scenario"
-      description="Fills every step with sample data and the detectors that suit it, then takes you to Review. You can still change anything before running."
+      description="Fills every step with its data and the detectors that suit it, then takes you to Review. You can still change anything before running."
     >
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {scenarios.map((scenario) => (
-          <Card key={scenario.id} className="flex flex-col gap-2 p-4">
-            {/* The title alone; what the scenario is and what it is tested to produce sit
-                behind the (i), so the cards stay one line each. */}
-            <div className="flex flex-1 items-start gap-1.5">
-              <p className="text-sm font-semibold text-ink">{scenario.title}</p>
-              <InfoTip label={scenario.title} className="mt-0.5">
-                <InfoLines
-                  lines={[
-                    scenario.description,
-                    `${scenario.samples.length} source${scenario.samples.length === 1 ? "" : "s"} · ` +
-                      `${scenario.detectors.length} detector${scenario.detectors.length === 1 ? "" : "s"} · expects ` +
-                      `${scenario.expected.alerts} alert${scenario.expected.alerts === 1 ? "" : "s"}`,
-                  ]}
-                />
-              </InfoTip>
-            </div>
-            <Button
-              size="sm"
-              data-testid={`scenario_${scenario.id}`}
-              disabled={loading !== null}
-              onClick={() => onPick(scenario)}
-            >
-              {loading === scenario.id ? "Loading…" : "Use this scenario"}
-            </Button>
-          </Card>
-        ))}
+        {scenarios.map((scenario) => {
+          const count = scenario.samples.length + scenario.pulls.length;
+          const reason = unavailable(scenario);
+          return (
+            <Card key={scenario.id} className="flex flex-col gap-2 p-4">
+              {/* The title alone; what the scenario is and what it is tested to produce sit
+                  behind the (i), so the cards stay one line each. */}
+              <div className="flex flex-1 items-start gap-1.5">
+                <p className="text-sm font-semibold text-ink">{scenario.title}</p>
+                <InfoTip label={scenario.title} className="mt-0.5">
+                  <InfoLines
+                    lines={[
+                      scenario.description,
+                      `${count} source${count === 1 ? "" : "s"} · ` +
+                        `${scenario.detectors.length} detector${scenario.detectors.length === 1 ? "" : "s"} · ` +
+                        (scenario.expected
+                          ? `expects ${scenario.expected.alerts} alert${scenario.expected.alerts === 1 ? "" : "s"}`
+                          : "live data, so no expected counts"),
+                    ]}
+                  />
+                </InfoTip>
+              </div>
+              {reason ? <p className="caption">{reason}</p> : null}
+              <Button
+                size="sm"
+                data-testid={`scenario_${scenario.id}`}
+                disabled={loading !== null || reason !== null}
+                onClick={() => onPick(scenario)}
+              >
+                {loading === scenario.id ? "Loading…" : "Use this scenario"}
+              </Button>
+            </Card>
+          );
+        })}
       </div>
     </Section>
   );
@@ -200,9 +214,13 @@ function Footer({
   );
 }
 
-/** A saved run reopened on this page (ADR-0046): its record, and its chain as wizard state. */
+/**
+ * A saved run (ADR-0046) or a saved job (ADR-0050) reopened on this page: its record, and its
+ * chain as wizard state. A job also opens its "Save as job" panel on itself, to update it.
+ */
 interface Reopened {
-  readonly run: SavedRunInfo;
+  readonly run?: SavedRunInfo | undefined;
+  readonly job?: JobInfo | undefined;
   readonly state: ComposeState;
 }
 
@@ -278,6 +296,18 @@ function ComposeWizard({
   const inputs: SourceInput[] = sources.map(sourceInput);
   const fingerprint = JSON.stringify({ spec, inputs });
   const pristineScenario = scenario !== null && scenario.fingerprint === fingerprint ? scenario.scenario : null;
+  const promised = pristineScenario?.expected ?? null;
+
+  const scenarioUnavailable = (candidate: Scenario): string | null => {
+    if (candidate.pulls.length === 0) return null;
+    if (dataSources.isPending || connections.isPending) return "Checking your data sources…";
+    const missing = candidate.pulls.find(
+      (pull) => !dataSourceForPull(pull, dataSources.data ?? [], connections.data ?? []),
+    );
+    return missing
+      ? `Needs a data source on the ${missing.connection} connection (Operate → Data sources).`
+      : null;
+  };
 
   const untrained = detectors
     .map((row, index) => ({ row, index }))
@@ -350,9 +380,16 @@ function ComposeWizard({
     try {
       const chosen = picked.samples.map((id) => library.samples.find((sample) => sample.id === id));
       const texts = await Promise.all(chosen.map((sample) => (sample ? fetchSampleText(sample) : "")));
-      const nextSources = chosen.map((sample, index) =>
-        sample ? sourceFromSample(sample, texts[index] ?? "", normalizers) : newSource(normalizers),
-      );
+      const nextSources = [
+        ...chosen.map((sample, index) =>
+          sample ? sourceFromSample(sample, texts[index] ?? "", normalizers) : newSource(normalizers),
+        ),
+        ...picked.pulls.map((pull) => {
+          const source = dataSourceForPull(pull, dataSources.data ?? [], connections.data ?? []);
+          if (!source) throw new Error(`no data source on the ${pull.connection} connection`);
+          return sourceFromPull(pull, source, normalizers);
+        }),
+      ];
       const nextDetectors = picked.detectors.map((entry) => detectorFromScenario(entry, detectorCatalogue));
       const nextEngine = engines.find((item) => item.name === picked.alert_engine.name);
       const nextEngineParams = {
@@ -403,7 +440,15 @@ function ComposeWizard({
 
       {step === 1 ? (
         <div className="space-y-8">
-          {reopened ? (
+          {reopened?.job ? (
+            <div data-testid="compose_reopened_job">
+              <Notice tone="info" title={`Editing the job “${reopened.job.name}”`}>
+                Its chain and pulls are restored, each window as it would read today. Change what you need, then
+                update the job on the last step, under Validate &amp; run.
+              </Notice>
+            </div>
+          ) : null}
+          {reopened?.run ? (
             <div data-testid="compose_reopened">
             <Notice tone="info" title={`Reopened from run “${reopened.run.name}”`}>
               The chain is restored as it ran. A saved run keeps its chain, not its data, so attach
@@ -419,7 +464,12 @@ function ComposeWizard({
             </Notice>
             </div>
           ) : null}
-          <ScenarioPicker scenarios={library.scenarios} loading={loadingScenario} onPick={(s) => void applyScenario(s)} />
+          <ScenarioPicker
+            scenarios={library.scenarios}
+            loading={loadingScenario}
+            unavailable={scenarioUnavailable}
+            onPick={(s) => void applyScenario(s)}
+          />
           {scenarioError ? <Notice tone="error">{scenarioError}</Notice> : null}
           {manifest.isError ? (
             <Notice tone="warning">Sample data is unavailable ({describeError(manifest.error)}); upload or paste your own.</Notice>
@@ -521,11 +571,19 @@ function ComposeWizard({
       {step === 3 ? (
         <div className="space-y-8">
           <Section title="Alert engine" description="Turns detections into a ranked, explained queue of alerts.">
+            {/* A native <option> cannot hold an (i), so the label's (i) explains every engine at once. */}
             <Field
               label="Alert engine"
               htmlFor="compose_engine"
               className="max-w-md"
-              info={<InfoLines lines={[FIELD_HELP.engine, ADAPTER_HELP[`alert_engine:${engine}`]]} />}
+              info={
+                <InfoLines
+                  lines={[
+                    FIELD_HELP.engine,
+                    ...engines.map((item) => ADAPTER_HELP[`alert_engine:${item.name}`] ?? item.name),
+                  ]}
+                />
+              }
             >
               <Select
                 id="compose_engine"
@@ -641,9 +699,17 @@ function ComposeWizard({
             </Card>
             {pristineScenario ? (
               <Notice tone="info" title={`Scenario: ${pristineScenario.title}`}>
-                Tested to produce {pristineScenario.expected.events} events,{" "}
-                {pristineScenario.expected.malformed} malformed, {pristineScenario.expected.detections} detections and{" "}
-                {pristineScenario.expected.alerts} alerts.
+                {promised ? (
+                  <>
+                    Tested to produce {promised.events} events, {promised.malformed} malformed,{" "}
+                    {promised.detections} detections and {promised.alerts} alerts.
+                  </>
+                ) : (
+                  <>
+                    The run reads this from the live database, so what it finds depends on what the
+                    database holds. Each run stores its results again.
+                  </>
+                )}
               </Notice>
             ) : null}
           </Section>
@@ -706,14 +772,34 @@ function ComposeWizard({
                   </p>
                 ) : null}
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <StatTile label="events" value={run.data.events} to={runLink(run.data, "events")} />
-                  <StatTile label="malformed" value={run.data.malformed} to={runLink(run.data, "malformed")} />
-                  <StatTile label="detections" value={run.data.detections} to={runLink(run.data, "detections")} />
-                  <StatTile label="alerts" value={run.data.alerts} to={runLink(run.data, "alerts")} />
+                  <StatTile
+                    label="events"
+                    value={run.data.events}
+                    to={runLink(run.data, "events")}
+                    info={RESULT_HELP.events}
+                  />
+                  <StatTile
+                    label="malformed"
+                    value={run.data.malformed}
+                    to={runLink(run.data, "malformed")}
+                    info={RESULT_HELP.malformed}
+                  />
+                  <StatTile
+                    label="detections"
+                    value={run.data.detections}
+                    to={runLink(run.data, "detections")}
+                    info={RESULT_HELP.detections}
+                  />
+                  <StatTile
+                    label="alerts"
+                    value={run.data.alerts}
+                    to={runLink(run.data, "alerts")}
+                    info={RESULT_HELP.alerts}
+                  />
                 </div>
-                {pristineScenario ? (
+                {promised ? (
                   (["events", "malformed", "detections", "alerts"] as const).every(
-                    (key) => run.data[key] === pristineScenario.expected[key],
+                    (key) => run.data[key] === promised[key],
                   ) ? (
                     <Notice tone="success">Matches what the scenario is tested to produce.</Notice>
                   ) : (
@@ -747,6 +833,14 @@ function ComposeWizard({
                 ) : null}
               </div>
             ) : null}
+
+            <SaveAsJob
+              spec={spec}
+              sources={sources}
+              chainOk={ok(1) && ok(2) && ok(3) && (validation.result?.ok ?? false) && !settling}
+              job={reopened?.job}
+              dataSources={dataSources.data ?? []}
+            />
           </Section>
         </div>
       ) : null}
@@ -772,7 +866,34 @@ function ComposeWizard({
 function Reopen({ catalogue }: { readonly catalogue: ModulesResponse }) {
   const [params] = useSearchParams();
   const from = params.get("from") ?? undefined;
+  const jobId = from ? undefined : (params.get("job") ?? undefined);
   const saved = useSavedRun(from);
+  const job = useJob(jobId);
+  const dataSources = useDataSources();
+  if (jobId) {
+    if (job.isPending || dataSources.isPending) return <Spinner label="Loading the job…" />;
+    if (job.isError) {
+      return (
+        <>
+          <Notice tone="error">Could not open that job: {describeError(job.error)}</Notice>
+          <ComposeWizard catalogue={catalogue} />
+        </>
+      );
+    }
+    return (
+      <ComposeWizard
+        key={job.data.job_id}
+        catalogue={catalogue}
+        reopened={{
+          job: job.data,
+          state: restorePulls(
+            specToState(job.data.spec, catalogue),
+            jobPulls(job.data, (id) => dataSources.data?.find((source) => source.source_id === id)?.name),
+          ),
+        }}
+      />
+    );
+  }
   if (!from) return <ComposeWizard catalogue={catalogue} />;
   if (saved.isPending) return <Spinner label="Loading the saved run…" />;
   if (saved.isError) {

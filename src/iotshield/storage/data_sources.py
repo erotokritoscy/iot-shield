@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from iotshield.storage.orm import DataSourceRow
+from iotshield.storage.orm import DataSourceEndpointRow, DataSourceRow
 
 SourceType = Literal["IT", "OT"]
 """IT: information technology — network traffic, logs. OT: operational technology — meters,
@@ -142,6 +142,10 @@ def delete_data_source(session: Session, source_id: UUID, *, org_id: str) -> boo
     row = session.get(DataSourceRow, source_id)
     if row is None or row.org_id != org_id:
         return False
+    endpoint = session.get(DataSourceEndpointRow, source_id)
+    if endpoint is not None:  # an API source's endpoint goes with it (ADR-0049)
+        session.delete(endpoint)
+        session.flush()
     session.delete(row)
     session.flush()
     return True

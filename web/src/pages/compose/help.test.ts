@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import { modules } from "@/test/fixtures";
-import { FORMAT_HELP, paramHelp } from "@/pages/compose/help";
+import { detectorHelp, FORMAT_HELP, paramHelp } from "@/pages/compose/help";
 
 describe("compose help text", () => {
   it("explains every input format a normalizer declares", () => {
@@ -26,6 +26,17 @@ describe("compose help text", () => {
     expect(
       paramHelp("detector", "flow_burst", { name: "threshold", type: "float", default: null, required: false }),
     ).toMatch(/Optional\.$/);
+  });
+
+  it("says what a detector does and reads, even one the table does not know", () => {
+    expect(detectorHelp({ name: "log_burst", consumes: ["lane:log"] })).toEqual([
+      "log_burst flags too many matching log lines in a short window.",
+      "Reads lane:log.",
+    ]);
+    expect(detectorHelp({ name: "new_one", consumes: ["lane:telemetry", "payload:meter"] })).toEqual([
+      "new_one has no description yet.",
+      "Reads lane:telemetry + payload:meter.",
+    ]);
   });
 
   it("falls back to the param's type for a param it does not know", () => {

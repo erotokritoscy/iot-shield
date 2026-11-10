@@ -63,6 +63,8 @@ export const pipelineHandlers: RequestHandler[] = [
   http.get(`${PIPELINE}/modules`, () => HttpResponse.json(seed.modules)),
   http.get(`${PIPELINE}/data-sources`, () => HttpResponse.json([])),
   http.get(`${PIPELINE}/data-sources/connections`, () => HttpResponse.json([])),
+  // Saved jobs (ADR-0050): none unless a test serves some.
+  http.get(`${PIPELINE}/jobs`, () => HttpResponse.json([])),
   http.post(`${PIPELINE}/runs/validate`, async ({ request }) => {
     captured.validateBody = await request.json();
     return HttpResponse.json({ ok: true, issues: [] });
@@ -166,6 +168,16 @@ export const sampleManifest = {
       detectors: [{ name: "stub_threshold", params: {} }],
       alert_engine: { name: "weighted", params: { bucket_minutes: 5 } },
       expected: { events: 1, malformed: 0, detections: 1, alerts: 1 },
+    },
+    {
+      id: "live_meters",
+      title: "Live meters",
+      description: "A window of a live database.",
+      samples: [],
+      pulls: [{ connection: "sensipro", start: "2023-07-01", end: "2023-07-30", params: { utility: "water" } }],
+      detectors: [{ name: "stub_threshold", params: {} }],
+      alert_engine: { name: "weighted", params: { bucket_minutes: 5 } },
+      expected: null,
     },
   ],
 };

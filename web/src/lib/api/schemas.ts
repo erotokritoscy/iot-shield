@@ -38,10 +38,14 @@ import type {
   PrioritizedAlert,
   RunResponse,
   SavedRunInfo,
+  ExecutionInfo,
+  JobInfo,
   Summary,
   UserInfo,
   PreviewResponse,
   ConnectionInfo,
+  ApiEndpoint,
+  ApiMapping,
   DataSourceInfo,
   ItOverview,
   OtOverview,
@@ -277,6 +281,59 @@ export const savedRunSchema = z.object({
 export type _SavedRunOk = Assert<Satisfies<SavedRunInfo, z.infer<typeof savedRunSchema>>>;
 export const savedRunsSchema = z.array(savedRunSchema);
 
+// --- Saved jobs (ADR-0050) ----------------------------------------------------------
+
+export const executionSchema = z.object({
+  execution_id: z.string(),
+  job_id: z.string(),
+  trigger: z.string(),
+  requested_by: z.string().nullable(),
+  status: z.string(),
+  queued_at: z.string(),
+  started_at: z.string().nullable(),
+  finished_at: z.string().nullable(),
+  run_id: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type _ExecutionOk = Assert<Satisfies<ExecutionInfo, z.infer<typeof executionSchema>>>;
+export const executionsSchema = z.array(executionSchema);
+
+const jobWindowSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fixed"), start: z.string(), end: z.string() }),
+  z.object({ kind: z.literal("rolling"), days: z.number(), through: z.enum(["yesterday", "today"]) }),
+]);
+
+/** `spec` is loose for the reason `savedRunSchema`'s is: it reopens through `specToState`. */
+export const jobSchema = z.object({
+  job_id: z.string(),
+  name: z.string(),
+  created_by: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  spec: z.record(z.string(), z.unknown()),
+  sources: z.array(
+    z.object({
+      source_id: z.string(),
+      params: z.record(z.string(), z.unknown()).optional(),
+      window: jobWindowSchema,
+    }),
+  ),
+  schedule: z
+    .object({
+      every: z.enum(["hour", "day", "week"]),
+      minute: z.number(),
+      hour: z.number(),
+      weekday: z.number(),
+    })
+    .nullable(),
+  schedule_text: z.string().nullable(),
+  enabled: z.boolean(),
+  next_run_at: z.string().nullable(),
+  last: executionSchema.nullable(),
+});
+export type _JobOk = Assert<Satisfies<JobInfo, z.infer<typeof jobSchema>>>;
+export const jobsSchema = z.array(jobSchema);
+
 // --- Accounts (ADR-0039) ------------------------------------------------------
 
 export const roleSchema = z.enum(["admin", "member", "superadmin"]);
@@ -300,6 +357,35 @@ export type _UserInfoOk = Assert<Satisfies<UserInfo, z.infer<typeof userInfoSche
 export const usersSchema = z.array(userInfoSchema);
 
 /** One of an organization's data sources, IT or OT (ADR-0041). */
+/** How an HTTP API source's JSON records become events (ADR-0049). */
+export const apiMappingSchema = z.object({
+  lane: z.enum(["telemetry", "log"]),
+  records: z.string(),
+  timestamp: z.string(),
+  timestamp_format: z.enum(["iso", "epoch_s", "epoch_ms"]),
+  timezone: z.string().nullable().optional(),
+  asset_id: z.string(),
+  metrics: z.record(z.string()).optional(),
+  message: z.string().nullable().optional(),
+  severity: z.string().nullable().optional(),
+});
+export type _ApiMappingOk = Assert<Satisfies<ApiMapping, z.infer<typeof apiMappingSchema>>>;
+
+/** An HTTP API a data source is pulled from — never its credentials (ADR-0049). */
+export const apiEndpointSchema = z.object({
+  url: z.string(),
+  auth: z.enum(["none", "basic", "api_key"]),
+  username: z.string().nullable().optional(),
+  api_key_header: z.string(),
+  api_key_prefix: z.string(),
+  start_param: z.string(),
+  end_param: z.string(),
+  window_format: z.enum(["date", "iso", "epoch_s", "epoch_ms"]),
+  next_path: z.string().nullable().optional(),
+  mapping: apiMappingSchema,
+});
+export type _ApiEndpointOk = Assert<Satisfies<ApiEndpoint, z.infer<typeof apiEndpointSchema>>>;
+
 export const dataSourceSchema = z.object({
   source_id: z.string(),
   name: z.string(),
@@ -308,6 +394,9 @@ export const dataSourceSchema = z.object({
   normalizer: z.string().nullable(),
   source_format: z.string().nullable(),
   connection: z.string().nullable(),
+  api: apiEndpointSchema.nullable().optional(),
+  has_credentials: z.boolean(),
+  reader_params: z.record(z.string()).optional(),
   created_at: z.string(),
 });
 export type _DataSourceOk = Assert<Satisfies<DataSourceInfo, z.infer<typeof dataSourceSchema>>>;

@@ -178,7 +178,7 @@ describe("Open in Compose", () => {
     // Data first — the wizard will not move on without it — then the restored detector shows.
     await userEvent.type(screen.getByTestId("src_0_text"), "<38>1 2026-08-03T09:00:00Z gw sshd 1 - - x");
     await userEvent.click(screen.getByTestId("step_2"));
-    expect(await screen.findByTestId("det_0_name")).toHaveValue("log_burst");
+    expect(await screen.findByTestId("det_0_name")).toHaveTextContent("log_burst");
 
     // And it sends the same request the run sent: the moved param, the restored sinks.
     await userEvent.click(screen.getByTestId("step_4"));

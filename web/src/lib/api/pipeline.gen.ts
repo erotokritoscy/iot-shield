@@ -101,9 +101,8 @@ export interface paths {
          * Create Run
          * @description Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
          *
-         *     The guard runs once, inside execute_run, which raises IncompatiblePipelineError on
-         *     an ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map
-         *     its typed error to a structured 422. It raises before any row is written.
+         *     The checks, the streaming of pulls and the mapping of failures to statuses are
+         *     ``api/execution.py``'s, shared with the job worker (ADR-0050).
          */
         post: operations["create_run_runs_post"];
         delete?: never;
@@ -235,6 +234,95 @@ export interface paths {
         head?: never;
         /** Rename */
         patch: operations["rename_runs__run_id__patch"];
+        trace?: never;
+    };
+    "/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Saved Jobs
+         * @description This organization's jobs by name, each with its most recent execution.
+         */
+        get: operations["list_saved_jobs_jobs_get"];
+        put?: never;
+        /**
+         * Create Job
+         * @description Save a job; 422 with the run's own reasons when it could never run.
+         */
+        post: operations["create_job_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Job */
+        get: operations["read_job_jobs__job_id__get"];
+        /**
+         * Change Job
+         * @description Replace the job's chain, pulls and schedule; its history is kept.
+         */
+        put: operations["change_job_jobs__job_id__put"];
+        post?: never;
+        /**
+         * Remove Job
+         * @description Delete the job and its history. The runs it produced stay on the Runs page.
+         */
+        delete: operations["remove_job_jobs__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Job
+         * @description Queue the job for the worker now. 409 while it is already queued or running.
+         */
+        post: operations["run_job_jobs__job_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Job Executions
+         * @description The job's executions, newest first; ``X-Total-Count`` says how many exist.
+         */
+        get: operations["job_executions_jobs__job_id__executions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/eval/corpora": {
@@ -651,6 +739,110 @@ export interface components {
          * @enum {string}
          */
         AlertStatus: "new" | "acknowledged" | "closed";
+        /** ApiEndpoint */
+        ApiEndpoint: {
+            /**
+             * Url
+             * @description https:// URL of the records
+             */
+            url: string;
+            /**
+             * Auth
+             * @default none
+             * @enum {string}
+             */
+            auth: "none" | "basic" | "api_key";
+            /**
+             * Username
+             * @description Basic auth: the user name (not secret)
+             */
+            username?: string | null;
+            /**
+             * Api Key Header
+             * @description API key: the header it is sent in
+             * @default Authorization
+             */
+            api_key_header: string;
+            /**
+             * Api Key Prefix
+             * @description API key: text before the key, e.g. 'Bearer '
+             * @default Bearer
+             */
+            api_key_prefix: string;
+            /**
+             * Start Param
+             * @description Query parameter the window's start goes in
+             */
+            start_param: string;
+            /**
+             * End Param
+             * @description Query parameter the window's end goes in
+             */
+            end_param: string;
+            /**
+             * Window Format
+             * @description date: YYYY-MM-DD, end = the last day (inclusive); iso / epoch_s / epoch_ms: UTC instants, end = midnight after the last day (exclusive)
+             * @default iso
+             * @enum {string}
+             */
+            window_format: "date" | "iso" | "epoch_s" | "epoch_ms";
+            /**
+             * Next Path
+             * @description Dotted path to the next page's URL in each response; blank = one page
+             */
+            next_path?: string | null;
+            mapping: components["schemas"]["ApiMapping"];
+        };
+        /**
+         * ApiMapping
+         * @description Where an API's records and fields are. Validated when an admin saves the source.
+         */
+        ApiMapping: {
+            /**
+             * Lane
+             * @description Which lane the events go to: readings or log lines
+             * @enum {string}
+             */
+            lane: "telemetry" | "log";
+            /**
+             * Records
+             * @description Dotted path to the list of records; blank = root
+             * @default
+             */
+            records: string;
+            /** Timestamp */
+            timestamp: string;
+            /**
+             * Timestamp Format
+             * @default iso
+             * @enum {string}
+             */
+            timestamp_format: "iso" | "epoch_s" | "epoch_ms";
+            /**
+             * Timezone
+             * @description IANA zone for ISO timestamps that carry no offset; blank refuses them
+             */
+            timezone?: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /**
+             * Metrics
+             * @description Telemetry: metric name -> path of its value; one event per metric
+             */
+            metrics?: {
+                [key: string]: string;
+            };
+            /**
+             * Message
+             * @description Log: path of the text
+             */
+            message?: string | null;
+            /**
+             * Severity
+             * @description Log: path of the level
+             */
+            severity?: string | null;
+        };
         /**
          * Asset
          * @description A monitored device or system — the 'who' everything is correlated on.
@@ -957,6 +1149,16 @@ export interface components {
             error: string;
         };
         /**
+         * CredentialsRequest
+         * @description The secret half of an API source. Each field is optional: blank keeps what is stored.
+         */
+        CredentialsRequest: {
+            /** Password */
+            password?: string | null;
+            /** Api Key */
+            api_key?: string | null;
+        };
+        /**
          * Criticality
          * @description How much an asset matters — feeds the prioritizer's device weight.
          * @enum {string}
@@ -984,6 +1186,21 @@ export interface components {
             source_format: string | null;
             /** Connection */
             connection: string | null;
+            /** @description The HTTP API it is pulled from; never its credentials */
+            api?: components["schemas"]["ApiEndpoint"] | null;
+            /**
+             * Has Credentials
+             * @description Whether credentials are stored for its API
+             * @default false
+             */
+            has_credentials: boolean;
+            /**
+             * Reader Params
+             * @description Normalizer params a pull of this source must be read with (an API's lane)
+             */
+            reader_params?: {
+                [key: string]: string;
+            };
             /** Created At */
             created_at: string;
         };
@@ -1010,6 +1227,10 @@ export interface components {
              * @description A connection declared on the server; its connector decides the reader
              */
             connection?: string | null;
+            /** @description An HTTP API this source is pulled from (ADR-0049) */
+            api?: components["schemas"]["ApiEndpoint"] | null;
+            /** @description Write-only: the API's password or key. Omitted or blank keeps what is stored */
+            credentials?: components["schemas"]["CredentialsRequest"] | null;
         };
         /** DetectorConfig */
         DetectorConfig: {
@@ -1100,11 +1321,70 @@ export interface components {
             /** Specs */
             specs?: components["schemas"]["SpecReport"][];
         };
+        /** ExecutionInfo */
+        ExecutionInfo: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Trigger
+             * @description schedule | manual
+             */
+            trigger: string;
+            /** Requested By */
+            requested_by: string | null;
+            /**
+             * Status
+             * @description queued | running | succeeded | failed
+             */
+            status: string;
+            /** Queued At */
+            queued_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Run Id
+             * @description The saved run it produced, when it succeeded
+             */
+            run_id: string | null;
+            /** Error */
+            error: string | null;
+        };
         /**
          * FitProtocol
          * @enum {string}
          */
         FitProtocol: "none" | "prefix" | "clean-prefix";
+        /**
+         * FixedWindow
+         * @description The same days every time: a re-run of exactly what was composed.
+         */
+        FixedWindow: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "fixed";
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1118,6 +1398,82 @@ export interface components {
             stage: string;
             /** Message */
             message: string;
+        };
+        /** JobInfo */
+        JobInfo: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Name */
+            name: string;
+            /** Created By */
+            created_by: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Sources */
+            sources: components["schemas"]["JobSource"][];
+            schedule: components["schemas"]["Schedule"] | null;
+            /**
+             * Schedule Text
+             * @description The schedule in words, e.g. every day at 02:00 UTC
+             */
+            schedule_text: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Next Run At */
+            next_run_at: string | null;
+            /** @description The most recent execution, if any */
+            last: components["schemas"]["ExecutionInfo"] | null;
+        };
+        /**
+         * JobRequest
+         * @description A job as saved: what it runs, what each pull reads, and when it runs by itself.
+         */
+        JobRequest: {
+            /** Name */
+            name: string;
+            spec: components["schemas"]["PipelineSpec"];
+            /**
+             * Sources
+             * @description One pull per spec.sources entry (same order)
+             */
+            sources: components["schemas"]["JobSource"][];
+            /** @description When it runs by itself (UTC); null = only when asked */
+            schedule?: components["schemas"]["Schedule"] | null;
+            /**
+             * Enabled
+             * @description A disabled job keeps its schedule but waits
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * JobSource
+         * @description One input of a job, aligned to ``spec.sources`` by position: a data source and its window.
+         */
+        JobSource: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Params
+             * @description The connector's pull params
+             */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** Window */
+            window: components["schemas"]["FixedWindow"] | components["schemas"]["RollingWindow"];
         };
         /**
          * LabelledSpec
@@ -1561,6 +1917,29 @@ export interface components {
             role: "admin" | "member";
         };
         /**
+         * RollingWindow
+         * @description The last ``days`` days, ending yesterday or today in UTC, worked out at each run.
+         */
+        RollingWindow: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "rolling";
+            /**
+             * Days
+             * @description How many days the window covers
+             */
+            days: number;
+            /**
+             * Through
+             * @description Its last day: yesterday (complete days only) or today (so far)
+             * @default yesterday
+             * @enum {string}
+             */
+            through: "yesterday" | "today";
+        };
+        /**
          * RunPullInfo
          * @description The data-source pull an input was read from (ADR-0047) — enough to read it again.
          */
@@ -1658,6 +2037,33 @@ export interface components {
             detections: number;
             /** Alerts */
             alerts: number;
+        };
+        /**
+         * Schedule
+         * @description When a job runs by itself, in UTC. ``hour`` is ignored hourly, ``weekday`` unless weekly.
+         */
+        Schedule: {
+            /**
+             * Every
+             * @enum {string}
+             */
+            every: "hour" | "day" | "week";
+            /**
+             * Minute
+             * @default 0
+             */
+            minute: number;
+            /**
+             * Hour
+             * @default 0
+             */
+            hour: number;
+            /**
+             * Weekday
+             * @description 0 = Monday … 6 = Sunday
+             * @default 0
+             */
+            weekday: number;
         };
         /**
          * SinkConfig
@@ -2289,6 +2695,219 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavedRunInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_saved_jobs_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"][];
+                };
+            };
+        };
+    };
+    create_job_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_job_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_job_jobs__job_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_job_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_job_jobs__job_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_executions_jobs__job_id__executions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionInfo"][];
                 };
             };
             /** @description Validation Error */

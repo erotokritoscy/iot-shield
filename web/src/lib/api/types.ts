@@ -39,6 +39,8 @@ export type RejectedLine = P["RejectedLine"];
 
 // --- Data sources (ADR-0041) --------------------------------------------------
 export type DataSourceInfo = P["DataSourceInfo"];
+export type ApiEndpoint = P["ApiEndpoint"];
+export type ApiMapping = P["ApiMapping"];
 export type DataSourceRequest = P["DataSourceRequest"];
 export type SourceType = DataSourceInfo["type"];
 // --- Connections and pulls (ADR-0042) ---------------------------------------------
@@ -49,6 +51,13 @@ export type PullResponse = P["PullResponse"];
 export type RunResponse = P["RunResponse"];
 export type SavedRunInfo = P["SavedRunInfo"];
 export type PipelineSpec = P["PipelineSpec"];
+// --- Saved jobs (ADR-0050) ----------------------------------------------------------
+export type JobInfo = P["JobInfo"];
+export type JobRequest = P["JobRequest"];
+export type JobSource = P["JobSource"];
+export type JobWindow = JobSource["window"];
+export type JobSchedule = P["Schedule"];
+export type ExecutionInfo = P["ExecutionInfo"];
 
 // --- Accounts (mounted only when IOTSHIELD_AUTH is set — ADR-0039) -----------
 export type MeResponse = P["MeResponse"];

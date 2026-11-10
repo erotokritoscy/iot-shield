@@ -20,6 +20,7 @@ const CAMERAS: DataSourceInfo = {
   normalizer: "flow",
   source_format: "zeek-conn",
   connection: null,
+  has_credentials: false,
   created_at: "2026-10-21T09:00:00+00:00",
 };
 const BIOLOGY: DataSourceInfo = {
@@ -30,6 +31,7 @@ const BIOLOGY: DataSourceInfo = {
   normalizer: null,
   source_format: null,
   connection: null,
+  has_credentials: false,
   created_at: "2026-10-21T09:05:00+00:00",
 };
 
@@ -41,6 +43,7 @@ const METERS: DataSourceInfo = {
   normalizer: "meter",
   source_format: "sensipro-hourly-csv",
   connection: "sensipro",
+  has_credentials: false,
   created_at: "2026-10-21T09:10:00+00:00",
 };
 const SENSIPRO: ConnectionInfo = {
@@ -132,9 +135,10 @@ function register(rows: DataSourceInfo[]): void {
   server.use(
     http.get(`${PIPELINE}/data-sources`, () => HttpResponse.json(current)),
     http.post(`${PIPELINE}/data-sources`, async ({ request }) => {
-      const body = (await request.json()) as Omit<DataSourceInfo, "source_id" | "created_at">;
+      const body = (await request.json()) as Omit<DataSourceInfo, "source_id" | "created_at" | "has_credentials">;
       sent.posted.push(body);
       const created = {
+        has_credentials: false,
         ...body,
         source_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         created_at: "2026-10-21T10:00:00+00:00",
@@ -143,7 +147,7 @@ function register(rows: DataSourceInfo[]): void {
       return HttpResponse.json(created, { status: 201 });
     }),
     http.put(`${PIPELINE}/data-sources/:id`, async ({ request, params }) => {
-      const body = (await request.json()) as Omit<DataSourceInfo, "source_id" | "created_at">;
+      const body = (await request.json()) as Omit<DataSourceInfo, "source_id" | "created_at" | "has_credentials">;
       sent.put.push(body);
       const before = current.find((row) => row.source_id === params.id);
       const updated = { ...before, ...body } as DataSourceInfo;
@@ -158,14 +162,16 @@ function register(rows: DataSourceInfo[]): void {
   );
 }
 
+// Every describe below records into `sent`, so it starts empty for each test in the file.
+beforeEach(() => {
+  sent.posted = [];
+  sent.put = [];
+  sent.deleted = [];
+  sent.pulls = [];
+  sent.deviceQueries = [];
+});
+
 describe("Data sources page", () => {
-  beforeEach(() => {
-    sent.posted = [];
-    sent.put = [];
-    sent.deleted = [];
-    sent.pulls = [];
-    sent.deviceQueries = [];
-  });
   afterEach(() => vi.restoreAllMocks());
 
   it("lists the sources with their type and how they are read", async () => {
@@ -489,5 +495,314 @@ describe("Compose — picking a data source", () => {
     await screen.findByTestId("src_0_text");
     expect(screen.queryByTestId("src_0_source")).not.toBeInTheDocument();
     expect(screen.queryByTestId("src_0_mode_pull")).not.toBeInTheDocument();
+  });
+});
+
+const LOG_API: DataSourceInfo = {
+  source_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  name: "Gateway logs",
+  type: "IT",
+  description: null,
+  normalizer: "passthrough",
+  source_format: "normalized-jsonl",
+  connection: null,
+  api: {
+    url: "https://api.example.com/v1/logs",
+    auth: "api_key",
+    username: null,
+    api_key_header: "Authorization",
+    api_key_prefix: "Bearer ",
+    start_param: "since",
+    end_param: "until",
+    window_format: "iso",
+    next_path: "links.next",
+    mapping: {
+      lane: "log",
+      records: "data",
+      timestamp: "at",
+      timestamp_format: "iso",
+      timezone: null,
+      asset_id: "host",
+      metrics: {},
+      message: "text",
+      severity: "level",
+    },
+  },
+  has_credentials: true,
+  reader_params: { lane: "log" },
+  created_at: "2026-11-09T09:00:00+00:00",
+};
+
+describe("Data sources page — an HTTP API (ADR-0049)", () => {
+  it("registers an API with a key and a mapping, sending the key once", async () => {
+    register([]);
+    renderApp("/data-sources");
+    await userEvent.type(await screen.findByTestId("ds_name"), "Plant API");
+    await userEvent.selectOptions(screen.getByTestId("ds_type"), "OT");
+    await userEvent.selectOptions(screen.getByTestId("ds_connection"), "(http-api)");
+    // Neither a reader nor a format is asked for: the mapping decides how it is read.
+    expect(screen.queryByTestId("ds_normalizer")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByTestId("ds_api_url"), "https://api.example.com/v1/readings");
+    await userEvent.selectOptions(screen.getByTestId("ds_api_auth"), "api_key");
+    await userEvent.type(screen.getByTestId("ds_api_key"), "sk-123");
+    await userEvent.type(screen.getByTestId("ds_api_records"), "data.items");
+    await userEvent.type(screen.getByTestId("ds_api_asset"), "device.id");
+    // Saving waits for the mapping to name at least one metric.
+    expect(screen.getByTestId("ds_save")).toBeDisabled();
+    expect(screen.getByTestId("ds_api_problem")).toHaveTextContent("Name at least one metric.");
+    await userEvent.type(screen.getByTestId("ds_api_metrics"), "Temperature = readings.temp");
+    await userEvent.click(screen.getByTestId("ds_save"));
+
+    await waitFor(() => expect(sent.posted).toHaveLength(1));
+    expect(sent.posted[0]).toEqual({
+      name: "Plant API",
+      type: "OT",
+      description: null,
+      normalizer: null,
+      source_format: null,
+      connection: null,
+      api: {
+        url: "https://api.example.com/v1/readings",
+        auth: "api_key",
+        username: null,
+        api_key_header: "Authorization",
+        api_key_prefix: "Bearer ",
+        start_param: "start",
+        end_param: "end",
+        window_format: "iso",
+        next_path: null,
+        mapping: {
+          lane: "telemetry",
+          records: "data.items",
+          timestamp: "timestamp",
+          timestamp_format: "iso",
+          timezone: null,
+          asset_id: "device.id",
+          metrics: { Temperature: "readings.temp" },
+          message: null,
+          severity: null,
+        },
+      },
+      credentials: { password: null, api_key: "sk-123" },
+    });
+  });
+
+  it("lists an API source by its host and lane", async () => {
+    register([LOG_API]);
+    renderApp("/data-sources");
+    expect(await screen.findByText("(pulled from api.example.com, log)")).toBeInTheDocument();
+  });
+
+  it("opens an edit with the key blank, and blank keeps the stored key", async () => {
+    register([LOG_API]);
+    renderApp("/data-sources");
+    await userEvent.click(await screen.findByTestId("ds_edit_Gateway logs"));
+    expect(screen.getByTestId("ds_connection")).toHaveValue("(http-api)");
+    expect(screen.getByTestId("ds_api_url")).toHaveValue("https://api.example.com/v1/logs");
+    expect(screen.getByTestId("ds_api_message")).toHaveValue("text");
+    const key = screen.getByTestId("ds_api_key");
+    expect(key).toHaveValue("");
+    expect(key).toHaveAttribute("type", "password");
+    expect(screen.getByText("Leave blank to keep the stored one.")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("ds_save"));
+    await waitFor(() => expect(sent.put).toHaveLength(1));
+    expect(sent.put[0]).toMatchObject({
+      api: { url: "https://api.example.com/v1/logs", next_path: "links.next", mapping: { lane: "log" } },
+      credentials: { password: null, api_key: null },
+    });
+  });
+
+  it("turning an API source back into a plain one sends no api, which removes it", async () => {
+    register([LOG_API]);
+    renderApp("/data-sources");
+    await userEvent.click(await screen.findByTestId("ds_edit_Gateway logs"));
+    await userEvent.selectOptions(screen.getByTestId("ds_connection"), "");
+    await userEvent.click(screen.getByTestId("ds_save"));
+    await waitFor(() => expect(sent.put).toHaveLength(1));
+    expect(sent.put[0]).not.toHaveProperty("api");
+    expect(sent.put[0]).not.toHaveProperty("credentials");
+  });
+});
+
+describe("Compose — pulling from an HTTP API source", () => {
+  const passthrough = {
+    name: "passthrough",
+    kind: "normalizer",
+    consumes: ["format:normalized-jsonl"],
+    produces: ["lane:telemetry"],
+    formats: ["normalized-jsonl"],
+    params: [
+      { name: "lane", type: "str", default: "telemetry", required: false, choices: ["flow", "log", "telemetry"] },
+      { name: "payload", type: "str", default: "", required: false, choices: null },
+    ],
+    artifact_param: null,
+  };
+  const SAMPLE = '{"source_type": "log", "timestamp": "2026-11-01T10:00:00+00:00", "asset_id": "gw", "message": "boot"}\n';
+
+  function apiServer(): void {
+    server.use(
+      http.get(`${PIPELINE}/modules`, () =>
+        HttpResponse.json({ ...seed.modules, normalizers: [...seed.modules.normalizers, passthrough] }),
+      ),
+      http.post(`${PIPELINE}/data-sources/:id/pull`, async ({ request }) => {
+        sent.pulls.push(await request.json());
+        return HttpResponse.json({
+          sample: SAMPLE,
+          normalizer: "passthrough",
+          source_format: "normalized-jsonl",
+          rows: 1,
+          origin: "Gateway logs 2026-11-01..2026-11-01",
+        });
+      }),
+    );
+  }
+
+  it("offers an API source with no connection, and runs it read in its mapped lane", async () => {
+    register([LOG_API]);
+    apiServer();
+    await composeWith("pull");
+    await userEvent.selectOptions(await screen.findByTestId("src_0_source"), LOG_API.source_id);
+    const panel = await screen.findByTestId("src_0_pull");
+    expect(within(panel).getByText("api.example.com")).toBeInTheDocument();
+    // An API takes no pull params and lists no devices: the window is the whole request.
+    expect(screen.queryByTestId("src_0_pull_devices")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByTestId("src_0_pull_start"), "2026-11-01");
+    await userEvent.type(screen.getByTestId("src_0_pull_end"), "2026-11-01");
+    await userEvent.click(screen.getByTestId("src_0_pull_go"));
+    await waitFor(() => expect(sent.pulls).toEqual([{ start: "2026-11-01", end: "2026-11-01", params: {} }]));
+    expect(await screen.findByTestId("src_0_pulled")).toHaveTextContent("read from the API when the run starts.");
+
+    await userEvent.click(screen.getByTestId("step_4"));
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+    await screen.findByText("Run complete.");
+    const body = captured.runBody as { spec: { sources: { normalizer: string; params: unknown }[] }; inputs: unknown[] };
+    expect(body.spec.sources[0]).toMatchObject({ normalizer: "passthrough", params: { lane: "log" } });
+    expect(body.inputs).toEqual([
+      {
+        pull: { source_id: LOG_API.source_id, start: "2026-11-01", end: "2026-11-01", params: {} },
+        origin: "Gateway logs 2026-11-01..2026-11-01",
+      },
+    ]);
+  });
+
+  async function pullLogsAndReview(): Promise<void> {
+    register([LOG_API]);
+    apiServer();
+    await composeWith("pull");
+    await userEvent.selectOptions(await screen.findByTestId("src_0_source"), LOG_API.source_id);
+    await userEvent.type(await screen.findByTestId("src_0_pull_start"), "2026-11-01");
+    await userEvent.type(screen.getByTestId("src_0_pull_end"), "2026-11-01");
+    await userEvent.click(screen.getByTestId("src_0_pull_go"));
+    await screen.findByTestId("src_0_pulled");
+    await userEvent.click(screen.getByTestId("step_4"));
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+  }
+
+  it("saves the pulled chain as a scheduled job reading a rolling window (ADR-0050)", async () => {
+    const jobs: unknown[] = [];
+    server.use(
+      http.post(`${PIPELINE}/jobs`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        jobs.push(body);
+        return HttpResponse.json(
+          {
+            ...body,
+            job_id: "j-1",
+            created_by: "local",
+            created_at: "2026-11-09T00:00:00+00:00",
+            updated_at: "2026-11-09T00:00:00+00:00",
+            schedule_text: "every day at 03:30 UTC",
+            next_run_at: "2026-11-09T03:30:00+00:00",
+            last: null,
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    await pullLogsAndReview();
+    await userEvent.click(screen.getByText(/Save as a job/));
+    expect(screen.getByTestId("job_create")).toBeDisabled(); // no name yet
+    expect(screen.getByTestId("job_problem")).toHaveTextContent("Name the job.");
+    await userEvent.type(screen.getByTestId("job_name"), "Nightly gateway logs");
+    await userEvent.selectOptions(screen.getByTestId("job_window_kind_0"), "rolling");
+    await userEvent.clear(screen.getByTestId("job_days_0"));
+    await userEvent.type(screen.getByTestId("job_days_0"), "1");
+    await userEvent.selectOptions(screen.getByTestId("job_every"), "day");
+    await userEvent.clear(screen.getByTestId("job_time"));
+    await userEvent.type(screen.getByTestId("job_time"), "03:30");
+    await userEvent.click(screen.getByTestId("job_create"));
+
+    expect(await screen.findByTestId("job_saved")).toHaveTextContent("runs every day at 03:30 UTC");
+    expect(jobs).toEqual([
+      {
+        name: "Nightly gateway logs",
+        spec: expect.objectContaining({
+          sources: [expect.objectContaining({ normalizer: "passthrough", params: { lane: "log" } })],
+        }),
+        sources: [{ source_id: LOG_API.source_id, params: {}, window: { kind: "rolling", days: 1, through: "yesterday" } }],
+        schedule: { every: "day", hour: 3, minute: 30, weekday: 0 },
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("reopens a job on Compose and updates it in place", async () => {
+    const JOB_ID = "abababab-abab-4bab-8bab-abababababab";
+    const job = {
+      job_id: JOB_ID,
+      name: "Nightly gateway logs",
+      created_by: "local",
+      created_at: "2026-11-09T00:00:00+00:00",
+      updated_at: "2026-11-09T00:00:00+00:00",
+      spec: {
+        sources: [{ normalizer: "passthrough", source_format: "normalized-jsonl", params: { lane: "log" } }],
+        detectors: [{ name: "log_burst", params: {} }],
+        alert_engine: { name: "stub", params: {} },
+        sinks: [{ name: "postgres", params: {} }],
+      },
+      sources: [{ source_id: LOG_API.source_id, params: {}, window: { kind: "fixed", start: "2026-11-01", end: "2026-11-02" } }],
+      schedule: null,
+      schedule_text: null,
+      enabled: true,
+      next_run_at: null,
+      last: null,
+    };
+    const puts: unknown[] = [];
+    register([LOG_API]);
+    apiServer();
+    server.use(
+      http.get(`${PIPELINE}/jobs/:id`, () => HttpResponse.json(job)),
+      http.put(`${PIPELINE}/jobs/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        puts.push(body);
+        return HttpResponse.json({ ...job, ...body });
+      }),
+    );
+    renderApp(`/compose?job=${JOB_ID}`);
+    expect(await screen.findByTestId("compose_reopened_job")).toHaveTextContent("Editing the job “Nightly gateway logs”");
+    expect(screen.getByTestId("src_0_tab")).toHaveTextContent("Gateway logs 2026-11-01..2026-11-02");
+
+    await userEvent.click(screen.getByTestId("step_4"));
+    await waitFor(() => expect(screen.getByTestId("job_update")).toBeEnabled());
+    expect(screen.getByTestId("job_name")).toHaveValue("Nightly gateway logs");
+    await userEvent.click(screen.getByTestId("job_update"));
+    await screen.findByTestId("job_saved");
+    expect(puts).toEqual([
+      expect.objectContaining({
+        name: "Nightly gateway logs",
+        sources: job.sources,
+        schedule: null,
+      }),
+    ]);
+  });
+
+  it("will not save an upload as a job, and says why", async () => {
+    await composeWith("paste");
+    await userEvent.type(await screen.findByTestId("src_0_text"), "2026-07-07T12:00:00+00:00,pump-02,Pressure,45.0");
+    await userEvent.click(screen.getByTestId("step_4"));
+    await userEvent.click(await screen.findByText(/Save as a job/));
+    expect(screen.getByTestId("job_blocker")).toHaveTextContent("source 1 is an upload or paste");
+    expect(screen.queryByTestId("job_create")).not.toBeInTheDocument();
   });
 });

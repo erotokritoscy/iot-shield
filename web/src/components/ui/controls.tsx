@@ -4,7 +4,8 @@
  * Native `<select>`, `<input>` and `<textarea>` under the token styling rather than a
  * headless listbox library: this is a dense operator console whose forms are the product
  * surface, and the platform controls bring keyboard, mobile and assistive behaviour for
- * free — shadcn/ui without Radix (ADR-0031).
+ * free — shadcn/ui without Radix (ADR-0031). `SearchSelect` and `InfoSelect` are the exceptions,
+ * each for something an `<option>` cannot hold.
  */
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDown, Minus, Plus } from "lucide-react";
@@ -94,7 +95,7 @@ export interface SearchSelectProps {
 }
 
 /**
- * A `Select` whose open list starts with a search box — the one deliberate exception to the
+ * A `Select` whose open list starts with a search box — a deliberate exception to the
  * native controls above, for lists long enough to need one (a fleet's assets): a native
  * `<select>` cannot hold a text input. Typing filters the options (every word, anywhere in
  * the label, case-insensitively); ↑/↓ move, Enter picks, Escape or a click elsewhere closes.
@@ -222,6 +223,141 @@ export function SearchSelect({
           </ul>
           {matches.length === 0 ? <p className="caption px-2 py-1.5">No matches.</p> : null}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+export interface InfoSelectProps {
+  /** Goes on the trigger button, so a `<Field htmlFor>` label opens it. */
+  readonly id: string;
+  /** The trigger's accessible name. Must state the value, which a `<label>` alone would hide. */
+  readonly "aria-label": string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly options: readonly string[];
+  readonly labelFor?: (option: string) => string;
+  /** What the option's own (i) says. */
+  readonly infoFor: (option: string) => React.ReactNode;
+  readonly className?: string;
+  /** Names the trigger; each row's pick button is `<testId>_option_<option>`. */
+  readonly "data-testid"?: string;
+}
+
+/**
+ * A `Select` with an (i) on every option, so options can be compared before one is chosen —
+ * the other exception to the native controls, because an `<option>` holds only text.
+ *
+ * A short list of plain buttons, deliberately not an ARIA listbox: an `option` may not contain
+ * interactive children, and the (i) is one. Nor does the list scroll, since a scrolling box would
+ * clip the tips. ↑/↓ move between options, Tab also reaches each (i), Escape or a click elsewhere
+ * closes. An (i) only explains; picking is the name's job.
+ */
+export function InfoSelect({
+  id,
+  "aria-label": ariaLabel,
+  value,
+  onChange,
+  options,
+  labelFor = (option) => option,
+  infoFor,
+  className,
+  "data-testid": testId,
+}: InfoSelectProps) {
+  const wrapper = React.useRef<HTMLDivElement>(null);
+  const trigger = React.useRef<HTMLButtonElement>(null);
+  const list = React.useRef<HTMLUListElement>(null);
+  const [open, setOpen] = React.useState(false);
+
+  const picks = () => Array.from(list.current?.querySelectorAll<HTMLElement>("[data-pick]") ?? []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    (list.current?.querySelector<HTMLElement>('[aria-current="true"]') ?? picks()[0])?.focus();
+    const onPointer = (event: PointerEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [open]);
+
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+
+  return (
+    <div
+      ref={wrapper}
+      className={cn("relative", className)}
+      onBlur={(event) => {
+        // Tabbed out of the list. A null target is a click on nothing focusable, not an exit.
+        const next = event.relatedTarget;
+        if (next instanceof Node && !wrapper.current?.contains(next)) setOpen(false);
+      }}
+    >
+      <button
+        ref={trigger}
+        id={id}
+        type="button"
+        data-testid={testId}
+        aria-label={ariaLabel}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="control flex items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((shown) => !shown)}
+        onKeyDown={(event) => {
+          if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+      >
+        <span className="truncate">{options.includes(value) ? labelFor(value) : value}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+      </button>
+      {open ? (
+        <ul
+          ref={list}
+          className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-line bg-surface p-1.5 shadow-lg"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const rows = picks();
+              // From the row holding focus, which may be on its (i) rather than its name.
+              const at = rows.findIndex((row) => row.parentElement?.contains(document.activeElement));
+              const step = event.key === "ArrowDown" ? 1 : -1;
+              rows[Math.min(Math.max(at + step, 0), rows.length - 1)]?.focus();
+            }
+          }}
+        >
+          {options.map((option) => (
+            <li key={option} className="flex items-center gap-1 pr-1">
+              <button
+                type="button"
+                data-pick
+                data-testid={testId ? `${testId}_option_${option}` : undefined}
+                aria-current={option === value ? "true" : undefined}
+                className={cn(
+                  "min-w-0 flex-1 rounded px-2 py-1.5 text-left text-sm hover:bg-raised hover:text-ink focus-visible:bg-raised focus-visible:text-ink focus-visible:outline-none",
+                  option === value ? "font-medium text-accent" : "text-dim",
+                )}
+                onClick={() => {
+                  onChange(option);
+                  close();
+                }}
+              >
+                {labelFor(option)}
+              </button>
+              <InfoTip label={option} placement="left">
+                {infoFor(option)}
+              </InfoTip>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

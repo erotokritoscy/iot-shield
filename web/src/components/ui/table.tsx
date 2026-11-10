@@ -9,6 +9,7 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/controls";
+import { InfoTip } from "@/components/ui/info";
 import { formatCell, isFlatRecord } from "@/lib/format";
 import type { AlertSeverity } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -267,38 +268,57 @@ export function StatTile({
   label,
   value,
   to,
+  info,
 }: {
   readonly label: string;
   readonly value: React.ReactNode;
   readonly to?: string | undefined;
+  /** What this number counts, behind an (i) beside the label. */
+  readonly info?: React.ReactNode;
 }) {
   const testId = `stat-${label.replace(/\s+/g, "-")}`;
-  const body = (
-    <>
-      <p className="flex items-center justify-between gap-2 text-2xs uppercase tracking-wide text-muted">
+  const heading = (
+    <p className="flex items-center justify-between gap-2 text-2xs uppercase tracking-wide text-muted">
+      <span className="inline-flex items-center gap-1">
         {label}
-        {to ? <ExternalLink aria-hidden className="h-3.5 w-3.5" /> : null}
-      </p>
-      <p className="tabular mt-1 text-2xl font-semibold leading-none text-ink">{value}</p>
-    </>
+        {/* z-10 lifts the (i) above the linked tile's stretched click area. */}
+        {info ? (
+          <InfoTip label={label} className="z-10">
+            {info}
+          </InfoTip>
+        ) : null}
+      </span>
+      {to ? <ExternalLink aria-hidden className="h-3.5 w-3.5" /> : null}
+    </p>
   );
+  const valueClass = "tabular mt-1 text-2xl font-semibold leading-none text-ink";
   if (to && value !== 0) {
+    // A "stretched" link: the link is the number, and its ::after covers the whole tile, so the
+    // tile clicks as one while the (i) stays a separate button — a button inside a link is
+    // invalid HTML, and a click on the (i) would open the run instead of the explanation.
     return (
-      <Link
-        to={to}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid={testId}
-        aria-label={`${label}: ${String(value)} (opens in a new tab)`}
-        className="block rounded-lg border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-accent-soft"
-      >
-        {body}
-      </Link>
+      <div className="relative rounded-lg border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-accent-soft">
+        {heading}
+        <Link
+          to={to}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid={testId}
+          aria-label={`${label}: ${String(value)} (opens in a new tab)`}
+          className={cn(
+            valueClass,
+            "block after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent",
+          )}
+        >
+          {value}
+        </Link>
+      </div>
     );
   }
   return (
     <div data-testid={testId} className="rounded-lg border border-line bg-surface px-4 py-3">
-      {body}
+      {heading}
+      <p className={valueClass}>{value}</p>
     </div>
   );
 }

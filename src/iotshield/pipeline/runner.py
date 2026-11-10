@@ -26,7 +26,7 @@ want a ``RunResult`` they can hold, and benchmarks are small by construction.
 """
 
 import heapq
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -455,6 +455,34 @@ class Feed:
     chunks: Iterable[str]
     origin: str
     pull: dict[str, Any] | None = None
+    rows: int | None = None
+    """How many rows the chunks will hold, when known up front — the reading phase's total
+    (ADR-0051). A pull's is its connector's count of the window, taken before it is read."""
+    header_lines: int = 0
+    """Lines each chunk repeats before its rows (a CSV header), left out of the rows read."""
+
+
+def text_rows(text: str) -> int:
+    """The lines of ``text`` — what a ``Feed`` of it holds, header included."""
+    return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+
+
+@dataclass(frozen=True)
+class RunProgress:
+    """How far a run has got (ADR-0051): a phase and, where it has one, its total.
+
+    ``reading`` counts source rows (``total`` is None when a source cannot say up front how
+    many it holds), ``judging`` counts events passed through the detectors and the alert
+    engine (``total`` is every event read), and ``saving`` is the sinks finishing — one
+    commit, which has no count.
+    """
+
+    phase: Literal["reading", "judging", "saving"]
+    done: int
+    total: int | None
+
+
+ProgressCallback = Callable[[RunProgress], None]
 
 
 def _alert_rank(alert: PrioritizedAlert) -> tuple[float, str, datetime]:
@@ -492,6 +520,7 @@ def execute_run(
     origins: Sequence[str] | None = None,
     resources: SinkResources,
     batch_events: int = BATCH_EVENTS,
+    progress: ProgressCallback | None = None,
 ) -> RunReport:
     """Run the pipeline into every configured sink, a batch of assets at a time.
 
@@ -505,8 +534,19 @@ def execute_run(
     sink rolls its one transaction back, the file sink drops its parts — so a failed run
     leaves nothing behind in a sink that had not finished. Sinks finish in config order (put
     the system-of-record first); there is no cross-store atomicity between them.
+
+    ``progress``, when given, is told how far the run has got after every chunk read, every
+    batch judged and before the sinks finish (ADR-0051). It only observes: it is called on
+    the run's own thread, and an exception it raises fails the run like any other.
     """
     spec: PipelineSpec = config
+
+    def report(
+        phase: Literal["reading", "judging", "saving"], done: int, total: int | None
+    ) -> None:
+        if progress is not None:
+            progress(RunProgress(phase=phase, done=done, total=total))
+
     feeds = _feeds(spec, inputs, origins)
     warnings = [
         f"[{issue.stage}] {issue.message}"
@@ -555,12 +595,22 @@ def execute_run(
                 writer.add(part)
 
         malformed_total = 0
+        known = [feed.rows for feed in feeds]
+        rows_total = None if None in known else sum(rows or 0 for rows in known)
+        rows_read = 0
+        report("reading", 0, rows_total)
         for source, feed in zip(spec.sources, feeds, strict=True):
             normalizer = normalizers[config_fingerprint(source.normalizer, source.params)]
             read = rejected = 0
             for chunk in feed.chunks:
                 result = normalizer.normalize(
                     chunk, source_format=source.source_format, origin=feed.origin
+                )
+                rows_read += max(text_rows(chunk) - feed.header_lines, 0)
+                # A count taken before reading can be off either way (a connector skips its
+                # filler rows), so the total never reads as less than what was done.
+                report(
+                    "reading", rows_read, None if rows_total is None else max(rows_total, rows_read)
                 )
                 read += len(result.events)
                 rejected += len(result.malformed)
@@ -576,6 +626,8 @@ def execute_run(
         events = detections = alerts = 0
         top: list[PrioritizedAlert] = []
         silences: list[str] = []
+        to_judge = len(partition)
+        report("judging", 0, to_judge)
         for batch in partition.batches(batch_events):
             judged = compute_result(
                 spec,
@@ -591,6 +643,7 @@ def execute_run(
             top = heapq.nsmallest(TOP_ALERTS_IN_REPORT, [*top, *judged.alerts], key=_alert_rank)
             # A detector explains its silence per batch; the same sentence twice is one note.
             silences.extend(note for note in judged.warnings if note not in silences)
+            report("judging", events, to_judge)
 
         totals = RunTotals(
             events=events,
@@ -600,6 +653,7 @@ def execute_run(
             warnings=[*warnings, *silences],
         )
         destinations: list[str] = []
+        report("saving", 0, None)
         for (sink_config, _), writer in zip(sinks, writers, strict=True):
             writer.finish(totals)
             finished += 1

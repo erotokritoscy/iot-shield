@@ -35,13 +35,17 @@ import {
   runSchema,
   savedRunSchema,
   savedRunsSchema,
+  executionSchema,
+  executionsSchema,
+  jobSchema,
+  jobsSchema,
   summarySchema,
   userInfoSchema,
   usersSchema,
   validateSchema,
   type EvalReport,
 } from "./schemas";
-import type { DataSourceRequest, Lane, OrgRole, PullRequest } from "./types";
+import type { DataSourceRequest, JobRequest, Lane, OrgRole, PullRequest } from "./types";
 
 const EVENT_LIMIT = 5000;
 const DETECTION_LIMIT = 5000;
@@ -251,6 +255,7 @@ export interface EvalRunRequest {
 }
 
 const runPath = (runId: string) => `/runs/${encodeURIComponent(runId)}`;
+const jobPath = (jobId: string) => `/jobs/${encodeURIComponent(jobId)}`;
 
 export const pipelineApi = {
   health: (signal?: AbortSignal) =>
@@ -298,6 +303,30 @@ export const pipelineApi = {
   /** Admins only: deletes the run and every result it stored. */
   deleteRun: (runId: string) =>
     apiRequest(PIPELINE_BASE, runPath(runId), { schema: noContentSchema, method: "DELETE" }),
+
+  // --- Saved jobs (ADR-0050) -------------------------------------------------------------
+
+  jobs: () => apiRequest(PIPELINE_BASE, "/jobs", { schema: jobsSchema }),
+
+  job: (jobId: string) => apiRequest(PIPELINE_BASE, jobPath(jobId), { schema: jobSchema }),
+
+  /** Save a chain of pulls as a job; refused (422) for whatever would refuse its run. */
+  createJob: (body: JobRequest) =>
+    apiRequest(PIPELINE_BASE, "/jobs", { schema: jobSchema, method: "POST", body }),
+
+  updateJob: (jobId: string, body: JobRequest) =>
+    apiRequest(PIPELINE_BASE, jobPath(jobId), { schema: jobSchema, method: "PUT", body }),
+
+  /** Admins only: the job and its history go; the runs it made stay. */
+  deleteJob: (jobId: string) =>
+    apiRequest(PIPELINE_BASE, jobPath(jobId), { schema: noContentSchema, method: "DELETE" }),
+
+  /** Queue the job for the worker; 409 while it is already queued or running. */
+  runJob: (jobId: string) =>
+    apiRequest(PIPELINE_BASE, `${jobPath(jobId)}/run`, { schema: executionSchema, method: "POST" }),
+
+  jobExecutions: (jobId: string) =>
+    apiRequest(PIPELINE_BASE, `${jobPath(jobId)}/executions`, { schema: executionsSchema }),
 
   // The eval router exists only when IOTSHIELD_EVAL_API is set — absent, not guarded
   // (ADR-0021 D1). That absence is what the mode probes for (D5): 404 here means the plane

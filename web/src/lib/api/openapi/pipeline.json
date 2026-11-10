@@ -127,7 +127,7 @@
     "/runs": {
       "post": {
         "summary": "Create Run",
-        "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nThe guard runs once, inside execute_run, which raises IncompatiblePipelineError on\nan ERROR-level issue; the runner owns the 'what blocks a run' policy and we just map\nits typed error to a structured 422. It raises before any row is written.",
+        "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nThe checks, the streaming of pulls and the mapping of failures to statuses are\n``api/execution.py``'s, shared with the job worker (ADR-0050).",
         "operationId": "create_run_runs_post",
         "requestBody": {
           "required": true,
@@ -617,6 +617,317 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Saved Jobs",
+        "description": "This organization's jobs by name, each with its most recent execution.",
+        "operationId": "list_saved_jobs_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Saved Jobs Jobs Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create Job",
+        "description": "Save a job; 422 with the run's own reasons when it could never run.",
+        "operationId": "create_job_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Read Job",
+        "operationId": "read_job_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Change Job",
+        "description": "Replace the job's chain, pulls and schedule; its history is kept.",
+        "operationId": "change_job_jobs__job_id__put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Remove Job",
+        "description": "Delete the job and its history. The runs it produced stay on the Runs page.",
+        "operationId": "remove_job_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/run": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Run Job",
+        "description": "Queue the job for the worker now. 409 while it is already queued or running.",
+        "operationId": "run_job_jobs__job_id__run_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/executions": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Executions",
+        "description": "The job's executions, newest first; ``X-Total-Count`` says how many exist.",
+        "operationId": "job_executions_jobs__job_id__executions_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExecutionInfo"
+                  },
+                  "title": "Response Job Executions Jobs  Job Id  Executions Get"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -1560,6 +1871,203 @@
         "title": "AlertStatus",
         "description": "Minimal triage workflow state."
       },
+      "ApiEndpoint": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "description": "https:// URL of the records"
+          },
+          "auth": {
+            "type": "string",
+            "enum": [
+              "none",
+              "basic",
+              "api_key"
+            ],
+            "title": "Auth",
+            "default": "none"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "Basic auth: the user name (not secret)"
+          },
+          "api_key_header": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Api Key Header",
+            "description": "API key: the header it is sent in",
+            "default": "Authorization"
+          },
+          "api_key_prefix": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Api Key Prefix",
+            "description": "API key: text before the key, e.g. 'Bearer '",
+            "default": "Bearer "
+          },
+          "start_param": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Start Param",
+            "description": "Query parameter the window's start goes in"
+          },
+          "end_param": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "End Param",
+            "description": "Query parameter the window's end goes in"
+          },
+          "window_format": {
+            "type": "string",
+            "enum": [
+              "date",
+              "iso",
+              "epoch_s",
+              "epoch_ms"
+            ],
+            "title": "Window Format",
+            "description": "date: YYYY-MM-DD, end = the last day (inclusive); iso / epoch_s / epoch_ms: UTC instants, end = midnight after the last day (exclusive)",
+            "default": "iso"
+          },
+          "next_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Path",
+            "description": "Dotted path to the next page's URL in each response; blank = one page"
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/ApiMapping"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url",
+          "start_param",
+          "end_param",
+          "mapping"
+        ],
+        "title": "ApiEndpoint"
+      },
+      "ApiMapping": {
+        "properties": {
+          "lane": {
+            "type": "string",
+            "enum": [
+              "telemetry",
+              "log"
+            ],
+            "title": "Lane",
+            "description": "Which lane the events go to: readings or log lines"
+          },
+          "records": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Records",
+            "description": "Dotted path to the list of records; blank = root",
+            "default": ""
+          },
+          "timestamp": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Timestamp"
+          },
+          "timestamp_format": {
+            "type": "string",
+            "enum": [
+              "iso",
+              "epoch_s",
+              "epoch_ms"
+            ],
+            "title": "Timestamp Format",
+            "default": "iso"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "IANA zone for ISO timestamps that carry no offset; blank refuses them"
+          },
+          "asset_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Asset Id"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Metrics",
+            "description": "Telemetry: metric name -> path of its value; one event per metric"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Log: path of the text"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity",
+            "description": "Log: path of the level"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lane",
+          "timestamp",
+          "asset_id"
+        ],
+        "title": "ApiMapping",
+        "description": "Where an API's records and fields are. Validated when an admin saves the source."
+      },
       "Asset": {
         "properties": {
           "asset_id": {
@@ -2246,6 +2754,38 @@
         "title": "CorpusSummary",
         "description": "One corpus as a picker sees it \u2014 described without paying to load its readings."
       },
+      "CredentialsRequest": {
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CredentialsRequest",
+        "description": "The secret half of an API source. Each field is optional: blank keeps what is stored."
+      },
       "Criticality": {
         "type": "string",
         "enum": [
@@ -2319,6 +2859,31 @@
               }
             ],
             "title": "Connection"
+          },
+          "api": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiEndpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The HTTP API it is pulled from; never its credentials"
+          },
+          "has_credentials": {
+            "type": "boolean",
+            "title": "Has Credentials",
+            "description": "Whether credentials are stored for its API",
+            "default": false
+          },
+          "reader_params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Reader Params",
+            "description": "Normalizer params a pull of this source must be read with (an API's lane)"
           },
           "created_at": {
             "type": "string",
@@ -2402,6 +2967,28 @@
             ],
             "title": "Connection",
             "description": "A connection declared on the server; its connector decides the reader"
+          },
+          "api": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiEndpoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An HTTP API this source is pulled from (ADR-0049)"
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredentialsRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Write-only: the API's password or key. Omitted or blank keeps what is stored"
           }
         },
         "additionalProperties": false,
@@ -2587,6 +3174,105 @@
         ],
         "title": "EvaluationReport"
       },
+      "ExecutionInfo": {
+        "properties": {
+          "execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Execution Id"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger",
+            "description": "schedule | manual"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "queued | running | succeeded | failed"
+          },
+          "queued_at": {
+            "type": "string",
+            "title": "Queued At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id",
+            "description": "The saved run it produced, when it succeeded"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "execution_id",
+          "job_id",
+          "trigger",
+          "requested_by",
+          "status",
+          "queued_at",
+          "started_at",
+          "finished_at",
+          "run_id",
+          "error"
+        ],
+        "title": "ExecutionInfo"
+      },
       "FitProtocol": {
         "type": "string",
         "enum": [
@@ -2595,6 +3281,34 @@
           "clean-prefix"
         ],
         "title": "FitProtocol"
+      },
+      "FixedWindow": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "fixed",
+            "title": "Kind",
+            "default": "fixed"
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "FixedWindow",
+        "description": "The same days every time: a re-run of exactly what was composed."
       },
       "HTTPValidationError": {
         "properties": {
@@ -2631,6 +3345,203 @@
           "message"
         ],
         "title": "IssueInfo"
+      },
+      "JobInfo": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/JobSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schedule_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Text",
+            "description": "The schedule in words, e.g. every day at 02:00 UTC"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The most recent execution, if any"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "name",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "spec",
+          "sources",
+          "schedule",
+          "schedule_text",
+          "enabled",
+          "next_run_at",
+          "last"
+        ],
+        "title": "JobInfo"
+      },
+      "JobRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/PipelineSpec"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/JobSource"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Sources",
+            "description": "One pull per spec.sources entry (same order)"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it runs by itself (UTC); null = only when asked"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "A disabled job keeps its schedule but waits",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "spec",
+          "sources"
+        ],
+        "title": "JobRequest",
+        "description": "A job as saved: what it runs, what each pull reads, and when it runs by itself."
+      },
+      "JobSource": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Id"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "The connector's pull params"
+          },
+          "window": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FixedWindow"
+              },
+              {
+                "$ref": "#/components/schemas/RollingWindow"
+              }
+            ],
+            "title": "Window",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "fixed": "#/components/schemas/FixedWindow",
+                "rolling": "#/components/schemas/RollingWindow"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "window"
+        ],
+        "title": "JobSource",
+        "description": "One input of a job, aligned to ``spec.sources`` by position: a data source and its window."
       },
       "LabelledSpec": {
         "properties": {
@@ -3454,6 +4365,40 @@
         ],
         "title": "RoleChangeRequest"
       },
+      "RollingWindow": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "rolling",
+            "title": "Kind",
+            "default": "rolling"
+          },
+          "days": {
+            "type": "integer",
+            "maximum": 92.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "description": "How many days the window covers"
+          },
+          "through": {
+            "type": "string",
+            "enum": [
+              "yesterday",
+              "today"
+            ],
+            "title": "Through",
+            "description": "Its last day: yesterday (complete days only) or today (so far)",
+            "default": "yesterday"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "days"
+        ],
+        "title": "RollingWindow",
+        "description": "The last ``days`` days, ending yesterday or today in UTC, worked out at each run."
+      },
       "RunPullInfo": {
         "properties": {
           "source_id": {
@@ -3690,6 +4635,48 @@
           "alerts"
         ],
         "title": "SavedRunInfo"
+      },
+      "Schedule": {
+        "properties": {
+          "every": {
+            "type": "string",
+            "enum": [
+              "hour",
+              "day",
+              "week"
+            ],
+            "title": "Every"
+          },
+          "minute": {
+            "type": "integer",
+            "maximum": 59.0,
+            "minimum": 0.0,
+            "title": "Minute",
+            "default": 0
+          },
+          "hour": {
+            "type": "integer",
+            "maximum": 23.0,
+            "minimum": 0.0,
+            "title": "Hour",
+            "default": 0
+          },
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday",
+            "description": "0 = Monday \u2026 6 = Sunday",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "every"
+        ],
+        "title": "Schedule",
+        "description": "When a job runs by itself, in UTC. ``hour`` is ignored hourly, ``weekday`` unless weekly."
       },
       "SinkConfig": {
         "properties": {

@@ -114,6 +114,11 @@ def params_for(spec: ConnectorSpec, raw: Mapping[str, Any]) -> BaseModel:
         raise PullRefused(f"invalid pull parameters for {spec.name}: {problems}") from exc
 
 
+def pull_window(start: date, end: date) -> tuple[datetime, datetime]:
+    """``[start 00:00, end + 1 day 00:00)``, or ``PullRefused`` past the window rules."""
+    return _window(start, end)
+
+
 def _window(start: date, end: date) -> tuple[datetime, datetime]:
     if end < start:
         raise PullRefused("the end date is before the start date")
@@ -157,23 +162,40 @@ def pull_chunks(
     mid-stream surfaces as ``ConnectionUnavailable`` like one at the start.
     """
     parsed, window_start, window_end = check_pull(spec, start, end, params)
-
-    def render(lines: list[str]) -> str:
-        return spec.header + "\n" + "".join(line + "\n" for line in lines)
-
-    lines: list[str] = []
-    last: str | None = None
     try:
-        for group, line in spec.stream(connection.engine(), window_start, window_end, parsed):
-            if len(lines) >= chunk_lines and (group is None or group != last):
-                yield render(lines)
-                lines = []
-            lines.append(line)
-            last = group
+        yield from chunked(
+            spec.header,
+            spec.stream(connection.engine(), window_start, window_end, parsed),
+            chunk_lines=chunk_lines,
+        )
     except SQLAlchemyError as exc:
         raise _unavailable(connection, exc) from exc
+
+
+def render(header: str, lines: Sequence[str]) -> str:
+    """A header (if any) and lines, as one text a normalizer reads."""
+    body = "".join(line + "\n" for line in lines)
+    return header + "\n" + body if header else body
+
+
+def chunked(
+    header: str, stream: Iterator[tuple[str | None, str]], *, chunk_lines: int = CHUNK_LINES
+) -> Iterator[str]:
+    """``stream`` cut into texts of about ``chunk_lines`` lines, never inside a group.
+
+    Shared by every kind of pull (a database's connector, an HTTP API), so the chunking rule
+    that keeps a meter's counter in one chunk is written once.
+    """
+    lines: list[str] = []
+    last: str | None = None
+    for group, line in stream:
+        if len(lines) >= chunk_lines and (group is None or group != last):
+            yield render(header, lines)
+            lines = []
+        lines.append(line)
+        last = group
     if lines:
-        yield render(lines)
+        yield render(header, lines)
 
 
 def pull_summary(

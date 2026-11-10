@@ -26,20 +26,39 @@ const configuredSchema = z.object({
   params: z.record(z.unknown()).default({}),
 });
 
-const scenarioSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string(),
-  samples: z.array(z.string()).min(1),
-  detectors: z.array(configuredSchema).min(1),
-  alert_engine: configuredSchema,
-  expected: z.object({
-    events: z.number(),
-    malformed: z.number(),
-    detections: z.number(),
-    alerts: z.number(),
-  }),
+/**
+ * A window of a data source's live database (ADR-0047). It names a *connection*, because that is
+ * what a shipped file can know: a data source's id belongs to one organization's database.
+ */
+const scenarioPullSchema = z.object({
+  connection: z.string(),
+  start: z.string(),
+  end: z.string(),
+  params: z.record(z.unknown()).default({}),
 });
+
+const scenarioSchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    description: z.string(),
+    samples: z.array(z.string()).default([]),
+    pulls: z.array(scenarioPullSchema).default([]),
+    detectors: z.array(configuredSchema).min(1),
+    alert_engine: configuredSchema,
+    // Null for a scenario that pulls: nothing shipped here can promise what a live database holds.
+    expected: z
+      .object({
+        events: z.number(),
+        malformed: z.number(),
+        detections: z.number(),
+        alerts: z.number(),
+      })
+      .nullable(),
+  })
+  .refine((scenario) => scenario.samples.length + scenario.pulls.length > 0, {
+    message: "a scenario needs at least one sample or pull",
+  });
 
 export const manifestSchema = z.object({
   samples: z.array(sampleSchema),

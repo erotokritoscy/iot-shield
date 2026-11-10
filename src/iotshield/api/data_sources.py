@@ -14,6 +14,13 @@ A source may also name a **connection** (ADR-0042): a database declared in the s
 from, as text its normalizer reads. A request names a connection, never a host; and a
 connection lists the organizations allowed to use it, so one organization cannot reach another's
 database by naming it.
+
+Or a source may be an **HTTP API** (ADR-0049): its admin enters the URL, the authentication
+(none, basic, or an API key) and a mapping from the API's JSON to events. That gives up
+ADR-0042's "never a host in a request" on purpose, so ``connect.api.guard`` takes over: https,
+public addresses only unless the operator allows a host. The credentials are **write-only** —
+sealed under ``IOTSHIELD_SECRET_KEY`` on the way in, never in a response (``has_credentials``
+says whether some are stored), and a blank field on an edit keeps what is stored.
 """
 
 from collections.abc import Iterator
@@ -29,15 +36,20 @@ from iotshield.api._auth import AccountDep, AdminDep
 from iotshield.api.control import ParamInfo, model_params
 from iotshield.capabilities import formats_in
 from iotshield.connect import (
+    API_NORMALIZER,
     CONNECTORS,
+    ApiTarget,
     Connection,
     ConnectionUnavailable,
     ConnectorSpec,
+    DatabaseTarget,
     PullRefused,
-    list_devices,
+    PullTarget,
     load_connections,
-    pull_summary,
 )
+from iotshield.connect.api import ApiCredentials, ApiEndpoint, UrlRefused, check_url
+from iotshield.connect.api.client import current_resolver
+from iotshield.connect.api.mapping import SOURCE_FORMAT as API_FORMAT
 from iotshield.pipeline.registry import NORMALIZERS
 from iotshield.storage import repository
 from iotshield.storage.accounts import Account
@@ -52,6 +64,14 @@ from iotshield.storage.data_sources import (
     list_data_sources,
     update_data_source,
 )
+from iotshield.storage.endpoints import (
+    StoredEndpoint,
+    delete_endpoint,
+    endpoints_of,
+    get_endpoint,
+    set_endpoint,
+)
+from iotshield.storage.secrets import SecretsUnavailable, seal, unseal
 
 
 def _blank_to_none(value: str | None) -> str | None:
@@ -76,6 +96,13 @@ class DataSourceRequest(BaseModel):
         max_length=64,
         description="A connection declared on the server; its connector decides the reader",
     )
+    api: ApiEndpoint | None = Field(
+        default=None, description="An HTTP API this source is pulled from (ADR-0049)"
+    )
+    credentials: "CredentialsRequest | None" = Field(
+        default=None,
+        description="Write-only: the API's password or key. Omitted or blank keeps what is stored",
+    )
 
     @field_validator("name")
     @classmethod
@@ -92,6 +119,20 @@ class DataSourceRequest(BaseModel):
 
     @model_validator(mode="after")
     def _reader(self) -> "DataSourceRequest":
+        if self.api is not None:
+            if self.connection is not None:
+                raise ValueError("a source is pulled from a connection or an API, not both")
+            # An API's records are mapped to normalized events, so they are only validated.
+            if self.normalizer not in (None, API_NORMALIZER) or self.source_format not in (
+                None,
+                API_FORMAT,
+            ):
+                raise ValueError(
+                    f"an API source is read by {API_NORMALIZER} ({API_FORMAT}); leave the "
+                    "reader blank"
+                )
+            self.normalizer, self.source_format = API_NORMALIZER, API_FORMAT
+            return self
         if self.normalizer is None:
             if self.source_format is not None:
                 raise ValueError("a format needs the normalizer that reads it")
@@ -126,6 +167,24 @@ class DataSourceRequest(BaseModel):
         )
 
 
+class CredentialsRequest(BaseModel):
+    """The secret half of an API source. Each field is optional: blank keeps what is stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    password: str | None = Field(default=None, max_length=1000)
+    api_key: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("password", "api_key")
+    @classmethod
+    def _optional(cls, value: str | None) -> str | None:
+        # Not stripped inside: a password may legitimately start or end with a space.
+        return value if value is not None and value.strip() else None
+
+
+DataSourceRequest.model_rebuild()
+
+
 class DataSourceInfo(BaseModel):
     source_id: UUID
     name: str
@@ -134,10 +193,28 @@ class DataSourceInfo(BaseModel):
     normalizer: str | None
     source_format: str | None
     connection: str | None
+    api: ApiEndpoint | None = Field(
+        default=None, description="The HTTP API it is pulled from; never its credentials"
+    )
+    has_credentials: bool = Field(
+        default=False, description="Whether credentials are stored for its API"
+    )
+    reader_params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Normalizer params a pull of this source must be read with (an API's lane)",
+    )
     created_at: str
 
 
-def _info(source: DataSource) -> DataSourceInfo:
+def _endpoint_of(stored: StoredEndpoint) -> ApiEndpoint | None:
+    try:
+        return ApiEndpoint.model_validate(stored.config)
+    except ValueError:  # pragma: no cover - only this module writes it, validated
+        return None
+
+
+def _info(source: DataSource, stored: StoredEndpoint | None = None) -> DataSourceInfo:
+    endpoint = _endpoint_of(stored) if stored is not None else None
     return DataSourceInfo(
         source_id=source.source_id,
         name=source.name,
@@ -146,6 +223,9 @@ def _info(source: DataSource) -> DataSourceInfo:
         normalizer=source.normalizer,
         source_format=source.source_format,
         connection=source.connection,
+        api=endpoint,
+        has_credentials=stored is not None and stored.credentials is not None,
+        reader_params={"lane": endpoint.mapping.lane} if endpoint is not None else {},
         created_at=source.created_at.isoformat(),
     )
 
@@ -200,12 +280,12 @@ def _connections() -> dict[str, Connection]:
         ) from exc
 
 
-def _usable(name: str, account: Account) -> tuple[Connection, ConnectorSpec]:
+def _usable(name: str, org_id: str) -> tuple[Connection, ConnectorSpec]:
     """A connection this organization may use, with its connector — or a 422 saying not."""
     connection = _connections().get(name)
     # Not declared and not allowed read the same, so naming another organization's
     # connection reveals nothing about whether it exists.
-    if connection is None or not connection.allows(account.org_id):
+    if connection is None or not connection.allows(org_id):
         raise HTTPException(status_code=422, detail=f"no connection named {name!r} is available")
     spec = CONNECTORS.get(connection.connector)
     if spec is None:
@@ -220,7 +300,7 @@ def _with_connector_reader(body: DataSourceRequest, account: Account) -> DataSou
     different reader, so the source cannot promise a format its pulls never produce."""
     if body.connection is None:
         return body
-    _, spec = _usable(body.connection, account)
+    _, spec = _usable(body.connection, account.org_id)
     if body.normalizer is None:
         return body.model_copy(
             update={"normalizer": spec.normalizer, "source_format": spec.source_format}
@@ -236,18 +316,79 @@ def _with_connector_reader(body: DataSourceRequest, account: Account) -> DataSou
     return body
 
 
-def connected_source(
-    source_id: UUID, account: Account, session: Session
-) -> tuple[DataSource, Connection, ConnectorSpec]:
-    source = get_data_source(session, source_id, org_id=account.org_id)
+def _secrets_error(exc: SecretsUnavailable) -> HTTPException:
+    return HTTPException(status_code=503, detail=str(exc))
+
+
+def pull_target(source_id: UUID, session: Session, *, org_id: str) -> tuple[DataSource, PullTarget]:
+    """The source and what a pull of it reads — its connection's database, or its API.
+
+    Takes the tenant rather than an account because the job worker (ADR-0050) pulls on an
+    organization's behalf with nobody logged in.
+    """
+    source = get_data_source(session, source_id, org_id=org_id)
     if source is None:
         raise HTTPException(status_code=404, detail="data source not found")
+    stored = get_endpoint(session, source_id, org_id=org_id)
+    if stored is not None:
+        endpoint = _endpoint_of(stored)
+        if endpoint is None:  # pragma: no cover - see _endpoint_of
+            raise HTTPException(status_code=503, detail="this source's API settings are invalid")
+        try:
+            credentials = (
+                ApiCredentials.from_sealed(unseal(stored.credentials))
+                if stored.credentials is not None
+                else ApiCredentials()
+            )
+        except SecretsUnavailable as exc:
+            raise _secrets_error(exc) from exc
+        return source, ApiTarget(name=source.name, endpoint=endpoint, credentials=credentials)
     if source.connection is None:
         raise HTTPException(
-            status_code=422, detail="this data source has no connection to pull from"
+            status_code=422, detail="this data source has no connection or API to pull from"
         )
-    connection, spec = _usable(source.connection, account)
-    return source, connection, spec
+    connection, spec = _usable(source.connection, org_id)
+    return source, DatabaseTarget(spec=spec, connection=connection)
+
+
+def _save_endpoint(
+    session: Session, source: DataSource, body: DataSourceRequest, *, org_id: str
+) -> StoredEndpoint | None:
+    """Store (or drop) the source's API, sealing credentials; refuses what could not be pulled.
+
+    A blank credential keeps the stored one, so an admin can rename a source or change its
+    mapping without retyping the key — but switching the authentication kind needs the new
+    secret, since the old one is for a different scheme.
+    """
+    endpoint = body.api
+    if endpoint is None:
+        delete_endpoint(session, source.source_id, org_id=org_id)
+        return None
+    try:
+        check_url(endpoint.url, resolve=current_resolver())
+    except UrlRefused as exc:
+        raise HTTPException(status_code=422, detail=f"api.url: {exc}") from exc
+    previous = get_endpoint(session, source.source_id, org_id=org_id)
+    try:
+        kept = ApiCredentials()
+        if previous is not None and previous.credentials is not None:
+            old = _endpoint_of(previous)
+            if old is not None and old.auth == endpoint.auth:
+                kept = ApiCredentials.from_sealed(unseal(previous.credentials))
+        given = body.credentials or CredentialsRequest()
+        credentials = ApiCredentials(
+            password=(given.password or kept.password) if endpoint.auth == "basic" else None,
+            api_key=(given.api_key or kept.api_key) if endpoint.auth == "api_key" else None,
+        )
+        if not credentials.complete_for(endpoint):
+            needed = "password" if endpoint.auth == "basic" else "API key"
+            raise HTTPException(status_code=422, detail=f"enter the {needed} for this API")
+        sealed = seal(credentials.as_sealable()) if endpoint.auth != "none" else None
+    except SecretsUnavailable as exc:
+        raise _secrets_error(exc) from exc
+    return set_endpoint(
+        session, source.source_id, endpoint.model_dump(mode="json"), sealed, org_id=org_id
+    )
 
 
 def _session(request: Request) -> Iterator[Session]:
@@ -266,7 +407,11 @@ def create_data_sources_router() -> APIRouter:
     @router.get("")
     def list_sources(account: AccountDep, session: SessionDep) -> list[DataSourceInfo]:
         """This organization's data sources, IT before OT, then by name."""
-        return [_info(source) for source in list_data_sources(session, org_id=account.org_id)]
+        stored = endpoints_of(session, org_id=account.org_id)
+        return [
+            _info(source, stored.get(source.source_id))
+            for source in list_data_sources(session, org_id=account.org_id)
+        ]
 
     @router.get("/connections")
     def list_connections(account: AccountDep) -> list[ConnectionInfo]:
@@ -295,10 +440,10 @@ def create_data_sources_router() -> APIRouter:
     ) -> list[DeviceInfo]:
         """What a pull from this source can be narrowed to (meters, hosts); query string =
         the connector's params, e.g. ``?utility=water``."""
-        _, connection, spec = connected_source(source_id, account, session)
+        _, target = pull_target(source_id, session, org_id=account.org_id)
         params = {k: v for k, v in request.query_params.items() if k != "devices"}
         try:
-            devices = list_devices(spec, connection, params)
+            devices = target.devices(params)
         except PullRefused as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ConnectionUnavailable as exc:
@@ -314,9 +459,9 @@ def create_data_sources_router() -> APIRouter:
         The rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in
         batches, so there is no row limit here — only the 92-day window.
         """
-        source, connection, spec = connected_source(source_id, account, session)
+        source, target = pull_target(source_id, session, org_id=account.org_id)
         try:
-            pulled = pull_summary(spec, connection, body.start, body.end, body.params)
+            pulled = target.summary(body.start, body.end, body.params)
         except PullRefused as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ConnectionUnavailable as exc:
@@ -340,8 +485,9 @@ def create_data_sources_router() -> APIRouter:
             source = create_data_source(session, body.fields(), org_id=account.org_id)
         except DataSourceConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        stored = _save_endpoint(session, source, body, org_id=account.org_id)
         session.commit()
-        return _info(source)
+        return _info(source, stored)
 
     @router.put("/{source_id}")
     def change_source(
@@ -355,8 +501,9 @@ def create_data_sources_router() -> APIRouter:
         # Another organization's source is a 404, exactly like an id that never existed.
         if source is None:
             raise HTTPException(status_code=404, detail="data source not found")
+        stored = _save_endpoint(session, source, body, org_id=account.org_id)
         session.commit()
-        return _info(source)
+        return _info(source, stored)
 
     @router.delete("/{source_id}", status_code=204)
     def remove_source(source_id: UUID, account: AdminDep, session: SessionDep) -> None:

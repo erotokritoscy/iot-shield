@@ -18,6 +18,7 @@ import type { ConnectionInfo, DataSourceInfo, PullResponse } from "@/lib/api/typ
 import { initialValues, submittedParams, type ParamValues } from "@/lib/params";
 import { keys } from "@/lib/queries";
 import { FIELD_HELP, paramHelp } from "@/pages/compose/help";
+import type { PulledWindow } from "@/pages/compose/model";
 
 const DEVICES = "devices";
 const DEVICES_SHOWN = 200;
@@ -26,11 +27,17 @@ export function PullPanel({
   index,
   source,
   connection,
+  held,
   onPulled,
 }: {
   readonly index: number;
   readonly source: DataSourceInfo;
   readonly connection: ConnectionInfo;
+  /**
+   * The window this source already holds, from an earlier pull, a scenario or a reopened run. The
+   * form opens on it: blank fields beside a window the run will read would misstate that run.
+   */
+  readonly held: PulledWindow | null;
   /** The pull's summary, and the window asked for — which the run will read itself. */
   readonly onPulled: (
     pulled: PullResponse,
@@ -39,10 +46,19 @@ export function PullPanel({
 }) {
   // The device list is its own control (searchable, many), so the generic form gets the rest.
   const otherParams = connection.params.filter((param) => param.name !== DEVICES);
-  const [start, setStart] = React.useState("");
-  const [end, setEnd] = React.useState("");
-  const [values, setValues] = React.useState<ParamValues>(() => initialValues(otherParams));
-  const [chosen, setChosen] = React.useState<readonly string[]>([]);
+  const [start, setStart] = React.useState(held?.start ?? "");
+  const [end, setEnd] = React.useState(held?.end ?? "");
+  const [values, setValues] = React.useState<ParamValues>(() => {
+    const { [DEVICES]: _devices, ...rest } = held?.params ?? {};
+    return {
+      ...initialValues(otherParams),
+      ...Object.fromEntries(Object.entries(rest).map(([name, value]) => [name, String(value)])),
+    };
+  });
+  const [chosen, setChosen] = React.useState<readonly string[]>(() => {
+    const devices = held?.params[DEVICES];
+    return Array.isArray(devices) ? devices.map(String) : [];
+  });
   const [filter, setFilter] = React.useState("");
 
   const sent = submittedParams(otherParams, values);

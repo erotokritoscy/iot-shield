@@ -20,6 +20,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "sqlalchemy>=2.0",
     "uvicorn>=0.30",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

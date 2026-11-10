@@ -7,7 +7,7 @@
  * appends what the catalogue does know (default, optional), so a param this table has not
  * caught up with still gets an (i) that states its type rather than none.
  */
-import type { ParamInfo } from "@/lib/api/types";
+import type { ModuleInfo, ParamInfo } from "@/lib/api/types";
 
 export const FIELD_HELP = {
   mode:
@@ -39,6 +39,18 @@ export const FIELD_HELP = {
     "Turns detections into alerts: it groups detections on the same device and time, then scores and ranks each group 0–100.",
   sinks:
     "Where the results are written. Pick postgres to see them on Monitor → Triage; file writes a JSONL copy on the server. You can pick both.",
+} as const;
+
+/** What each tile of a finished run counts — the (i) beside events / malformed / detections / alerts. */
+export const RESULT_HELP = {
+  events:
+    "Input records the normalizers read successfully, in one common shape: a time in UTC, a device and a lane (telemetry, log or flow). One per log line or flow; a sensor row with several channels becomes one per channel. Each keeps its original line.",
+  malformed:
+    "Input lines a normalizer could not read — truncated, no timestamp, a time with no time zone. They are kept with the reason rather than dropped, and listed on Monitor → Data health.",
+  detections:
+    "Findings from the detectors: a device, a lane and a time span where something looked wrong, each with a one-sentence explanation. They are observations, not yet a verdict — one device can have several.",
+  alerts:
+    "Detections grouped by device and time, then scored 0–100 and explained (threat class, recommended actions). This is the queue to work through on Monitor → Triage; a device ranks higher when more than one lane agrees.",
 } as const;
 
 /** What each input format looks like on the wire, keyed by `source_format`. */
@@ -74,6 +86,17 @@ export const ADAPTER_HELP: Readonly<Record<string, string>> = {
   "sink:postgres": "postgres: the database the Monitor pages read.",
   "sink:file": "file: a JSONL file in the server's results directory.",
 };
+
+/**
+ * The (i) on one detector in the picker: what it does, then what it reads. The fallback is
+ * `paramHelp`'s stance — a detector this table has not caught up with still says what it can.
+ */
+export function detectorHelp(detector: Pick<ModuleInfo, "name" | "consumes">): readonly string[] {
+  return [
+    ADAPTER_HELP[`detector:${detector.name}`] ?? `${detector.name} has no description yet.`,
+    `Reads ${detector.consumes.join(" + ")}.`,
+  ];
+}
 
 /** The meaning of each param, keyed `<kind>:<adapter>.<param>`. */
 const PARAM_HELP: Readonly<Record<string, string>> = {

@@ -172,6 +172,26 @@ class DataSourceRow(Base):
     created_at: Mapped[datetime]
 
 
+class DataSourceEndpointRow(Base):
+    """An HTTP API a data source is pulled from (ADR-0049): its own table, beside the source.
+
+    A table rather than columns on ``data_sources`` because ``create_all`` adds a table to an
+    existing database but never a column, so this needed no ``down -v``. ``config`` is the
+    endpoint's settings and mapping as JSON (``connect.api.ApiEndpoint``), nothing secret;
+    ``credentials`` is a Fernet token (``storage/secrets.py``), never the credentials.
+    """
+
+    __tablename__ = "data_source_endpoints"
+
+    source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("data_sources.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    config: Mapped[str] = mapped_column(Text)
+    credentials: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime]
+
+
 class RunRow(Base):
     """One saved pipeline run: its name, who ran it, the chain it ran, and what it found (ADR-0046).
 
@@ -202,6 +222,61 @@ class RunRow(Base):
     malformed: Mapped[int]
     detections: Mapped[int]
     alerts: Mapped[int]
+
+
+class JobRow(Base):
+    """A saved job: a chain whose inputs are all pulls, and when it runs by itself (ADR-0050).
+
+    ``sources`` holds one ``jobs.model.JobSource`` per ``spec.sources`` entry (a data source,
+    its pull params and its window rule); ``schedule`` a ``jobs.model.Schedule`` or null for a
+    job that only runs when asked. ``next_run_at`` is when the worker next queues it — null
+    when it has no schedule or is disabled — so finding due jobs is one indexed comparison.
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_due", "enabled", "next_run_at"),)
+
+    job_id: Mapped[UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+    spec: Mapped[dict[str, Any]]
+    sources: Mapped[list[Any]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    schedule: Mapped[dict[str, Any] | None]
+    enabled: Mapped[bool]
+    next_run_at: Mapped[datetime | None]
+
+
+class JobExecutionRow(Base):
+    """One time a job ran, or was asked to: queued -> running -> succeeded | failed (ADR-0050).
+
+    The worker claims the oldest ``queued`` row (``SKIP LOCKED`` on Postgres, so two workers
+    never take the same one) and beats ``heartbeat_at`` while it runs; a ``running`` row whose
+    heartbeat stopped is a worker that died, and is failed rather than left running forever.
+    ``run_id`` is the saved run it produced, with no foreign key for the reason ``RunRow``'s
+    rows have none.
+    """
+
+    __tablename__ = "job_executions"
+    __table_args__ = (
+        Index("ix_job_executions_job", "job_id", "queued_at"),
+        Index("ix_job_executions_status", "status", "queued_at"),
+    )
+
+    execution_id: Mapped[UUID] = mapped_column(primary_key=True)
+    job_id: Mapped[UUID] = mapped_column(ForeignKey("jobs.job_id", ondelete="CASCADE"))
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    trigger: Mapped[str] = mapped_column(String(16))  # "schedule" | "manual"
+    requested_by: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16))
+    queued_at: Mapped[datetime]
+    started_at: Mapped[datetime | None]
+    finished_at: Mapped[datetime | None]
+    heartbeat_at: Mapped[datetime | None]
+    run_id: Mapped[UUID | None]
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 def _asset_fk() -> ForeignKeyConstraint:

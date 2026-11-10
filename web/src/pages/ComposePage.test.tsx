@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { RESULT_HELP } from "@/pages/compose/help";
 import { captured, PIPELINE, RUN_ID, SAMPLE_CSV, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
@@ -105,6 +106,12 @@ describe("Compose & run — every field has an (i)", () => {
   });
 });
 
+/** The detector picker is an InfoSelect: open it, then choose by name. */
+async function pickDetector(index: number, name: string): Promise<void> {
+  await userEvent.click(await screen.findByTestId(`det_${index}_name`));
+  await userEvent.click(screen.getByTestId(`det_${index}_name_option_${name}`));
+}
+
 describe("Compose & run — the wizard", () => {
   beforeEach(() => {
     captured.runBody = null;
@@ -141,14 +148,36 @@ describe("Compose & run — the wizard", () => {
     expect((screen.getByTestId("src_0_norm") as HTMLSelectElement).value).toBe("stub");
     await toStep(2);
     // `meter_iforest` sorts first and is *untrained* until an artifact is named.
-    expect((screen.getByTestId("det_0_name") as HTMLSelectElement).value).toBe("stub_threshold");
+    expect(screen.getByTestId("det_0_name")).toHaveTextContent("stub_threshold");
     expect(screen.getByText(/which your sources provide/)).toBeInTheDocument();
   });
 
   it("says when no source feeds the chosen detector, without hiding it", async () => {
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    await pickDetector(0, "log_burst");
     expect(await screen.findByText(/this detector will run and find nothing/)).toBeInTheDocument();
+  });
+
+  it("explains every detector in the open list, without choosing it", async () => {
+    await withContent();
+    await userEvent.click(screen.getByTestId("det_0_name"));
+    await userEvent.hover(screen.getByRole("button", { name: "About log_burst" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("flags too many matching log lines");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Reads lane:log");
+    expect(screen.getByTestId("det_0_name")).toHaveTextContent("stub_threshold");
+  });
+
+  it("keeps the engine a native dropdown and explains every engine in its (i)", async () => {
+    await withContent();
+    await toStep(3);
+    const picker = screen.getByTestId("compose_engine") as HTMLSelectElement;
+    expect(picker.tagName).toBe("SELECT");
+    await userEvent.click(screen.getByRole("button", { name: "About Alert engine" }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent("simple template score");
+    expect(tip).toHaveTextContent("multiplies explained factors");
+    await userEvent.selectOptions(picker, "weighted");
+    expect(picker.value).toBe("weighted");
   });
 
   it("withholds the verdict while the edited chain is still being checked", async () => {
@@ -160,7 +189,7 @@ describe("Compose & run — the wizard", () => {
     await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
 
     await toStep(2);
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    await pickDetector(0, "log_burst");
     await toStep(4);
     expect(screen.queryByText("Chain is compatible.")).not.toBeInTheDocument();
     expect(screen.getByTestId("compose_run")).toBeDisabled();
@@ -172,7 +201,7 @@ describe("Compose & run — the wizard", () => {
     // The guard reasons about a spec WITHOUT constructing adapters, so it cannot know whether
     // one is fitted. `artifact_param` is published for exactly this.
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "unshipped_learner");
+    await pickDetector(0, "unshipped_learner");
     expect(await screen.findByText(/has no fitted artifact, so the run/)).toBeInTheDocument();
     expect(screen.getByTestId("wizard_next")).toBeDisabled();
 
@@ -183,7 +212,7 @@ describe("Compose & run — the wizard", () => {
 
   it("offers a learning detector its artifact and no hyperparameters (ADR-0036)", async () => {
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "team3_zscore");
+    await pickDetector(0, "team3_zscore");
     // The shipped id preselects: mandatory here, and a `<select>` has no blank option.
     expect(await screen.findByTestId("det_0_art")).toHaveValue("skab_zscore");
     expect(screen.queryByText(/has no fitted artifact/)).not.toBeInTheDocument();
@@ -193,7 +222,7 @@ describe("Compose & run — the wizard", () => {
 
   it("submits a learning detector's artifact and nothing else (ADR-0036)", async () => {
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "team3_zscore");
+    await pickDetector(0, "team3_zscore");
     const body = await runFromReview();
     expect(body.spec.detectors).toEqual([{ name: "team3_zscore", params: { artifact: "skab_zscore" } }]);
   });
@@ -251,6 +280,19 @@ describe("Compose & run — the wizard", () => {
     expect(screen.getByTestId("stat-malformed").tagName).toBe("DIV");
   });
 
+  it("explains each result tile behind an (i) that is not part of the link", async () => {
+    await withContent();
+    await runFromReview();
+    for (const list of ["events", "malformed", "detections", "alerts"]) {
+      const button = screen.getByRole("button", { name: `About ${list}` });
+      // A button inside the link would open the run on click instead of the explanation.
+      expect(button.closest("a")).toBeNull();
+      await userEvent.click(button);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(RESULT_HELP[list as keyof typeof RESULT_HELP]);
+      await userEvent.keyboard("{Escape}");
+    }
+  });
+
   it("links nothing when the run was not written to the store the read API serves", async () => {
     server.use(
       http.post(`${PIPELINE}/runs`, () =>
@@ -275,7 +317,7 @@ describe("Compose & run — the wizard", () => {
     // The request omits a default, so a summary built from it would show a bare `log_burst`
     // and hide which preset will run.
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    await pickDetector(0, "log_burst");
     await toStep(4);
     expect(await screen.findByText(/preset: severity_spike/)).toBeInTheDocument();
   });
@@ -292,7 +334,7 @@ describe("Compose & run — the wizard", () => {
 
   it("sends a parameter the operator actually moved (C4, the other half)", async () => {
     await withContent();
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    await pickDetector(0, "log_burst");
     await userEvent.click(screen.getByRole("button", { name: /log_burst parameters/ }));
     const minCount = await screen.findByTestId("det_0_min_count");
     await userEvent.clear(minCount);
@@ -304,8 +346,8 @@ describe("Compose & run — the wizard", () => {
   it("lets the same adapter appear twice with different params (C5)", async () => {
     await withContent();
     await userEvent.click(screen.getByTestId("compose_det_n_add"));
-    await userEvent.selectOptions(await screen.findByTestId("det_0_name"), "log_burst");
-    await userEvent.selectOptions(await screen.findByTestId("det_1_name"), "log_burst");
+    await pickDetector(0, "log_burst");
+    await pickDetector(1, "log_burst");
     const panels = screen.getAllByRole("button", { name: /^log_burst parameters/ });
     await userEvent.click(panels[0] as HTMLElement);
     await userEvent.selectOptions(await screen.findByTestId("det_0_preset"), "auth_failure");
@@ -320,10 +362,10 @@ describe("Compose & run — the wizard", () => {
     await withContent();
     await userEvent.click(screen.getByTestId("compose_det_n_add"));
     await userEvent.click(screen.getByTestId("compose_det_n_add"));
-    await userEvent.selectOptions(screen.getByTestId("det_2_name"), "log_burst");
+    await pickDetector(2, "log_burst");
     await userEvent.click(screen.getByTestId("det_1_remove"));
     expect(screen.queryByTestId("det_2_name")).not.toBeInTheDocument();
-    expect(screen.getByTestId("det_1_name")).toHaveValue("log_burst");
+    expect(screen.getByTestId("det_1_name")).toHaveTextContent("log_burst");
   });
 
   it("defaults the sink to postgres and gates Next when none is chosen (C8, C10)", async () => {
@@ -625,8 +667,97 @@ describe("Compose & run — samples and scenarios", () => {
     await userEvent.click(await screen.findByTestId("scenario_overheating_pump"));
     expect(await screen.findByText("Scenario: Overheating pump")).toBeInTheDocument();
     await toStep(2);
-    await userEvent.selectOptions(screen.getByTestId("det_0_name"), "log_burst");
+    await pickDetector(0, "log_burst");
     await toStep(4);
     expect(screen.queryByText("Scenario: Overheating pump")).not.toBeInTheDocument();
+  });
+
+  describe("a scenario that pulls from a live database", () => {
+    const SOURCE_ID = "697d9636-f26c-4016-89fa-47effcdede36";
+    const dataSource = (connection: string) => ({
+      source_id: SOURCE_ID,
+      name: "SensiPro meters",
+      type: "OT",
+      description: null,
+      normalizer: "stub",
+      source_format: "stub-csv",
+      connection,
+      has_credentials: false,
+      created_at: "2026-10-21T16:55:21+00:00",
+    });
+    const sensipro = {
+      name: "sensipro",
+      connector: "sensipro",
+      description: "Meters.",
+      normalizer: "stub",
+      source_format: "stub-csv",
+      params: [{ name: "utility", type: "str", default: "electricity", required: false, choices: ["electricity", "water"] }],
+      has_devices: false,
+    };
+    const registered = (sources: unknown[], connections: unknown[]) =>
+      server.use(
+        http.get(`${PIPELINE}/data-sources`, () => HttpResponse.json(sources)),
+        http.get(`${PIPELINE}/data-sources/connections`, () => HttpResponse.json(connections)),
+      );
+
+    it("fills the source as a window, and sends the run a pull and no content", async () => {
+      registered([dataSource("sensipro")], [sensipro]);
+      await openCompose();
+      await waitFor(() => expect(screen.getByTestId("scenario_live_meters")).toBeEnabled());
+      await userEvent.click(screen.getByTestId("scenario_live_meters"));
+
+      expect(await screen.findByText("Scenario: Live meters")).toBeInTheDocument();
+      expect(screen.getByText(/reads this from the live database/)).toBeInTheDocument();
+      expect(screen.queryByText(/Tested to produce/)).not.toBeInTheDocument();
+
+      await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+      await userEvent.click(screen.getByTestId("compose_run"));
+      await waitFor(() => expect(captured.runBody).not.toBeNull());
+      expect((captured.runBody as unknown as RunBody).inputs).toEqual([
+        {
+          pull: { source_id: SOURCE_ID, start: "2023-07-01", end: "2023-07-30", params: { utility: "water" } },
+          origin: "SensiPro meters 2023-07-01..2023-07-30",
+        },
+      ]);
+      // It promised nothing, so there is nothing for the result to match or differ from.
+      expect(await screen.findByText(/Written to:/)).toBeInTheDocument();
+      expect(screen.queryByText(/the scenario is tested to produce/)).not.toBeInTheDocument();
+    });
+
+    it("shows the window it filled in when you go back to the source", async () => {
+      // The form must state what the run will read, or `electricity` would sit beside a water pull.
+      registered([dataSource("sensipro")], [sensipro]);
+      await openCompose();
+      await waitFor(() => expect(screen.getByTestId("scenario_live_meters")).toBeEnabled());
+      await userEvent.click(screen.getByTestId("scenario_live_meters"));
+      await screen.findByText("Scenario: Live meters");
+
+      await userEvent.click(screen.getByTestId("step_1"));
+      expect(await screen.findByTestId("src_0_pull_start")).toHaveValue("2023-07-01");
+      expect(screen.getByTestId("src_0_pull_end")).toHaveValue("2023-07-30");
+      expect(screen.getByTestId("src_0_pull_utility")).toHaveValue("water");
+      expect(screen.getByTestId("src_0_source")).toHaveValue(SOURCE_ID);
+      expect(screen.getByTestId("src_0_pulled")).toHaveTextContent("A window of SensiPro meters 2023-07-01..2023-07-30");
+    });
+
+    it.each([
+      ["no data source is on that connection", [dataSource("biology")], [sensipro]],
+      ["the organization may not use that connection", [dataSource("sensipro")], []],
+    ])("is disabled and says what is missing when %s", async (_why, sources, connections) => {
+      registered(sources, connections);
+      await openCompose();
+      await waitFor(() =>
+        expect(screen.getByText(/Needs a data source on the sensipro connection/)).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("scenario_live_meters")).toBeDisabled();
+      // A file scenario is unaffected.
+      expect(screen.getByTestId("scenario_overheating_pump")).toBeEnabled();
+    });
+
+    it("says live data rather than an alert count behind its (i)", async () => {
+      await openCompose();
+      await userEvent.click(await screen.findByRole("button", { name: "About Live meters" }));
+      expect(screen.getByRole("tooltip")).toHaveTextContent("1 source · 1 detector · live data, so no expected counts");
+    });
   });
 });
