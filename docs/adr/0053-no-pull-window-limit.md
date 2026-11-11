@@ -1,4 +1,4 @@
-# ADR-0052: A pull has no window limit; a long window is read a quarter per query
+# ADR-0053: A pull has no window limit; a long window is read a quarter per query
 
 - **Status:** accepted
 - **Date:** 2026-11-11

@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 from iotshield.api import create_app
 from iotshield.api._auth import PUBLIC_ROUTES, SESSION_COOKIE
 from iotshield.api.control import create_control_app
-from iotshield.storage import create_schema, make_engine
+from iotshield.auth.passwords import hash_password
+from iotshield.storage import accounts, create_schema, make_engine, make_session_factory
 from tests.api.conftest import PASSWORD, Browser, Stack
 
 
@@ -84,16 +85,16 @@ class TestTheGateIsDefaultDeny:
 class TestRegisterAndLogin:
     def test_register_logs_the_new_admin_in(self, stack: Stack) -> None:
         browser = stack.browser()
-        response = browser.register("Acme Water", "Alice")
+        response = browser.register("Acme Water", "Alice@example.com")
         assert response.status_code == 201
         body = response.json()
-        assert body["username"] == "alice" and body["role"] == "admin"
+        assert body["username"] == "alice@example.com" and body["role"] == "admin"
         assert body["organization"] == {"org_id": "acme-water", "name": "Acme Water"}
-        assert browser.pipeline.get("/auth/me").json()["username"] == "alice"
+        assert browser.pipeline.get("/auth/me").json()["username"] == "alice@example.com"
         assert browser.read.get("/summary").status_code == 200
 
     def test_the_session_cookie_is_httponly_and_strict(self, stack: Stack) -> None:
-        response = stack.browser().register("Acme", "alice")
+        response = stack.browser().register("Acme", "alice@example.com")
         cookie = response.headers["set-cookie"].lower()
         assert f"{SESSION_COOKIE}=" in cookie
         assert "httponly" in cookie and "samesite=strict" in cookie
@@ -103,45 +104,77 @@ class TestRegisterAndLogin:
         browser = stack.browser()
         response = browser.pipeline.post(
             "/auth/register",
-            json={"organization": "Acme", "username": "alice", "password": PASSWORD},
+            json={"organization": "Acme", "username": "alice@example.com", "password": PASSWORD},
             headers={"X-Forwarded-Proto": "https"},
         )
         assert "secure" in response.headers["set-cookie"].lower()
 
     def test_a_taken_org_or_username_is_409(self, stack: Stack) -> None:
-        stack.browser().register("Acme", "alice")
-        assert stack.browser().register("ACME", "bob").status_code == 409
-        assert stack.browser().register("Globex", "alice").status_code == 409
+        stack.browser().register("Acme", "alice@example.com")
+        assert stack.browser().register("ACME", "bob@example.com").status_code == 409
+        assert stack.browser().register("Globex", "alice@example.com").status_code == 409
 
     @pytest.mark.parametrize(
         "body",
         [
-            {"organization": "Acme", "username": "alice", "password": "short"},
+            {"organization": "Acme", "username": "alice@example.com", "password": "short"},
             {"organization": "Acme", "username": "a", "password": PASSWORD},
             {"organization": "Acme", "username": "has space", "password": PASSWORD},
-            {"organization": "!!", "username": "alice", "password": PASSWORD},
-            {"organization": "Acme", "username": "alice", "password": PASSWORD, "role": "x"},
+            # A username is an email address (ADR-0052): a plain name is refused.
+            {"organization": "Acme", "username": "alice", "password": PASSWORD},
+            {"organization": "Acme", "username": "alice@example", "password": PASSWORD},
+            {"organization": "!!", "username": "alice@example.com", "password": PASSWORD},
+            {
+                "organization": "Acme",
+                "username": "alice@example.com",
+                "password": PASSWORD,
+                "role": "x",
+            },
         ],
     )
     def test_invalid_registrations_are_422(self, stack: Stack, body: dict[str, Any]) -> None:
         assert stack.browser().pipeline.post("/auth/register", json=body).status_code == 422
 
+    def test_a_non_email_username_says_why(self, stack: Stack) -> None:
+        body = {"organization": "Acme", "username": "alice", "password": PASSWORD}
+        response = stack.browser().pipeline.post("/auth/register", json=body)
+        assert response.status_code == 422
+        assert "valid email address" in response.text
+
+    def test_an_admin_cannot_add_a_non_email_user(self, stack: Stack) -> None:
+        admin = stack.browser()
+        admin.register("Acme", "alice@example.com")
+        response = admin.pipeline.post(
+            "/auth/users", json={"username": "bob", "password": "temp-pass-1"}
+        )
+        assert response.status_code == 422
+
+    def test_an_account_made_before_the_email_rule_still_logs_in(self, stack: Stack) -> None:
+        # Storage does not validate (only account *creation* at the API/CLI does), which is
+        # how a pre-rule row is reproduced here.
+        with make_session_factory(stack.engine)() as session:
+            accounts.register_organization(
+                session, name="Legacy", username="legacy", password_hash=hash_password(PASSWORD)
+            )
+            session.commit()
+        assert stack.browser().login("legacy").status_code == 200
+
     def test_login_with_the_right_password_starts_a_session(self, stack: Stack) -> None:
-        stack.browser().register("Acme", "alice")
+        stack.browser().register("Acme", "alice@example.com")
         browser = stack.browser()
-        assert browser.login("ALICE").status_code == 200
+        assert browser.login("ALICE@EXAMPLE.COM").status_code == 200
         assert browser.read.get("/alerts").status_code == 200
 
     def test_a_wrong_password_and_an_unknown_user_say_the_same_thing(self, stack: Stack) -> None:
-        stack.browser().register("Acme", "alice")
-        wrong = stack.browser().login("alice", "not-the-password")
-        unknown = stack.browser().login("nobody")
+        stack.browser().register("Acme", "alice@example.com")
+        wrong = stack.browser().login("alice@example.com", "not-the-password")
+        unknown = stack.browser().login("nobody@example.com")
         assert wrong.status_code == unknown.status_code == 401
         assert wrong.json() == unknown.json() == {"detail": "invalid username or password"}
 
     def test_logout_ends_the_session_server_side(self, stack: Stack) -> None:
         browser = stack.browser()
-        browser.register("Acme", "alice")
+        browser.register("Acme", "alice@example.com")
         token = browser.pipeline.cookies.get(SESSION_COOKIE)
         assert browser.pipeline.post("/auth/logout").status_code == 204
         # Replaying the old token must fail: logout is not merely the cookie being cleared.
@@ -156,7 +189,7 @@ class TestRegisterAndLogin:
 class TestPasswordChange:
     def test_changing_the_password_requires_the_current_one(self, stack: Stack) -> None:
         browser = stack.browser()
-        browser.register("Acme", "alice")
+        browser.register("Acme", "alice@example.com")
         refused = browser.pipeline.post(
             "/auth/password",
             json={"current_password": "wrong-one", "new_password": "another-pass"},
@@ -165,9 +198,9 @@ class TestPasswordChange:
 
     def test_a_changed_password_logs_out_other_sessions_and_works(self, stack: Stack) -> None:
         here = stack.browser()
-        here.register("Acme", "alice")
+        here.register("Acme", "alice@example.com")
         elsewhere = stack.browser()
-        elsewhere.login("alice")
+        elsewhere.login("alice@example.com")
         changed = here.pipeline.post(
             "/auth/password",
             json={"current_password": PASSWORD, "new_password": "another-pass"},
@@ -175,16 +208,16 @@ class TestPasswordChange:
         assert changed.status_code == 204
         assert here.read.get("/alerts").status_code == 200  # this session survives
         assert elsewhere.read.get("/alerts").status_code == 401  # the other one does not
-        assert stack.browser().login("alice", PASSWORD).status_code == 401
-        assert stack.browser().login("alice", "another-pass").status_code == 200
+        assert stack.browser().login("alice@example.com", PASSWORD).status_code == 401
+        assert stack.browser().login("alice@example.com", "another-pass").status_code == 200
 
 
 class TestUserManagement:
     def _admin_with_member(self, stack: Stack) -> tuple[Browser, dict[str, Any]]:
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         created = admin.pipeline.post(
-            "/auth/users", json={"username": "bob", "password": "temp-pass-1"}
+            "/auth/users", json={"username": "bob@example.com", "password": "temp-pass-1"}
         )
         assert created.status_code == 201
         return admin, created.json()
@@ -193,59 +226,65 @@ class TestUserManagement:
         admin, bob = self._admin_with_member(stack)
         assert bob["role"] == "member"
         users = admin.pipeline.get("/auth/users").json()
-        assert [u["username"] for u in users] == ["alice", "bob"]
+        assert [u["username"] for u in users] == ["alice@example.com", "bob@example.com"]
         member = stack.browser()
-        assert member.login("bob", "temp-pass-1").json()["organization"]["org_id"] == "acme"
+        assert (
+            member.login("bob@example.com", "temp-pass-1").json()["organization"]["org_id"]
+            == "acme"
+        )
 
     def test_an_admin_can_add_another_admin(self, stack: Stack) -> None:
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         created = admin.pipeline.post(
-            "/auth/users", json={"username": "carol", "password": "temp-pass-1", "role": "admin"}
+            "/auth/users",
+            json={"username": "carol@example.com", "password": "temp-pass-1", "role": "admin"},
         )
         assert created.json()["role"] == "admin"
 
     def test_a_member_cannot_manage_users(self, stack: Stack) -> None:
         self._admin_with_member(stack)
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         assert member.pipeline.get("/auth/users").status_code == 403
-        new = {"username": "eve", "password": "temp-pass-1"}
+        new = {"username": "eve@example.com", "password": "temp-pass-1"}
         assert member.pipeline.post("/auth/users", json=new).status_code == 403
 
     def test_a_member_can_still_run_and_read(self, stack: Stack) -> None:
         self._admin_with_member(stack)
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         assert member.run_demo().status_code == 200
         assert len(member.read.get("/alerts").json()) == 1
 
     def test_removing_a_user_revokes_their_access(self, stack: Stack) -> None:
         admin, bob = self._admin_with_member(stack)
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         assert admin.pipeline.delete(f"/auth/users/{bob['user_id']}").status_code == 204
         assert member.read.get("/alerts").status_code == 401
-        assert stack.browser().login("bob", "temp-pass-1").status_code == 401
+        assert stack.browser().login("bob@example.com", "temp-pass-1").status_code == 401
 
     def test_an_admin_cannot_remove_themselves(self, stack: Stack) -> None:
         admin = stack.browser()
-        me = admin.register("Acme", "alice").json()
+        me = admin.register("Acme", "alice@example.com").json()
         assert admin.pipeline.delete(f"/auth/users/{me['user_id']}").status_code == 400
 
     def test_an_admin_cannot_touch_another_orgs_users(self, stack: Stack) -> None:
-        stack.browser().register("Globex", "gina")
-        gina_id = UUID(stack.browser().login("gina").json()["user_id"])
+        stack.browser().register("Globex", "gina@example.com")
+        gina_id = UUID(stack.browser().login("gina@example.com").json()["user_id"])
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         assert admin.pipeline.delete(f"/auth/users/{gina_id}").status_code == 404
-        assert [u["username"] for u in admin.pipeline.get("/auth/users").json()] == ["alice"]
-        assert stack.browser().login("gina").status_code == 200
+        assert [u["username"] for u in admin.pipeline.get("/auth/users").json()] == [
+            "alice@example.com"
+        ]
+        assert stack.browser().login("gina@example.com").status_code == 200
 
     def test_a_duplicate_username_is_409(self, stack: Stack) -> None:
         admin, _ = self._admin_with_member(stack)
         again = admin.pipeline.post(
-            "/auth/users", json={"username": "BOB", "password": "temp-pass-1"}
+            "/auth/users", json={"username": "BOB@EXAMPLE.COM", "password": "temp-pass-1"}
         )
         assert again.status_code == 409
 
@@ -255,9 +294,9 @@ class TestOrganizationsSeeOnlyTheirOwnData:
 
     def test_a_run_is_visible_to_its_org_only(self, stack: Stack) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         globex = stack.browser()
-        globex.register("Globex", "gina")
+        globex.register("Globex", "gina@example.com")
 
         assert acme.run_demo().status_code == 200
 
@@ -276,9 +315,9 @@ class TestOrganizationsSeeOnlyTheirOwnData:
 
     def test_two_orgs_can_run_the_same_device_id(self, stack: Stack) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         globex = stack.browser()
-        globex.register("Globex", "gina")
+        globex.register("Globex", "gina@example.com")
         assert acme.run_demo().status_code == 200
         assert globex.run_demo().status_code == 200  # pump-02 again, in another tenant
         assert [a["asset_id"] for a in acme.read.get("/assets").json()] == ["pump-02"]

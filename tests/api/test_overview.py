@@ -218,9 +218,9 @@ class TestIt:
 
 def test_one_organization_never_counts_anothers(stack: Stack) -> None:
     acme = stack.browser()
-    acme.register("Acme", "alice")
+    acme.register("Acme", "alice@example.com")
     run(acme.pipeline, METERS, "meter", "sensipro-hourly-csv", {"name": "meter_quality"})
     globex = stack.browser()
-    globex.register("Globex", "gina")
+    globex.register("Globex", "gina@example.com")
     assert acme.read.get("/overview/ot?start=2023-07-01&end=2023-07-01").json()["total"] == 6
     assert globex.read.get("/overview/ot?start=2023-07-01&end=2023-07-01").json()["total"] == 0

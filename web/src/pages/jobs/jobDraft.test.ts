@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { JobInfo } from "@/lib/api/types";
 import type { SourceRow } from "@/pages/compose/model";
 import {
+  defaultRecipients,
   draftFromJob,
   draftFromPulls,
   fixedButScheduled,
@@ -42,6 +43,7 @@ const JOB: JobInfo = {
   schedule_text: "every Friday at 06:30 UTC",
   enabled: true,
   next_run_at: "2026-11-13T06:30:00+00:00",
+  notify_emails: ["alice@example.com", "ops@example.com"],
   last: null,
 };
 
@@ -98,7 +100,27 @@ describe("the request body", () => {
       ],
       schedule: null,
       enabled: true,
+      notify_emails: [],
     });
+  });
+
+  it("sends the recipients as a list, however they were separated", () => {
+    const draft = draftFromPulls([PULL], "Weekly water", "a@example.com");
+    expect(jobBody(draft, {}).notify_emails).toEqual(["a@example.com"]);
+    const typed = { ...draft, recipients: " a@example.com,b@example.com;\n c@example.org " };
+    expect(jobProblem(typed)).toBeNull();
+    expect(jobBody(typed, {}).notify_emails).toEqual(["a@example.com", "b@example.com", "c@example.org"]);
+  });
+
+  it("reopens a job with its recipients, and keeps them when only enabling it", () => {
+    expect(draftFromJob(JOB).recipients).toBe("alice@example.com, ops@example.com");
+    expect(withEnabled(JOB, false).notify_emails).toEqual(["alice@example.com", "ops@example.com"]);
+  });
+
+  it("defaults the recipients to the signed-in user only when that is an address", () => {
+    expect(defaultRecipients("alice@example.com")).toBe("alice@example.com");
+    expect(defaultRecipients("root")).toBe("");
+    expect(defaultRecipients(undefined)).toBe("");
   });
 
   it("sends a rolling window and a daily schedule in UTC", () => {
@@ -123,6 +145,7 @@ describe("the request body", () => {
     [{ name: "  " }, "Name the job."],
     [{ every: "day" as const, time: "25:00" }, "The time is HH:MM, in UTC."],
     [{ every: "hour" as const, minute: "60" }, "The minute past the hour is 0 to 59."],
+    [{ recipients: "ops@example.com, ops" }, "“ops” is not a valid email address."],
   ])("refuses %o", (change, problem) => {
     expect(jobProblem({ ...draftFromPulls([PULL], "ok"), ...change })).toBe(problem);
   });
@@ -135,7 +158,7 @@ describe("the request body", () => {
     }
   });
 
-  it("accepts a rolling window of years (ADR-0052)", () => {
+  it("accepts a rolling window of years (ADR-0053)", () => {
     const base = draftFromPulls([PULL], "ok");
     const draft = { ...base, windows: base.windows.map((w) => ({ ...w, kind: "rolling" as const, days: "1220" })) };
     expect(jobProblem(draft)).toBeNull();
@@ -150,6 +173,7 @@ describe("the request body", () => {
       sources: JOB.sources,
       schedule: JOB.schedule,
       enabled: true,
+      notify_emails: JOB.notify_emails,
     });
   });
 

@@ -70,7 +70,12 @@ def main(argv: list[str] | None = None) -> int:
                 for user in accounts.list_superadmins(session):
                     print(user.username)
                 return 0
-            username = accounts.validate_username(args.username)
+            # Only a NEW account must be an email address (ADR-0052); set-password must still
+            # reach a super admin created before that rule, so it only normalizes.
+            if args.command == "create":
+                username = accounts.validate_username(args.username)
+            else:
+                username = accounts.normalize_username(args.username)
             password = _read_password(args.password_stdin)
             if args.command == "create":
                 user = accounts.create_superadmin(

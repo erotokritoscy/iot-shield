@@ -138,3 +138,11 @@ organization, seeing none of their data), closes the open items "open registrati
 switch, `IOTSHIELD_OPEN_REGISTRATION`) and "no role changes or admin transfer" (the super admin
 can promote, demote and reset; an organization's last admin is protected), and adds suspension.
 D6's "no route that changes a role" now holds for organization admins only.
+
+## Amendment (2026-11-11)
+
+ADR-0052 makes a username an **email address** (checked by `validate_username` at every door
+that creates an account; login is unchanged, so older accounts still sign in), and adds mail
+infrastructure — SMTP, MailHog in compose — used so far only for saved jobs' outcome emails.
+The "no mail infrastructure" open item above is therefore half closed: reset, verification and
+invitations are still not built.

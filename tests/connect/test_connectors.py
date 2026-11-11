@@ -180,7 +180,7 @@ class TestThePullRules:
             pull(SENSIPRO, world.sensipro, JULY_1, date(2023, 6, 30), {}, max_chars=10**6)
 
     def test_a_window_of_years_is_read_whole(self, world: World) -> None:
-        # ADR-0052: no window limit. The fixture's rows all fall in July 2023, so a 1,220-day
+        # ADR-0053: no window limit. The fixture's rows all fall in July 2023, so a 1,220-day
         # window around it reads exactly what that month does, from either connector.
         years = (date(2021, 1, 1), date(2024, 5, 4))
         assert (years[1] - years[0]).days + 1 == 1220
@@ -279,7 +279,7 @@ class TestStreaming:
 
 
 class TestSlicing:
-    """How a long window is read without any one query growing (ADR-0052)."""
+    """How a long window is read without any one query growing (ADR-0053)."""
 
     def test_time_slices_cover_the_window_once_in_order(self) -> None:
         start, end = datetime(2021, 1, 1), datetime(2024, 5, 5)

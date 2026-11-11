@@ -37,7 +37,7 @@ def _expected(body: dict[str, Any]) -> dict[str, int]:
 
 def test_each_run_reads_back_exactly_its_own_rows(stack: Stack) -> None:
     analyst = stack.browser()
-    assert analyst.register("Acme", "ana").status_code == 201
+    assert analyst.register("Acme", "ana@example.com").status_code == 201
     first, second = _run(analyst), _run(analyst)
 
     assert first["run_id"] != second["run_id"]
@@ -51,7 +51,7 @@ def test_each_run_reads_back_exactly_its_own_rows(stack: Stack) -> None:
 
 def test_a_scoped_read_returns_that_runs_ids(stack: Stack) -> None:
     analyst = stack.browser()
-    assert analyst.register("Acme", "ana").status_code == 201
+    assert analyst.register("Acme", "ana@example.com").status_code == 201
     body = _run(analyst)
     _run(analyst)  # a second run's alert must not appear under the first one's id
 
@@ -61,8 +61,8 @@ def test_a_scoped_read_returns_that_runs_ids(stack: Stack) -> None:
 
 def test_another_organizations_run_id_finds_nothing(stack: Stack) -> None:
     owner, outsider = stack.browser(), stack.browser()
-    assert owner.register("Acme", "ana").status_code == 201
-    assert outsider.register("Globex", "bob").status_code == 201
+    assert owner.register("Acme", "ana@example.com").status_code == 201
+    assert outsider.register("Globex", "bob@example.com").status_code == 201
     body = _run(owner)
 
     assert _counts(outsider, body["run_id"]) == dict.fromkeys(SCOPED_ROUTES, 0)
@@ -70,6 +70,6 @@ def test_another_organizations_run_id_finds_nothing(stack: Stack) -> None:
 
 def test_a_malformed_run_id_is_422(stack: Stack) -> None:
     analyst = stack.browser()
-    assert analyst.register("Acme", "ana").status_code == 201
+    assert analyst.register("Acme", "ana@example.com").status_code == 201
     for route in SCOPED_ROUTES:
         assert analyst.read.get(route, params={"run_id": "not-a-uuid"}).status_code == 422

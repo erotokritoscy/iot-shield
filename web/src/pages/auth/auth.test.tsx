@@ -18,11 +18,11 @@ import { registrationProblem } from "@/pages/auth/RegisterPage";
 
 const admin: MeResponse = {
   user_id: "11111111-1111-4111-8111-111111111111",
-  username: "alice",
+  username: "alice@example.com",
   role: "admin",
   organization: { org_id: "acme-water", name: "Acme Water" },
 };
-const member: MeResponse = { ...admin, user_id: "22222222-2222-4222-8222-222222222222", username: "bob", role: "member" };
+const member: MeResponse = { ...admin, user_id: "22222222-2222-4222-8222-222222222222", username: "bob@example.com", role: "member" };
 
 const captured: { login: unknown; register: unknown; logout: number; addUser: unknown; removed: string[] } = {
   login: null,
@@ -60,8 +60,8 @@ function loginRequired(who: MeResponse | null): { endSession: () => void } {
     }),
     http.get(`${PIPELINE}/auth/users`, () =>
       HttpResponse.json([
-        { user_id: admin.user_id, username: "alice", role: "admin", created_at: "2026-10-13T08:00:00+00:00" },
-        { user_id: member.user_id, username: "bob", role: "member", created_at: "2026-10-13T09:00:00+00:00" },
+        { user_id: admin.user_id, username: "alice@example.com", role: "admin", created_at: "2026-10-13T08:00:00+00:00" },
+        { user_id: member.user_id, username: "bob@example.com", role: "member", created_at: "2026-10-13T09:00:00+00:00" },
       ]),
     ),
     http.post(`${PIPELINE}/auth/users`, async ({ request }) => {
@@ -118,12 +118,12 @@ describe("with login required", () => {
     loginRequired(null);
     renderApp("/data-health");
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("Username"), "alice");
+    await user.type(await screen.findByLabelText("Email"), "alice@example.com");
     await user.type(screen.getByLabelText("Password"), "right-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByRole("heading", { name: "Data health" })).toBeInTheDocument();
-    expect(captured.login).toEqual({ username: "alice", password: "right-password" });
+    expect(captured.login).toEqual({ username: "alice@example.com", password: "right-password" });
     expect(screen.getByText("Acme Water · admin")).toBeInTheDocument();
   });
 
@@ -131,10 +131,10 @@ describe("with login required", () => {
     loginRequired(null);
     renderApp("/");
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("Username"), "alice");
+    await user.type(await screen.findByLabelText("Email"), "alice@example.com");
     await user.type(screen.getByLabelText("Password"), "nope-nope");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByText("Wrong username or password.")).toBeInTheDocument();
+    expect(await screen.findByText("Wrong email or password.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 
@@ -165,13 +165,13 @@ describe("with login required", () => {
     renderApp("/register");
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Organization name"), "Acme Water");
-    await user.type(screen.getByLabelText("Your username"), "alice");
+    await user.type(screen.getByLabelText("Your email"), "alice@example.com");
     await user.type(screen.getByLabelText("Password"), "long-enough");
     await user.type(screen.getByLabelText("Confirm password"), "long-enough");
     await user.click(screen.getByRole("button", { name: "Create organization" }));
 
     expect(await screen.findByTestId("stat-alerts")).toBeInTheDocument();
-    expect(captured.register).toEqual({ organization: "Acme Water", username: "alice", password: "long-enough" });
+    expect(captured.register).toEqual({ organization: "Acme Water", username: "alice@example.com", password: "long-enough" });
   });
 
   it("refuses mismatched passwords without asking the server", async () => {
@@ -179,11 +179,24 @@ describe("with login required", () => {
     renderApp("/register");
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Organization name"), "Acme Water");
-    await user.type(screen.getByLabelText("Your username"), "alice");
+    await user.type(screen.getByLabelText("Your email"), "alice@example.com");
     await user.type(screen.getByLabelText("Password"), "long-enough");
     await user.type(screen.getByLabelText("Confirm password"), "long-enougH");
     await user.click(screen.getByRole("button", { name: "Create organization" }));
     expect(await screen.findByText("The two passwords do not match.")).toBeInTheDocument();
+    expect(captured.register).toBeNull();
+  });
+
+  it("refuses a username that is not an email address without asking the server", async () => {
+    loginRequired(null);
+    renderApp("/register");
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Organization name"), "Acme Water");
+    await user.type(screen.getByLabelText("Your email"), "alice");
+    await user.type(screen.getByLabelText("Password"), "long-enough");
+    await user.type(screen.getByLabelText("Confirm password"), "long-enough");
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+    expect(await screen.findByText(/must be a valid email address/)).toBeInTheDocument();
     expect(captured.register).toBeNull();
   });
 
@@ -197,7 +210,7 @@ describe("with login required", () => {
     renderApp("/register");
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Organization name"), "Acme Water");
-    await user.type(screen.getByLabelText("Your username"), "alice");
+    await user.type(screen.getByLabelText("Your email"), "alice@example.com");
     await user.type(screen.getByLabelText("Password"), "long-enough");
     await user.type(screen.getByLabelText("Confirm password"), "long-enough");
     await user.click(screen.getByRole("button", { name: "Create organization" }));
@@ -211,15 +224,15 @@ describe("the organization pages", () => {
     renderApp("/users");
     const user = userEvent.setup();
     const table = await screen.findByRole("table");
-    expect(within(table).getByText("bob")).toBeInTheDocument();
+    expect(within(table).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(table).getByText("you")).toBeInTheDocument(); // no Remove on your own row
 
-    await user.type(screen.getByLabelText("Username"), "carol");
+    await user.type(screen.getByLabelText("Email"), "carol@example.com");
     await user.type(screen.getByLabelText("Temporary password"), "temp-pass-1");
     await user.selectOptions(screen.getByLabelText("Role"), "admin");
     await user.click(screen.getByRole("button", { name: "Add user" }));
-    expect(await screen.findByText("Added carol.")).toBeInTheDocument();
-    expect(captured.addUser).toEqual({ username: "carol", password: "temp-pass-1", role: "admin" });
+    expect(await screen.findByText("Added carol@example.com.")).toBeInTheDocument();
+    expect(captured.addUser).toEqual({ username: "carol@example.com", password: "temp-pass-1", role: "admin" });
 
     const confirm = window.confirm;
     window.confirm = () => true;
@@ -229,6 +242,18 @@ describe("the organization pages", () => {
     } finally {
       window.confirm = confirm;
     }
+  });
+
+  it("refuses a username that is not an email address without asking the server", async () => {
+    loginRequired(admin);
+    renderApp("/users");
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.type(screen.getByLabelText("Email"), "carol");
+    await user.type(screen.getByLabelText("Temporary password"), "temp-pass-1");
+    expect(screen.getByText(/must be a valid email address/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add user" })).toBeDisabled();
+    expect(captured.addUser).toBeNull();
   });
 
   it("shows a member no Users entry and no user list", async () => {
@@ -241,12 +266,14 @@ describe("the organization pages", () => {
 });
 
 describe("registrationProblem", () => {
-  const ok = { organization: "Acme", username: "alice", password: "long-enough", confirm: "long-enough" };
+  const ok = { organization: "Acme", username: "alice@example.com", password: "long-enough", confirm: "long-enough" };
   it.each([
     [{ ...ok }, null],
     [{ ...ok, organization: " " }, "Give your organization a name."],
     [{ ...ok, organization: "!!!" }, "The organization name needs a letter or digit."],
-    [{ ...ok, username: "al" }, "Usernames are at least 3 characters."],
+    [{ ...ok, username: "al" }, "The username must be a valid email address (e.g. name@example.com), at most 64 characters."],
+    [{ ...ok, username: "alice" }, "The username must be a valid email address (e.g. name@example.com), at most 64 characters."],
+    [{ ...ok, username: "" }, "Enter an email address."],
     [{ ...ok, password: "short", confirm: "short" }, "Passwords are at least 8 characters."],
     [{ ...ok, confirm: "different" }, "The two passwords do not match."],
   ])("%o -> %s", (form, problem) => {

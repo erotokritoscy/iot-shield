@@ -249,6 +249,23 @@ class JobRow(Base):
     next_run_at: Mapped[datetime | None]
 
 
+class JobNotificationRow(Base):
+    """Who is emailed when a job's execution finishes (ADR-0052): one row per job that has any.
+
+    Its own table rather than a column on ``jobs``, for the reason ``data_source_endpoints`` is
+    one: ``create_all`` adds a missing table to an existing database but never a column to an
+    existing table, so this needed no ``docker compose down -v``. No row = nobody is emailed.
+    """
+
+    __tablename__ = "job_notifications"
+
+    job_id: Mapped[UUID] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"), index=True)
+    recipients: Mapped[list[Any]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+
+
 class JobExecutionRow(Base):
     """One time a job ran, or was asked to: queued -> running -> succeeded | failed (ADR-0050).
 

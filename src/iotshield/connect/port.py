@@ -11,7 +11,7 @@ connection and nothing about where it is.
 and posted back with the run, which is what the 100,000-row ceiling protected; now a run reads
 the window itself, chunk by chunk (``pull_chunks``), and the browser is shown a count and a
 sample (``pull_summary``). There is no row ceiling: memory is bounded by the run's batching,
-not by refusing a large window. There is no limit on the window either (ADR-0052): a long one
+not by refusing a large window. There is no limit on the window either (ADR-0053): a long one
 is read as consecutive queries of at most ``SLICE_DAYS`` each (``time_slices``), so every query
 stays the size the connection's 30-second statement timeout was measured against, however many
 days the pull covers.
@@ -38,7 +38,7 @@ from iotshield.connect.connections import Connection, ConnectionUnavailable
 log = logging.getLogger(__name__)
 
 SLICE_DAYS: Final = 92
-"""Most days one *query* covers (ADR-0052). A pull may ask for any number of days; a connector
+"""Most days one *query* covers (ADR-0053). A pull may ask for any number of days; a connector
 reads a longer window as consecutive slices of this many (``time_slices``) — or, where its
 output must stay ordered by something other than time, shrinks another dimension in proportion
 (SensiPro's meters per query) — so no single query scans more than a quarter of a fleet's

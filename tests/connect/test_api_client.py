@@ -113,7 +113,7 @@ class TestRequests:
 
 
 class TestLongWindows:
-    """A window of any length is asked for a quarter at a time (ADR-0052)."""
+    """A window of any length is asked for a quarter at a time (ADR-0053)."""
 
     def test_a_long_window_is_requested_as_consecutive_spans_in_order(self, serve) -> None:  # type: ignore[no-untyped-def]
         seen = serve(lambda request: items())

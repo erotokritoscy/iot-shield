@@ -39,8 +39,10 @@ from iotshield.api.execution import (
     perform_run,
 )
 from iotshield.api.progress import ProgressBoard, ProgressInfo
+from iotshield.api.run_email import post_failed, post_finished, recipient_for
 from iotshield.capabilities import formats_in
 from iotshield.contracts import MalformedRecord, PrioritizedAlert
+from iotshield.notify import Outbox, mailer_from_env
 from iotshield.pipeline.compat import (
     check_compatibility,
     has_errors,
@@ -156,6 +158,13 @@ class RunRequest(BaseModel):
         description=(
             "An id of the caller's choosing to poll GET /runs/progress/{progress_id} with "
             "while the run is going (ADR-0051)"
+        ),
+    )
+    email_result: bool = Field(
+        default=True,
+        description=(
+            "Email the outcome to whoever runs it, when their username is an address and the "
+            "server has mail configured (ADR-0052 amendment); false sends nothing"
         ),
     )
 
@@ -448,6 +457,11 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     # caller-supplied filename is confined to it (sink/file.py). Overridable per deploy.
     app.state.output_dir = Path(os.environ.get("IOTSHIELD_OUTPUT_DIR", "results"))
     app.state.progress = ProgressBoard()
+    # Run emails (ADR-0052 amendment): off unless IOTSHIELD_SMTP_HOST is set. Tests replace the
+    # outbox with one around a fake mailer.
+    mailer = mailer_from_env()
+    app.state.outbox = None if mailer is None else Outbox(mailer)
+    app.state.dashboard_url = os.environ.get("IOTSHIELD_DASHBOARD_URL", "").strip() or None
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -486,6 +500,9 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     def create_run(request: RunRequest, account: AccountDep) -> RunResponse:
         """Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
 
+        With ``email_result`` (the default), the outcome — finished, or failed while running —
+        is emailed to the caller in the background (``api/run_email.py``).
+
         The checks, the streaming of pulls and the mapping of failures to statuses are
         ``api/execution.py``'s, shared with the job worker (ADR-0050).
         """
@@ -500,6 +517,8 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
                 },
             )
         config = config_from_spec(request.spec, app.state.database_url)
+        outbox: Outbox | None = app.state.outbox
+        to = recipient_for(account.user.username, wanted=request.email_result)
         failed = True
         try:
             report = perform_run(
@@ -515,9 +534,23 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
                 else (lambda step: board.update(progress_id, step)),
             )
             failed = False
+        except HTTPException as exc:
+            if outbox is not None and to is not None:
+                post_failed(outbox, to=to, exc=exc, requested_name=request.name)
+            raise
         finally:
             if progress_id is not None:
                 board.end(progress_id, failed=failed)
+        if outbox is not None and to is not None:
+            post_finished(
+                outbox,
+                session_factory=app.state.session_factory,
+                dashboard_url=app.state.dashboard_url,
+                org_id=account.org_id,
+                to=to,
+                report=report,
+                requested_name=request.name,
+            )
         return _run_response(report)
 
     @app.get("/runs/progress/{progress_id}")

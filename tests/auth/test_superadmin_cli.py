@@ -33,42 +33,45 @@ def test_create_makes_a_super_admin_on_a_fresh_database(
     db: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _stdin(monkeypatch, "root-password\n")
-    assert main(["create", "--username", "Root", "--password-stdin"]) == 0
-    stored = _stored_hash(db, "root")
+    assert main(["create", "--username", "Root@example.com", "--password-stdin"]) == 0
+    stored = _stored_hash(db, "root@example.com")
     assert stored is not None and verify_password("root-password", stored)
     assert main(["list"]) == 0
-    assert capsys.readouterr().out.strip() == "root"
+    assert capsys.readouterr().out.strip() == "root@example.com"
 
 
 def test_a_short_password_or_bad_username_is_refused(
     db: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _stdin(monkeypatch, "short\n")
-    assert main(["create", "--username", "root", "--password-stdin"]) == 2
+    assert main(["create", "--username", "root@example.com", "--password-stdin"]) == 2
     assert "at least 8" in capsys.readouterr().err
     _stdin(monkeypatch, "long-enough\n")
     assert main(["create", "--username", "a b", "--password-stdin"]) == 2
-    assert _stored_hash(db, "root") is None
+    _stdin(monkeypatch, "long-enough\n")
+    assert main(["create", "--username", "root", "--password-stdin"]) == 2  # not an email
+    assert "valid email address" in capsys.readouterr().err
+    assert _stored_hash(db, "root@example.com") is None
 
 
 def test_a_taken_username_is_refused(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
     _stdin(monkeypatch, "root-password\n")
-    assert main(["create", "--username", "root", "--password-stdin"]) == 0
+    assert main(["create", "--username", "root@example.com", "--password-stdin"]) == 0
     _stdin(monkeypatch, "root-password\n")
-    assert main(["create", "--username", "ROOT", "--password-stdin"]) == 2
+    assert main(["create", "--username", "ROOT@EXAMPLE.COM", "--password-stdin"]) == 2
 
 
 def test_set_password_replaces_it_for_super_admins_only(
     db: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stdin(monkeypatch, "root-password\n")
-    main(["create", "--username", "root", "--password-stdin"])
+    main(["create", "--username", "root@example.com", "--password-stdin"])
     _stdin(monkeypatch, "new-root-password\n")
-    assert main(["set-password", "--username", "root", "--password-stdin"]) == 0
-    stored = _stored_hash(db, "root")
+    assert main(["set-password", "--username", "root@example.com", "--password-stdin"]) == 0
+    stored = _stored_hash(db, "root@example.com")
     assert stored is not None and verify_password("new-root-password", stored)
     _stdin(monkeypatch, "whatever-pass\n")
-    assert main(["set-password", "--username", "nobody", "--password-stdin"]) == 2
+    assert main(["set-password", "--username", "nobody@example.com", "--password-stdin"]) == 2
 
 
 def test_without_a_database_url_it_exits_two() -> None:

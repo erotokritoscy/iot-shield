@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import type { MeResponse } from "@/lib/api/types";
 import { RESULT_HELP } from "@/pages/compose/help";
 import { captured, PIPELINE, RUN_ID, SAMPLE_CSV, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
@@ -25,6 +26,7 @@ interface RunBody {
     sinks: { name: string; params: Record<string, unknown> }[];
   };
   inputs: { content: string; origin: string }[];
+  email_result?: boolean;
 }
 
 /** Choose how source `index`'s data arrives — the first decision on every source card. */
@@ -828,5 +830,45 @@ describe("Compose & run — samples and scenarios", () => {
       await userEvent.click(await screen.findByRole("button", { name: "About Live meters" }));
       expect(screen.getByRole("tooltip")).toHaveTextContent("1 source · 1 detector · live data, so no expected counts");
     });
+  });
+});
+
+describe("Compose & run — Email me the result (ADR-0052 amendment)", () => {
+  const signedIn = (username: string): void => {
+    const me: MeResponse = {
+      user_id: "22222222-2222-4222-8222-222222222222",
+      username,
+      role: "member",
+      organization: { org_id: "acme", name: "Acme" },
+    };
+    server.use(http.get(`${PIPELINE}/auth/me`, () => HttpResponse.json(me)));
+  };
+
+  it("is ticked by default, names the address and asks the server to send it", async () => {
+    signedIn("ana@example.com");
+    await withContent();
+    await toStep(4);
+    expect(screen.getByTestId("compose_email_result")).toBeChecked();
+    expect(screen.getByTestId("compose_email_note")).toHaveTextContent(
+      "Sent to ana@example.com when the run finishes or fails.",
+    );
+    const body = await runFromReview();
+    expect(body.email_result).toBe(true);
+  });
+
+  it("unticked, tells the server to send nothing", async () => {
+    signedIn("ana@example.com");
+    await withContent();
+    await toStep(4);
+    await userEvent.click(screen.getByTestId("compose_email_result"));
+    const body = await runFromReview();
+    expect(body.email_result).toBe(false);
+  });
+
+  it("says nothing will arrive when the username is not an address", async () => {
+    signedIn("stelios");
+    await withContent();
+    await toStep(4);
+    expect(screen.getByTestId("compose_email_note")).toHaveTextContent(/“stelios” is not an email address/);
   });
 });

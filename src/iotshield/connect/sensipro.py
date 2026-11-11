@@ -67,7 +67,7 @@ order, so the whole stream is still ordered by meter.
 
 A longer window cannot be cut by time without breaking that order (meter A's second quarter
 would arrive after meter B's first), so it shrinks the group instead (``meters_per_query``,
-ADR-0052): 1,220 days reads 7 meters a query, which is the same rows per query as 100 meters
+ADR-0053): 1,220 days reads 7 meters a query, which is the same rows per query as 100 meters
 over a quarter."""
 
 
@@ -136,7 +136,7 @@ def _count(engine: Engine, start: datetime, end: datetime, params: SensiproParam
     stmt = _expand(sql, *binds)
     total = 0
     with engine.connect() as connection:
-        # One count per slice (ADR-0052), so counting a long window is as bounded as reading it.
+        # One count per slice (ADR-0053), so counting a long window is as bounded as reading it.
         for first, after in time_slices(start, end):
             total += connection.execute(
                 stmt, {"start": first, "end": after, "unit": UNIT[params.utility], **binds}

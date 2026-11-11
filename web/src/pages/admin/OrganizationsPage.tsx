@@ -83,8 +83,15 @@ function CreateOrganizationForm() {
         <Field label="Organization name" htmlFor="new-org-name">
           <TextInput id="new-org-name" value={form.organization} onChange={set("organization")} />
         </Field>
-        <Field label="First admin's username" htmlFor="new-org-admin">
-          <TextInput id="new-org-admin" autoComplete="off" value={form.username} onChange={set("username")} />
+        <Field label="First admin's email" htmlFor="new-org-admin">
+          <TextInput
+            id="new-org-admin"
+            type="email"
+            autoComplete="off"
+            placeholder="name@example.com"
+            value={form.username}
+            onChange={set("username")}
+          />
         </Field>
         <Field
           label="Temporary password"

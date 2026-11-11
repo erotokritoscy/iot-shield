@@ -127,7 +127,7 @@
     "/runs": {
       "post": {
         "summary": "Create Run",
-        "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nThe checks, the streaming of pulls and the mapping of failures to statuses are\n``api/execution.py``'s, shared with the job worker (ADR-0050).",
+        "description": "Run the pipeline and return a summary; 422 with issues if the chain is incompatible.\n\nWith ``email_result`` (the default), the outcome \u2014 finished, or failed while running \u2014\nis emailed to the caller in the background (``api/run_email.py``).\n\nThe checks, the streaming of pulls and the mapping of failures to statuses are\n``api/execution.py``'s, shared with the job worker (ADR-0050).",
         "operationId": "create_run_runs_post",
         "requestBody": {
           "required": true,
@@ -408,7 +408,7 @@
           "data sources"
         ],
         "summary": "Pull Source",
-        "description": "How many rows a date range of this source holds, and its first lines. Read-only.\n\nThe rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in\nbatches, so there is no row limit here, and no limit on the window (ADR-0052).",
+        "description": "How many rows a date range of this source holds, and its first lines. Read-only.\n\nThe rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in\nbatches, so there is no row limit here, and no limit on the window (ADR-0053).",
         "operationId": "pull_source_data_sources__source_id__pull_post",
         "parameters": [
           {
@@ -3466,6 +3466,14 @@
             ],
             "title": "Next Run At"
           },
+          "notify_emails": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notify Emails",
+            "description": "Who is emailed each execution's outcome"
+          },
           "last": {
             "anyOf": [
               {
@@ -3491,6 +3499,7 @@
           "schedule_text",
           "enabled",
           "next_run_at",
+          "notify_emails",
           "last"
         ],
         "title": "JobInfo"
@@ -3531,6 +3540,22 @@
             "title": "Enabled",
             "description": "A disabled job keeps its schedule but waits",
             "default": true
+          },
+          "notify_emails": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Emails",
+            "description": "Who is emailed each execution's outcome. Omitted on create: the creator, when their username is an email address; omitted on edit: unchanged; [] = nobody"
           }
         },
         "additionalProperties": false,
@@ -4556,6 +4581,12 @@
             ],
             "title": "Progress Id",
             "description": "An id of the caller's choosing to poll GET /runs/progress/{progress_id} with while the run is going (ADR-0051)"
+          },
+          "email_result": {
+            "type": "boolean",
+            "title": "Email Result",
+            "description": "Email the outcome to whoever runs it, when their username is an address and the server has mail configured (ADR-0052 amendment); false sends nothing",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -4858,7 +4889,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SourceInput",
-        "description": "One source's input, aligned to ``spec.sources`` by position: its text, or a pull.\n\nA pull is a *reference* (ADR-0047): the server streams the window from the source's\ndatabase during the run, a batch of assets at a time, so it has no size limit and no window\nlimit (ADR-0052). ``content`` is text the caller already holds \u2014 an upload, a paste \u2014\nand keeps its ceiling, because it travels in this request."
+        "description": "One source's input, aligned to ``spec.sources`` by position: its text, or a pull.\n\nA pull is a *reference* (ADR-0047): the server streams the window from the source's\ndatabase during the run, a batch of assets at a time, so it has no size limit and no window\nlimit (ADR-0053). ``content`` is text the caller already holds \u2014 an upload, a paste \u2014\nand keeps its ceiling, because it travels in this request."
       },
       "SourceSpec": {
         "properties": {

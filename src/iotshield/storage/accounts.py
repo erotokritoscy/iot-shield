@@ -39,6 +39,7 @@ from iotshield.storage.orm import (
     DetectionRow,
     EventRow,
     JobExecutionRow,
+    JobNotificationRow,
     JobRow,
     MalformedRow,
     OrganizationRow,
@@ -144,18 +145,41 @@ def normalize_username(username: str) -> str:
     return username.strip().lower()
 
 
-_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,63}$")
+# A username is the user's email address: it is what a job's results are mailed to by default
+# (ADR-0052), so it must be one. Deliberately practical rather than RFC 5322 - a local part of
+# the characters real addresses use, an ``@``, and a dotted domain with a letters-only TLD.
+_EMAIL = re.compile(
+    r"^[a-z0-9](?:[a-z0-9._%+-]*[a-z0-9_%+-])?"
+    r"@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$"
+)
+MAX_USERNAME = 64  # the users.username column
+MAX_EMAIL = 254  # RFC 5321's limit on a forward path
+
+
+def validate_email(value: str, *, max_length: int = MAX_EMAIL) -> str:
+    """The address lowercased and stripped, or ValueError naming what an address looks like."""
+    address = value.strip().lower()
+    if len(address) > max_length or ".." in address or not _EMAIL.fullmatch(address):
+        raise ValueError(
+            f"{value.strip()!r} is not a valid email address (e.g. name@example.com, "
+            f"at most {max_length} characters)"
+        )
+    return address
 
 
 def validate_username(username: str) -> str:
-    """The normalized username, or ValueError. One rule for the API and the CLI alike."""
-    username = normalize_username(username)
-    if not _USERNAME.fullmatch(username):
+    """The normalized username, or ValueError. One rule for the API and the CLI alike.
+
+    A username must be an email address (ADR-0052). Only *creating* an account checks this:
+    login compares against what is stored, so an account made before the rule still signs in.
+    """
+    try:
+        return validate_email(normalize_username(username), max_length=MAX_USERNAME)
+    except ValueError:
         raise ValueError(
-            "username must be 3-64 characters of letters, digits and . _ @ -, "
-            "starting with a letter or digit"
-        )
-    return username
+            f"username must be a valid email address (e.g. name@example.com), "
+            f"at most {MAX_USERNAME} characters"
+        ) from None
 
 
 def _user(row: UserRow) -> User:
@@ -492,6 +516,7 @@ def delete_organization(session: Session, org_id: str) -> bool:
     session.execute(delete(DataSourceRow).where(DataSourceRow.org_id == org_id))
     session.execute(delete(RunRow).where(RunRow.org_id == org_id))
     session.execute(delete(JobExecutionRow).where(JobExecutionRow.org_id == org_id))
+    session.execute(delete(JobNotificationRow).where(JobNotificationRow.org_id == org_id))
     session.execute(delete(JobRow).where(JobRow.org_id == org_id))
     session.execute(delete(OrganizationRow).where(OrganizationRow.org_id == org_id))
     session.flush()

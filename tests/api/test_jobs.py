@@ -9,7 +9,9 @@ execution is failed, and one organization never reaches another's jobs.
 """
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,7 @@ from iotshield.connect.api import client as api_client
 from iotshield.jobs.worker import Worker
 from iotshield.storage import accounts, create_schema, make_engine, make_session_factory
 from iotshield.storage import jobs as store
-from iotshield.storage.orm import EventRow, JobExecutionRow
+from iotshield.storage.orm import EventRow, JobExecutionRow, JobNotificationRow
 from iotshield.storage.secrets import SECRET_KEY_ENV
 from tests.api.conftest import Stack
 from tests.api.test_api_sources import PLANT_API, Upstream, _resolve
@@ -121,7 +123,7 @@ class TestSave:
         assert [j["job_id"] for j in client.get("/jobs").json()] == [job["job_id"]]
 
     def test_a_window_of_years_is_saved(self, client: TestClient, source_id: str) -> None:
-        # ADR-0052: no window limit, fixed or rolling. A job is where a pull of years belongs.
+        # ADR-0053: no window limit, fixed or rolling. A job is where a pull of years belongs.
         windows = [
             {"kind": "fixed", "start": "2023-01-01", "end": "2026-05-04"},
             {"kind": "rolling", "days": 1220, "through": "yesterday"},
@@ -365,14 +367,14 @@ class TestTenancy:
         self, stack: Stack, upstream: Upstream
     ) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         source = acme.pipeline.post("/data-sources", json=PLANT_API).json()["source_id"]
         job = acme.pipeline.post("/jobs", json=job_body(source))
         assert job.status_code == 201, job.text
         job_id = job.json()["job_id"]
 
         globex = stack.browser()
-        globex.register("Globex", "gina")
+        globex.register("Globex", "gina@example.com")
         assert globex.pipeline.get("/jobs").json() == []
         for method, path in [
             ("GET", f"/jobs/{job_id}"),
@@ -392,15 +394,17 @@ class TestTenancy:
         self, stack: Stack, upstream: Upstream
     ) -> None:
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         source = admin.pipeline.post("/data-sources", json=PLANT_API).json()["source_id"]
-        admin.pipeline.post("/auth/users", json={"username": "bob", "password": "temp-pass-1"})
+        admin.pipeline.post(
+            "/auth/users", json={"username": "bob@example.com", "password": "temp-pass-1"}
+        )
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         job = member.pipeline.post("/jobs", json=job_body(source))
         assert job.status_code == 201, job.text
         job_id = job.json()["job_id"]
-        assert job.json()["created_by"] == "bob"
+        assert job.json()["created_by"] == "bob@example.com"
         assert member.pipeline.post(f"/jobs/{job_id}/run").status_code == 202
         assert member.pipeline.delete(f"/jobs/{job_id}").status_code == 403
         assert admin.pipeline.delete(f"/jobs/{job_id}").status_code == 204
@@ -409,7 +413,7 @@ class TestTenancy:
         self, stack: Stack, upstream: Upstream
     ) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         source = acme.pipeline.post("/data-sources", json=PLANT_API).json()["source_id"]
         job_id = acme.pipeline.post("/jobs", json=job_body(source)).json()["job_id"]
         acme.pipeline.post(f"/jobs/{job_id}/run")
@@ -418,3 +422,161 @@ class TestTenancy:
             session.commit()
             assert session.scalars(select(JobExecutionRow)).all() == []
             assert store.list_jobs(session, org_id="acme") == []
+
+
+@dataclass
+class FakeMailer:
+    """Stands in for SMTP: keeps what it was asked to send, or fails when told to."""
+
+    sender: str = "iotshield@example.org"
+    fail: bool = False
+    sent: list[EmailMessage] = field(default_factory=list)
+
+    def send(self, message: EmailMessage) -> None:
+        if self.fail:
+            raise ConnectionRefusedError("no SMTP server here")
+        self.sent.append(message)
+
+
+def _body(message: EmailMessage) -> str:
+    part = message.get_body(preferencelist=("plain",))
+    assert part is not None
+    return part.get_content()
+
+
+class TestEmails:
+    """ADR-0052: each finished execution is emailed to the job's recipients."""
+
+    @pytest.fixture()
+    def mailer(self) -> FakeMailer:
+        return FakeMailer()
+
+    @pytest.fixture()
+    def mailing_worker(self, engine, tmp_path: Path, mailer: FakeMailer) -> Worker:  # type: ignore[no-untyped-def]
+        return Worker(
+            engine=engine,
+            output_dir=tmp_path / "results",
+            clock=lambda: NOW,
+            mailer=mailer,
+            dashboard_url="http://localhost:8080/",
+        )
+
+    def test_recipients_are_saved_cleaned_and_kept_on_an_edit(
+        self, client: TestClient, source_id: str
+    ) -> None:
+        body = job_body(source_id, notify_emails=[" Ops@Example.com", "ops@example.com", "b@x.io"])
+        job = _create(client, body)
+        assert job["notify_emails"] == ["ops@example.com", "b@x.io"]
+        url = f"/jobs/{job['job_id']}"
+        assert client.put(url, json=job_body(source_id)).json()["notify_emails"] == [
+            "ops@example.com",
+            "b@x.io",
+        ]  # omitted on edit = unchanged
+        cleared = client.put(url, json=job_body(source_id, notify_emails=[]))
+        assert cleared.json()["notify_emails"] == []
+        assert client.get(url).json()["notify_emails"] == []
+
+    def test_a_recipient_that_is_not_an_address_is_422(
+        self, client: TestClient, source_id: str
+    ) -> None:
+        response = client.post("/jobs", json=job_body(source_id, notify_emails=["ops"]))
+        assert response.status_code == 422
+        assert "not a valid email address" in response.text
+
+    def test_the_creator_is_the_default_recipient(self, stack: Stack, upstream: Upstream) -> None:
+        admin = stack.browser()
+        admin.register("Acme", "alice@example.com")
+        source = admin.pipeline.post("/data-sources", json=PLANT_API).json()["source_id"]
+        job = admin.pipeline.post("/jobs", json=job_body(source)).json()
+        assert job["notify_emails"] == ["alice@example.com"]
+        nobody = admin.pipeline.post("/jobs", json=job_body(source, notify_emails=[])).json()
+        assert nobody["notify_emails"] == []
+
+    def test_without_login_nobody_is_mailed_by_default(
+        self, client: TestClient, source_id: str
+    ) -> None:
+        # The auth-off user is "local", which is no address.
+        assert _create(client, job_body(source_id))["notify_emails"] == []
+
+    def test_a_success_is_mailed_with_its_counts_and_a_link(
+        self,
+        client: TestClient,
+        source_id: str,
+        mailing_worker: Worker,
+        mailer: FakeMailer,
+    ) -> None:
+        job = _create(client, job_body(source_id, notify_emails=["ops@example.com"]))
+        client.post(f"/jobs/{job['job_id']}/run")
+        mailing_worker.tick()
+
+        [done] = _executions(client, job["job_id"])
+        [message] = mailer.sent
+        assert message["To"] == "ops@example.com"
+        assert message["From"] == "iotshield@example.org"
+        assert message["Subject"] == "[iotshield] Job 'Nightly plant check' finished: 1 alert"
+        text = _body(message)
+        assert "events      2" in text and "malformed   1" in text and "detections  1" in text
+        assert f"http://localhost:8080/runs/{done['run_id']}" in text
+        assert "run now by local" in text
+
+    def test_a_failure_is_mailed_with_its_reason(
+        self, client: TestClient, mailing_worker: Worker, mailer: FakeMailer
+    ) -> None:
+        wrong = client.post("/data-sources", json=PLANT_API | {"credentials": {"api_key": "x"}})
+        job = _create(client, job_body(wrong.json()["source_id"], notify_emails=["o@example.com"]))
+        client.post(f"/jobs/{job['job_id']}/run")
+        mailing_worker.tick()
+        [message] = mailer.sent
+        assert message["Subject"] == "[iotshield] Job 'Nightly plant check' failed"
+        assert "credentials" in _body(message)
+
+    def test_a_job_with_no_recipients_sends_nothing(
+        self, client: TestClient, source_id: str, mailing_worker: Worker, mailer: FakeMailer
+    ) -> None:
+        job = _create(client, job_body(source_id))
+        client.post(f"/jobs/{job['job_id']}/run")
+        mailing_worker.tick()
+        assert mailer.sent == []
+        assert _executions(client, job["job_id"])[0]["status"] == "succeeded"
+
+    def test_a_mail_that_cannot_be_sent_changes_nothing(
+        self, client: TestClient, source_id: str, mailing_worker: Worker, mailer: FakeMailer
+    ) -> None:
+        mailer.fail = True
+        job = _create(client, job_body(source_id, notify_emails=["ops@example.com"]))
+        client.post(f"/jobs/{job['job_id']}/run")
+        mailing_worker.tick()  # does not raise
+        [done] = _executions(client, job["job_id"])
+        assert done["status"] == "succeeded" and done["run_id"] is not None
+
+    def test_a_scheduled_run_says_so(
+        self,
+        client: TestClient,
+        source_id: str,
+        engine,
+        tmp_path: Path,
+        mailer: FakeMailer,  # type: ignore[no-untyped-def]
+    ) -> None:
+        body = job_body(source_id, schedule={"every": "hour"}, notify_emails=["o@example.com"])
+        _create(client, body)
+        later = NOW + timedelta(hours=1)
+        Worker(engine=engine, output_dir=tmp_path / "r", clock=lambda: later, mailer=mailer).tick()
+        [message] = mailer.sent
+        text = _body(message)
+        assert "on its schedule" in text
+        assert "Open the run" not in text  # no dashboard URL configured, so no link
+
+    def test_deleting_a_job_or_its_organization_drops_its_recipients(
+        self, stack: Stack, upstream: Upstream
+    ) -> None:
+        acme = stack.browser()
+        acme.register("Acme", "alice@example.com")
+        source = acme.pipeline.post("/data-sources", json=PLANT_API).json()["source_id"]
+        first = acme.pipeline.post("/jobs", json=job_body(source)).json()["job_id"]
+        acme.pipeline.post("/jobs", json=job_body(source, name="Second"))
+        assert acme.pipeline.delete(f"/jobs/{first}").status_code == 204
+        with make_session_factory(stack.engine)() as session:
+            assert len(session.scalars(select(JobNotificationRow)).all()) == 1
+            assert accounts.delete_organization(session, "acme")
+            session.commit()
+            assert session.scalars(select(JobNotificationRow)).all() == []

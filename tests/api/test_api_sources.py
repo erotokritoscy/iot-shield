@@ -58,7 +58,7 @@ LOG_API: dict[str, Any] = {
     "api": {
         "url": "https://api.example.com/v1/logs",
         "auth": "basic",
-        "username": "ops",
+        "username": "ops@example.com",
         "start_param": "since",
         "end_param": "until",
         "mapping": {
@@ -169,7 +169,7 @@ class TestRegister:
         source = _add(client, PLANT_API)
         path = f"/data-sources/{source['source_id']}"
         basic = PLANT_API | {
-            "api": PLANT_API["api"] | {"auth": "basic", "username": "ops"},
+            "api": PLANT_API["api"] | {"auth": "basic", "username": "ops@example.com"},
             "credentials": None,
         }
         response = client.put(path, json=basic)
@@ -310,13 +310,13 @@ class TestTenancy:
         self, stack: Stack, upstream: Upstream
     ) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         created = acme.pipeline.post("/data-sources", json=PLANT_API)
         assert created.status_code == 201, created.text
         source_id = created.json()["source_id"]
 
         globex = stack.browser()
-        globex.register("Globex", "gina")
+        globex.register("Globex", "gina@example.com")
         assert globex.pipeline.get("/data-sources").json() == []
         pulled = globex.pipeline.post(
             f"/data-sources/{source_id}/pull", json={"start": "2026-11-01", "end": "2026-11-01"}

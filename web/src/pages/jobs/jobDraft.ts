@@ -6,12 +6,15 @@
  * Every time here is UTC, like the server's; the form shows the viewer's local time beside it.
  */
 import type { JobInfo, JobRequest, JobSchedule, JobWindow } from "@/lib/api/types";
+import { isEmail, splitRecipients } from "@/lib/email";
 import type { PulledWindow, SourceRow } from "@/pages/compose/model";
 
 export type WindowKind = "fixed" | "rolling";
 export type Through = "yesterday" | "today";
 export type Every = "none" | "hour" | "day" | "week";
 
+/** Mirrors `api/jobs.py: MAX_RECIPIENTS`. */
+export const MAX_RECIPIENTS = 20;
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 export const EVERY: readonly Every[] = ["none", "hour", "day", "week"];
 export const EVERY_LABEL: Record<Every, string> = {
@@ -42,6 +45,8 @@ export interface JobDraft {
   readonly minute: string;
   readonly weekday: number;
   readonly enabled: boolean;
+  /** Who is emailed each run's outcome (ADR-0052): addresses separated by commas or spaces. */
+  readonly recipients: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -73,10 +78,30 @@ function windowOf(pull: Omit<PulledWindow, "rows">): WindowDraft {
   };
 }
 
-/** A new job from the pulls on the Compose page: the same days, run when asked. */
-export function draftFromPulls(pulls: readonly Omit<PulledWindow, "rows">[], name = ""): JobDraft {
-  return { name, windows: pulls.map(windowOf), every: "none", time: "02:00", minute: "0", weekday: 0, enabled: true };
+/**
+ * A new job from the pulls on the Compose page: the same days, run when asked, emailed to
+ * `recipients` (the Compose page passes the signed-in user's address).
+ */
+export function draftFromPulls(
+  pulls: readonly Omit<PulledWindow, "rows">[],
+  name = "",
+  recipients = "",
+): JobDraft {
+  return {
+    name,
+    windows: pulls.map(windowOf),
+    every: "none",
+    time: "02:00",
+    minute: "0",
+    weekday: 0,
+    enabled: true,
+    recipients,
+  };
 }
+
+/** The signed-in user's address as a job's default recipient, or "" when it is not one. */
+export const defaultRecipients = (username: string | null | undefined): string =>
+  username && isEmail(username) ? username : "";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -98,6 +123,7 @@ export function draftFromJob(job: JobInfo): JobDraft {
     minute: String(schedule?.minute ?? 0),
     weekday: schedule?.weekday ?? 0,
     enabled: job.enabled,
+    recipients: job.notify_emails.join(", "),
   };
 }
 
@@ -139,6 +165,10 @@ export function jobProblem(draft: JobDraft): string | null {
   } else if (draft.every !== "none" && !TIME.test(draft.time)) {
     return "The time is HH:MM, in UTC.";
   }
+  const recipients = splitRecipients(draft.recipients);
+  const wrong = recipients.find((address) => !isEmail(address));
+  if (wrong !== undefined) return `“${wrong}” is not a valid email address.`;
+  if (recipients.length > MAX_RECIPIENTS) return `A job emails at most ${MAX_RECIPIENTS} addresses.`;
   return null;
 }
 
@@ -162,6 +192,7 @@ export function jobBody(draft: JobDraft, spec: unknown): JobRequest {
     })),
     schedule: scheduleOf(draft),
     enabled: draft.enabled,
+    notify_emails: splitRecipients(draft.recipients),
   };
 }
 
@@ -173,6 +204,7 @@ export function withEnabled(job: JobInfo, enabled: boolean): JobRequest {
     sources: job.sources.map((source) => ({ ...source, params: source.params ?? {} })),
     schedule: job.schedule,
     enabled,
+    notify_emails: job.notify_emails,
   };
 }
 

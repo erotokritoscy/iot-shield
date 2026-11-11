@@ -68,7 +68,7 @@ def _stream(
     where, binds = _where(engine, params)
     sql = f"SELECT {columns} FROM packets{where} ORDER BY {quote('timestamp')}, id"
     stmt = _statement(sql, binds)
-    # A long window is read a slice at a time (ADR-0052): the stream is ordered by time, so
+    # A long window is read a slice at a time (ADR-0053): the stream is ordered by time, so
     # consecutive slices in order are the same stream, and no query sorts more than a quarter.
     for first, after in time_slices(start, end):
         with engine.connect() as connection:

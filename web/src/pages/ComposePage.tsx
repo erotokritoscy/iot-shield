@@ -23,12 +23,14 @@ import * as React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { ParamFields } from "@/components/ParamFields";
-import { Button, Field, MultiSelect, RowCount, Select, TextInput } from "@/components/ui/controls";
+import { Button, Checkbox, Field, MultiSelect, RowCount, Select, TextInput } from "@/components/ui/controls";
 import { InfoLines, InfoTip } from "@/components/ui/info";
 import { Card, Collapsible, ErrorState, Notice, PageHeader, Section, Spinner } from "@/components/ui/surfaces";
 import { StatTile } from "@/components/ui/table";
 import { pipelineApi, type SourceInput } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
+import { useAuth } from "@/lib/auth";
+import { isEmail } from "@/lib/email";
 import type { JobInfo, ModulesResponse, SavedRunInfo, SinkInfo } from "@/lib/api/types";
 import { initialValues, type ParamValues } from "@/lib/params";
 import { keys, useConnections, useDataSources, useJob, useModules, useSavedRun, type RunList } from "@/lib/queries";
@@ -274,6 +276,9 @@ function ComposeWizard({
   // What the saved run will be called (ADR-0046). Blank is fine: the server names it after
   // its inputs and the time, so a run is never saved without a name.
   const [runName, setRunName] = React.useState("");
+  const [emailResult, setEmailResult] = React.useState(true);
+  const auth = useAuth();
+  const user = auth.data?.kind === "user" ? auth.data.me : null;
   // The scenario last applied, and the exact spec + inputs it produced: its promised counts
   // are only shown while what will run is still exactly that.
   const [scenario, setScenario] = React.useState<{ scenario: Scenario; fingerprint: string } | null>(null);
@@ -365,7 +370,7 @@ function ComposeWizard({
   const queryClient = useQueryClient();
   const run = useMutation({
     // The id the run's progress is polled by (ADR-0051), fresh for every click: `run.variables`.
-    mutationFn: (progressId: string) => pipelineApi.run(spec, inputs, runName, progressId),
+    mutationFn: (progressId: string) => pipelineApi.run(spec, inputs, runName, progressId, emailResult),
     // Every run is saved, so the Runs list is stale the moment one succeeds.
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.savedRuns }),
   });
@@ -752,6 +757,19 @@ function ComposeWizard({
               />
             </Field>
 
+            <div className="space-y-1">
+              <Checkbox
+                id="compose_email_result"
+                data-testid="compose_email_result"
+                label="Email me the result"
+                checked={emailResult}
+                onChange={(event) => setEmailResult(event.target.checked)}
+              />
+              <p className="caption" data-testid="compose_email_note">
+                {emailNote(user?.username)}
+              </p>
+            </div>
+
             <div className="flex items-center gap-3">
               <Button variant="primary" data-testid="compose_run" disabled={!canRun} onClick={() => run.mutate(newProgressId())}>
                 Run pipeline
@@ -916,6 +934,13 @@ function Reopen({ catalogue }: { readonly catalogue: ModulesResponse }) {
       }}
     />
   );
+}
+
+/** Where "Email me the result" sends (ADR-0052 amendment): the signed-in user, if an address. */
+function emailNote(username: string | undefined): string {
+  if (username === undefined) return "Nothing is sent without a sign-in: there is no address to send to.";
+  if (!isEmail(username)) return `Your username “${username}” is not an email address, so nothing is sent.`;
+  return `Sent to ${username} when the run finishes or fails.`;
 }
 
 export function ComposePage() {

@@ -136,12 +136,14 @@ class TestTheRegister:
 class TestWithLogin:
     def test_a_member_reads_but_only_an_admin_writes(self, stack: Stack) -> None:
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         created = admin.pipeline.post("/data-sources", json=CAMERA_FLOWS).json()
-        admin.pipeline.post("/auth/users", json={"username": "bob", "password": "temp-pass-1"})
+        admin.pipeline.post(
+            "/auth/users", json={"username": "bob@example.com", "password": "temp-pass-1"}
+        )
 
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         assert [s["name"] for s in member.pipeline.get("/data-sources").json()] == [
             "Camera network"
         ]
@@ -152,11 +154,11 @@ class TestWithLogin:
 
     def test_one_organization_never_sees_or_touches_anothers(self, stack: Stack) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         created = acme.pipeline.post("/data-sources", json=CAMERA_FLOWS).json()
 
         globex = stack.browser()
-        globex.register("Globex", "gina")
+        globex.register("Globex", "gina@example.com")
         assert globex.pipeline.get("/data-sources").json() == []
         path = f"/data-sources/{created['source_id']}"
         assert globex.pipeline.put(path, json=METERS).status_code == 404
@@ -171,7 +173,7 @@ class TestWithLogin:
 
     def test_deleting_an_organization_deletes_its_sources(self, stack: Stack) -> None:
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         acme.pipeline.post("/data-sources", json=CAMERA_FLOWS)
         factory = make_session_factory(stack.engine)
         with factory() as session:
@@ -399,7 +401,7 @@ class TestConnections:
         assert response.status_code == status and says in response.text
 
     def test_a_window_of_years_is_summarized_not_refused(self, connected: TestClient) -> None:
-        # ADR-0052: the connector reads it a quarter per query; the fixture lives in July 2023.
+        # ADR-0053: the connector reads it a quarter per query; the fixture lives in July 2023.
         source = _source(connected, "sensipro")
         url = f"/data-sources/{source['source_id']}/pull"
         years = connected.post(url, json={"start": "2021-01-01", "end": "2024-05-04"})
@@ -427,13 +429,15 @@ class TestConnectionsWithLogin:
         path.write_text(CONNECTIONS_YAML, encoding="utf-8")
         monkeypatch.setenv("IOTSHIELD_CONNECTIONS_PATH", str(path))
         admin = stack.browser()
-        admin.register("Acme", "alice")
+        admin.register("Acme", "alice@example.com")
         source = admin.pipeline.post(
             "/data-sources", json={"name": "Meters", "type": "OT", "connection": "sensipro"}
         ).json()
-        admin.pipeline.post("/auth/users", json={"username": "bob", "password": "temp-pass-1"})
+        admin.pipeline.post(
+            "/auth/users", json={"username": "bob@example.com", "password": "temp-pass-1"}
+        )
         member = stack.browser()
-        member.login("bob", "temp-pass-1")
+        member.login("bob@example.com", "temp-pass-1")
         pulled = member.pipeline.post(
             f"/data-sources/{source['source_id']}/pull",
             json={"start": "2023-07-01", "end": "2023-07-01"},
@@ -451,7 +455,7 @@ class TestConnectionsWithLogin:
         path.write_text(CONNECTIONS_YAML, encoding="utf-8")
         monkeypatch.setenv("IOTSHIELD_CONNECTIONS_PATH", str(path))
         acme = stack.browser()
-        acme.register("Acme", "alice")
+        acme.register("Acme", "alice@example.com")
         # `biology` is declared for the `default` organization only.
         assert [c["name"] for c in acme.pipeline.get("/data-sources/connections").json()] == [
             "sensipro"

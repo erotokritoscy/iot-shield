@@ -83,7 +83,7 @@ class TestWindows:
         )
 
     def test_a_rolling_window_of_years_is_accepted(self) -> None:
-        # ADR-0052: no window limit; the connector reads it a quarter per query.
+        # ADR-0053: no window limit; the connector reads it a quarter per query.
         window = RollingWindow(days=1220)
         start, end = window.resolve(datetime(2026, 11, 11, tzinfo=UTC))
         assert (end - start).days + 1 == 1220

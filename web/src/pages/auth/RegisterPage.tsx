@@ -6,6 +6,7 @@ import { Button, Field, TextInput } from "@/components/ui/controls";
 import { Notice } from "@/components/ui/surfaces";
 import { authApi } from "@/lib/api/client";
 import { describeRefusal } from "@/lib/api/http";
+import { usernameProblem } from "@/lib/email";
 import { useOpenRegistration, useSignedIn } from "@/lib/auth";
 import { AuthLayout } from "@/pages/auth/AuthLayout";
 
@@ -21,7 +22,8 @@ export function registrationProblem(form: {
 }): string | null {
   if (form.organization.trim().length < 2) return "Give your organization a name.";
   if (!/[a-z0-9]/i.test(form.organization)) return "The organization name needs a letter or digit.";
-  if (form.username.trim().length < 3) return "Usernames are at least 3 characters.";
+  const username = usernameProblem(form.username);
+  if (username !== null) return username;
   if (form.password.length < MIN_PASSWORD) return `Passwords are at least ${MIN_PASSWORD} characters.`;
   if (form.password !== form.confirm) return "The two passwords do not match.";
   return null;
@@ -71,8 +73,15 @@ export function RegisterPage() {
         <Field label="Organization name" htmlFor="reg-org">
           <TextInput id="reg-org" autoFocus value={form.organization} onChange={set("organization")} />
         </Field>
-        <Field label="Your username" htmlFor="reg-username">
-          <TextInput id="reg-username" autoComplete="username" value={form.username} onChange={set("username")} />
+        <Field label="Your email" htmlFor="reg-username" hint="You sign in with it, and job results are sent to it.">
+          <TextInput
+            id="reg-username"
+            type="email"
+            autoComplete="email"
+            placeholder="name@example.com"
+            value={form.username}
+            onChange={set("username")}
+          />
         </Field>
         <Field label="Password" htmlFor="reg-password" hint={`At least ${MIN_PASSWORD} characters.`}>
           <TextInput

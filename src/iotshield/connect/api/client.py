@@ -113,7 +113,7 @@ def pages(
 ) -> Iterator[Any]:
     """Each response document of the window, in order, following ``next_path``.
 
-    A long window is asked for as consecutive spans of at most ``SLICE_DAYS`` (ADR-0052), so
+    A long window is asked for as consecutive spans of at most ``SLICE_DAYS`` (ADR-0053), so
     ``MAX_PAGES`` bounds one span's paging rather than refusing a long window for its length.
     """
     for first, last in day_slices(start, end):

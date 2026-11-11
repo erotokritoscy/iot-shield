@@ -5,6 +5,10 @@ edit and run its jobs; only its admins delete one, the same split as its runs. A
 when it is saved by the same code that checks a run, without reading anything, so a job that
 could never run is refused here rather than failing every night.
 
+Each job may name who is emailed when an execution finishes (``notify_emails``, ADR-0052); the
+worker sends it. Omitted on create, it defaults to the creator when their username is an email
+address; an empty list means nobody.
+
 "Run now" does not run in the request: it queues an execution for the ``worker`` service, so a
 job is never subject to the proxy's timeout and never runs twice at once (409 while one is
 queued or running).
@@ -25,10 +29,12 @@ from iotshield.jobs.run import check_job
 from iotshield.jobs.worker import utc_now
 from iotshield.pipeline.config import PipelineSpec, config_from_spec
 from iotshield.storage import jobs as store
+from iotshield.storage.accounts import validate_email
 from iotshield.storage.jobs import Execution, Job
 from iotshield.storage.runs import MAX_NAME_LENGTH, clean_name
 
 TOTAL_HEADER = "X-Total-Count"
+MAX_RECIPIENTS = 20
 
 
 class JobRequest(BaseModel):
@@ -45,6 +51,26 @@ class JobRequest(BaseModel):
         default=None, description="When it runs by itself (UTC); null = only when asked"
     )
     enabled: bool = Field(default=True, description="A disabled job keeps its schedule but waits")
+    notify_emails: list[str] | None = Field(
+        default=None,
+        max_length=MAX_RECIPIENTS,
+        description=(
+            "Who is emailed each execution's outcome. Omitted on create: the creator, when "
+            "their username is an email address; omitted on edit: unchanged; [] = nobody"
+        ),
+    )
+
+    @field_validator("notify_emails")
+    @classmethod
+    def _recipients(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned: list[str] = []
+        for address in value:
+            checked = validate_email(address)
+            if checked not in cleaned:  # a duplicate would be one person mailed twice
+                cleaned.append(checked)
+        return cleaned
 
     @field_validator("name")
     @classmethod
@@ -82,6 +108,7 @@ class JobInfo(BaseModel):
     )
     enabled: bool
     next_run_at: str | None
+    notify_emails: list[str] = Field(description="Who is emailed each execution's outcome")
     last: ExecutionInfo | None = Field(description="The most recent execution, if any")
 
 
@@ -118,6 +145,7 @@ def _info(job: Job, last: Execution | None) -> JobInfo:
         schedule_text=schedule.describe() if schedule else None,
         enabled=job.enabled,
         next_run_at=_iso(job.next_run_at),
+        notify_emails=list(job.notify_emails),
         last=_execution_info(last) if last is not None else None,
     )
 
@@ -154,6 +182,14 @@ def _checked(request: Request, body: JobRequest, org_id: str, now: datetime) -> 
     }
 
 
+def _default_recipients(username: str) -> list[str]:
+    """The creator, when their username is an address (a pre-ADR-0052 account may not be)."""
+    try:
+        return [validate_email(username)]
+    except ValueError:
+        return []
+
+
 def _found(job: Job | None) -> Job:
     # Another organization's job is a 404, exactly like an id that never existed.
     if job is None:
@@ -179,8 +215,15 @@ def create_jobs_router() -> APIRouter:
     ) -> JobInfo:
         """Save a job; 422 with the run's own reasons when it could never run."""
         fields = _checked(request, body, account.org_id, _now(request))
+        recipients = body.notify_emails
+        if recipients is None:
+            recipients = _default_recipients(account.user.username)
         job = store.add_job(
-            session, org_id=account.org_id, created_by=account.user.username, **fields
+            session,
+            org_id=account.org_id,
+            created_by=account.user.username,
+            notify_emails=recipients,
+            **fields,
         )
         session.commit()
         return _info(job, None)
@@ -195,9 +238,16 @@ def create_jobs_router() -> APIRouter:
         job_id: UUID, body: JobRequest, request: Request, account: AccountDep, session: SessionDep
     ) -> JobInfo:
         """Replace the job's chain, pulls and schedule; its history is kept."""
-        _found(store.get_job(session, job_id, org_id=account.org_id))
+        current = _found(store.get_job(session, job_id, org_id=account.org_id))
         fields = _checked(request, body, account.org_id, _now(request))
-        job = _found(store.update_job(session, job_id, org_id=account.org_id, **fields))
+        recipients = (
+            list(current.notify_emails) if body.notify_emails is None else body.notify_emails
+        )
+        job = _found(
+            store.update_job(
+                session, job_id, org_id=account.org_id, notify_emails=recipients, **fields
+            )
+        )
         session.commit()
         return _info(job, store.latest_executions(session, org_id=account.org_id).get(job_id))
 

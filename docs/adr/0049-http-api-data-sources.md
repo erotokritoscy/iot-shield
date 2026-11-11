@@ -108,7 +108,7 @@ deferred until a deployment exposes the stack to untrusted org admins.
 
 ### D5 — The window and pagination are declared, not guessed
 
-A pull asks for calendar days (ADR-0042's 92-day limit applied until ADR-0052. Now a long window is requested as consecutive spans of at most 92 days, with `MAX_PAGES` applying to each span). The admin names the two query
+A pull asks for calendar days (ADR-0042's 92-day limit applied until ADR-0053. Now a long window is requested as consecutive spans of at most 92 days, with `MAX_PAGES` applying to each span). The admin names the two query
 parameters and their form: `date` (YYYY-MM-DD, end inclusive) or `iso` / `epoch_s` / `epoch_ms`
 UTC instants with an exclusive end at the midnight after the last day. Pagination is one shape —
 a dotted path to the next page's URL, absolute or relative, followed until it is null or empty;

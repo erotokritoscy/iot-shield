@@ -57,6 +57,23 @@ export function JobForm({
         />
       </Field>
 
+      <Field
+        label="Email results to"
+        htmlFor="job-recipients"
+        hint="Each run's outcome — its counts and top alerts, or why it failed — is emailed here. Separate addresses with commas; leave empty for no email."
+      >
+        <TextInput
+          id="job-recipients"
+          data-testid="job_recipients"
+          type="text"
+          inputMode="email"
+          autoComplete="off"
+          placeholder="name@example.com, other@example.com"
+          value={draft.recipients}
+          onChange={(event) => set("recipients", event.target.value)}
+        />
+      </Field>
+
       {draft.windows.map((window, index) => {
         const resolved = resolveWindow(window);
         return (
