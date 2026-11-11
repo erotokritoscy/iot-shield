@@ -112,6 +112,29 @@ class TestRequests:
         assert "from" not in seen[1].url.params  # the next link carries its own query
 
 
+class TestLongWindows:
+    """A window of any length is asked for a quarter at a time (ADR-0052)."""
+
+    def test_a_long_window_is_requested_as_consecutive_spans_in_order(self, serve) -> None:  # type: ignore[no-untyped-def]
+        seen = serve(lambda request: items())
+        dated = endpoint(window_format="date")
+        target = ApiTarget(name="x", endpoint=dated, credentials=ApiCredentials())
+        list(target.chunks(date(2023, 1, 1), date(2026, 5, 4), {}))  # 1,220 days
+        spans = [(request.url.params["from"], request.url.params["to"]) for request in seen]
+        assert len(spans) == 14  # 13 full quarters of 92 days and a 24-day remainder
+        assert spans[0] == ("2023-01-01", "2023-04-02")
+        assert spans[1][0] == "2023-04-03"  # the day after the previous span, never the same
+        assert spans[-1] == ("2026-04-11", "2026-05-04")
+
+    def test_the_page_ceiling_applies_to_each_span_not_the_window(
+        self, serve, monkeypatch: pytest.MonkeyPatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setattr(api_client, "MAX_PAGES", 1)
+        seen = serve(lambda request: items({"ts": "2026-01-01T00:00:00Z", "id": "a", "t": 1}))
+        lines = list(pages("x", endpoint(), ApiCredentials(), date(2025, 1, 1), date(2025, 12, 31)))
+        assert len(seen) == len(lines) == 4  # one page per 92-day span, none refused
+
+
 class TestRefusals:
     @pytest.mark.parametrize(
         ("response", "why"),
@@ -166,8 +189,8 @@ class TestRefusals:
     def test_the_window_and_params_are_checked_before_any_request(self, serve) -> None:  # type: ignore[no-untyped-def]
         seen = serve(lambda request: items())
         target = ApiTarget(name="x", endpoint=endpoint(), credentials=ApiCredentials())
-        with pytest.raises(PullRefused, match="at most 92"):
-            target.chunks(date(2026, 1, 1), date(2026, 12, 31), {})
+        with pytest.raises(PullRefused, match="before the start"):
+            target.chunks(date(2026, 12, 31), date(2026, 1, 1), {})
         with pytest.raises(PullRefused, match="no pull parameters"):
             target.check(DAY, DAY, {"utility": "water"})
         assert seen == []

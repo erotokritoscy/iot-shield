@@ -120,6 +120,16 @@ class TestSave:
         assert upstream.requests == []  # checked, not read
         assert [j["job_id"] for j in client.get("/jobs").json()] == [job["job_id"]]
 
+    def test_a_window_of_years_is_saved(self, client: TestClient, source_id: str) -> None:
+        # ADR-0052: no window limit, fixed or rolling. A job is where a pull of years belongs.
+        windows = [
+            {"kind": "fixed", "start": "2023-01-01", "end": "2026-05-04"},
+            {"kind": "rolling", "days": 1220, "through": "yesterday"},
+        ]
+        for window in windows:
+            body = job_body(source_id, sources=[{"source_id": source_id, "window": window}])
+            assert _create(client, body)["sources"][0]["window"]["kind"] == window["kind"]
+
     def test_a_scheduled_job_knows_when_it_next_runs(
         self, client: TestClient, source_id: str
     ) -> None:
@@ -168,17 +178,6 @@ class TestSave:
                     ]
                 },
                 "source 1: data source not found",
-            ),
-            (
-                {
-                    "sources": [
-                        {
-                            "source_id": "SOURCE",
-                            "window": {"kind": "fixed", "start": "2026-01-01", "end": "2026-12-31"},
-                        }
-                    ]
-                },
-                "at most 92",
             ),
         ],
     )

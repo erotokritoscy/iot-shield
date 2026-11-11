@@ -294,6 +294,11 @@ its alert sat in Triage.
 
 Auto-discovered assets say so in the picker. Discovery is visible, never implied.
 
+The chart and the table read **every** row in the time range, a server page (10,000) at a time
+(`readApi.allEvents` / `allDetections`), rather than a capped list. The cap kept the newest 5,000,
+so the axis began at an arbitrary instant rather than where the record does. Nothing limits the
+size now: the time range is how to ask for less.
+
 ### Data health
 
 What was ingested and what could not be parsed. Malformed inputs are captured, never dropped, and
@@ -414,7 +419,7 @@ spec and inputs are still exactly the scenario's; change anything and the promis
 | Quiet network (control) | three quiet files, every detector on | 0 detections — any is a false alarm |
 | Broken input | `broken_syslog.log` | 6 events, 4 malformed (see Data health) |
 | SensiPro water meters | live pull: water, 2023-07-01 → 2023-07-30 | none promised |
-| SensiPro electricity meters, one quarter | live pull: electricity, 2023-06-01 → 2023-08-31 (92 days, the maximum; ~1M rows — the deliberately slow one) | none promised |
+| SensiPro electricity meters, one quarter | live pull: electricity, 2023-06-01 → 2023-08-31 (92 days; ~1M rows — the deliberately slow one) | none promised |
 | Biology network flows | live pull: 2023-07-21 → 2023-07-22 | none promised |
 
 Those numbers are not captions: `tests/test_sample_data.py` runs every scenario through the real
@@ -547,6 +552,16 @@ organization has any. Picking one fills in the normalizer and format it names (o
 that names none, says so and leaves them); choosing another normalizer by hand clears the pick.
 Nothing about the pick is sent with the run.
 
+For an org admin, both **Data source** pickers (Pull's and Upload/Paste's) end with
+**+ Create new data source…**. It is an action, not a choice: it opens the Data sources page's
+own form in a **dialog** over Compose (`pages/datasources/SourceForm.tsx`, shared by both), so
+the chain composed so far stays on screen and the picker keeps what it held until a source is
+saved. A saved source is then chosen for that card, its reader filled in as if picked from the
+list. Pull is the one exception: a source with no connection and no HTTP API cannot be pulled
+from, so it is added but not chosen, and the card says so. Cancel, ×, Escape or a click on the
+backdrop closes the dialog without saving. A member cannot add data sources and is not offered
+the entry.
+
 A source set to *Pull* lists only the data sources with a **connection** (ADR-0042), and choosing
 one opens the **Pull** panel (`compose/PullPanel.tsx`):
 from/to dates, the connector's own params (SensiPro: utility), and a filterable device list
@@ -642,6 +657,15 @@ That file is not styling. It encodes decisions that have to survive any restyle:
 Every builder returns `null` for "there is nothing to draw", so the caller renders its empty state
 instead of an axis with no marks.
 
+**Every chart zooms with the mouse wheel**: scroll to zoom, drag to pan, double-click to reset.
+It is added once, in `components/Chart.tsx` through `charts/zoom.ts`, rather than by each builder,
+so a new chart is zoomable without anyone remembering to make it so. It is Vega-Lite's interval
+selection bound to the scales, which works only on a *continuous* position axis, so the axes are
+read off the spec: a time series zooms on both, a bar chart of counts per category on its count axis
+only, and a pie (no position axis) not at all. A zoomable chart says so under its caption. The one exception is Triage's severity chart, kept fixed (`zoom={false}`): a few bars read at a glance, where zooming would only cut them off. Over a
+chart the wheel zooms instead of scrolling the page. `charts/zoom.test.ts` compiles real specs
+through Vega-Lite and fails on any warning the binding adds.
+
 UTC needs two separate mechanisms in Vega-Lite and this is a standing trap: `scale: {type: "utc"}`
 fixes the axis ticks and nothing else, while tooltips are formatted independently and come out in
 the viewer's zone unless `timeUnit: "utc..."` carries UTC into the field. A tooltip is a rendered
@@ -705,6 +729,11 @@ npm run dev          # :5173, proxying /api -> :8000 and /pipeline -> :8100
 npm run check        # the gate: typecheck + lint + vitest + build
 npm run gen:types    # regenerate the TS view of both APIs after changing either one
 ```
+
+Rebuilding on change: `docker compose up -d --watch` (or `docker compose watch` beside a running
+stack) rebuilds and restarts `dashboard-web` whenever a file under `web/` changes, so :8080 always
+serves the current code. It is the production build, so a change shows up after a rebuild and a
+browser refresh, not as a hot reload.
 
 `npm run check` is to `web/` what `scripts/check.sh` is to the Python side, and CI runs it as its own
 job. As of this writing it is green at **125 tests across 10 files**, with the production build

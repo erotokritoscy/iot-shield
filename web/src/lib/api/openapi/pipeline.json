@@ -408,7 +408,7 @@
           "data sources"
         ],
         "summary": "Pull Source",
-        "description": "How many rows a date range of this source holds, and its first lines. Read-only.\n\nThe rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in\nbatches, so there is no row limit here \u2014 only the 92-day window.",
+        "description": "How many rows a date range of this source holds, and its first lines. Read-only.\n\nThe rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in\nbatches, so there is no row limit here, and no limit on the window (ADR-0052).",
         "operationId": "pull_source_data_sources__source_id__pull_post",
         "parameters": [
           {
@@ -4464,7 +4464,6 @@
           },
           "days": {
             "type": "integer",
-            "maximum": 92.0,
             "minimum": 1.0,
             "title": "Days",
             "description": "How many days the window covers"
@@ -4859,7 +4858,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SourceInput",
-        "description": "One source's input, aligned to ``spec.sources`` by position: its text, or a pull.\n\nA pull is a *reference* (ADR-0047): the server streams the window from the source's\ndatabase during the run, a batch of assets at a time, so it has no size limit beyond the\npull's 92-day window. ``content`` is text the caller already holds \u2014 an upload, a paste \u2014\nand keeps its ceiling, because it travels in this request."
+        "description": "One source's input, aligned to ``spec.sources`` by position: its text, or a pull.\n\nA pull is a *reference* (ADR-0047): the server streams the window from the source's\ndatabase during the run, a batch of assets at a time, so it has no size limit and no window\nlimit (ADR-0052). ``content`` is text the caller already holds \u2014 an upload, a paste \u2014\nand keeps its ceiling, because it travels in this request."
       },
       "SourceSpec": {
         "properties": {

@@ -13,7 +13,7 @@ Serve: ``python -m iotshield.jobs.worker`` (compose's ``worker`` service). Each 
 
 Rows are claimed with ``FOR UPDATE SKIP LOCKED`` on Postgres, so more than one worker may run;
 SQLite (tests) has no row locks and needs none with a single worker. Nothing here waits on a
-browser, so a job has no nginx timeout — only the run's own limits (the 92-day window).
+browser, so a job has no nginx timeout — which is where a pull of years belongs (ADR-0052).
 """
 
 import logging

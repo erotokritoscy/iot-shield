@@ -81,6 +81,8 @@ describe("paging through the whole queue", () => {
     renderApp("/");
     expect(await screen.findByText("Alert count per severity.")).toBeInTheDocument();
     expect(screen.queryByText(/highest-priority/)).not.toBeInTheDocument();
+    // The one chart left unzoomable, as it was.
+    expect(screen.queryByTestId("chart_zoom_hint")).not.toBeInTheDocument();
     // The severity filter names how many each choice holds, from the same counts.
     expect(await screen.findByRole("option", { name: "high (11,000)" })).toBeInTheDocument();
   });
@@ -514,6 +516,33 @@ describe("Assets & telemetry", () => {
     expect(
       await screen.findByText("No detections for this asset in this time range."),
     ).toBeInTheDocument();
+  });
+
+  it("reads every reading, a server page at a time, and says nothing was cut", async () => {
+    // The chart used to plot the newest 5,000 and warn that the axis started mid-record.
+    const total = 12_345;
+    const readings = Array.from({ length: total }, (_, index) => ({
+      ...seed.events[0],
+      event_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      timestamp: new Date(Date.UTC(2026, 6, 7, 12) + index * 1000).toISOString(),
+    }));
+    const offsets: (string | null)[] = [];
+    server.use(
+      http.get(`${API}/events`, ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        offsets.push(params.get("offset"));
+        const offset = Number(params.get("offset"));
+        const limit = Number(params.get("limit"));
+        return HttpResponse.json(readings.slice(offset, offset + limit) as JsonBodyType, {
+          headers: { "X-Total-Count": String(total) },
+        });
+      }),
+    );
+    renderApp("/assets");
+    expect(await screen.findByText(/Red bands\/rules: telemetry detection windows/)).toBeInTheDocument();
+    expect(offsets).toEqual(["0", "10000"]);
+    expect(screen.getByTestId("chart_zoom_hint")).toBeInTheDocument();
+    expect(screen.queryByText(/Showing the first/)).not.toBeInTheDocument();
   });
 
   it("shows the discovery empty state when the inventory is empty", async () => {

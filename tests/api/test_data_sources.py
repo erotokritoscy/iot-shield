@@ -325,7 +325,7 @@ class TestConnections:
     @pytest.mark.parametrize(
         ("change", "says"),
         [
-            ({"start": "2023-01-01", "end": "2023-12-31"}, "source 1: 365 days asked for"),
+            ({"start": "2023-12-31", "end": "2023-01-01"}, "source 1: the end date is before"),
             ({"params": {"utility": "gas"}}, "invalid pull parameters"),
         ],
     )
@@ -383,7 +383,6 @@ class TestConnections:
         ("body", "status", "says"),
         [
             ({"start": "2023-07-02", "end": "2023-07-01"}, 422, "before the start"),
-            ({"start": "2023-01-01", "end": "2023-12-31"}, 422, "at most 92"),
             (
                 {"start": "2023-07-01", "end": "2023-07-01", "params": {"utility": "gas"}},
                 422,
@@ -398,6 +397,18 @@ class TestConnections:
         source = _source(connected, "sensipro")
         response = connected.post(f"/data-sources/{source['source_id']}/pull", json=body)
         assert response.status_code == status and says in response.text
+
+    def test_a_window_of_years_is_summarized_not_refused(self, connected: TestClient) -> None:
+        # ADR-0052: the connector reads it a quarter per query; the fixture lives in July 2023.
+        source = _source(connected, "sensipro")
+        url = f"/data-sources/{source['source_id']}/pull"
+        years = connected.post(url, json={"start": "2021-01-01", "end": "2024-05-04"})
+        month = connected.post(url, json={"start": "2023-07-01", "end": "2023-07-31"})
+        assert years.status_code == 200, years.text
+        same = {"origin"}  # names the window asked for, so it differs by design
+        assert {k: v for k, v in years.json().items() if k not in same} == {
+            k: v for k, v in month.json().items() if k not in same
+        }
 
     def test_a_source_without_a_connection_has_nothing_to_pull(self, connected: TestClient) -> None:
         plain = connected.post("/data-sources", json=METERS).json()

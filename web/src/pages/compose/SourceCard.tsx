@@ -13,18 +13,23 @@
  * read of the content by the source's own normalizer (`/runs/preview`), so a file in the wrong
  * format is an error here, on the source it belongs to, rather than a malformed pile after the run.
  */
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Plus } from "lucide-react";
 import * as React from "react";
 
 import { ParamFields } from "@/components/ParamFields";
+import { QueryState } from "@/components/QueryState";
 import { Button, Field, Select, Textarea } from "@/components/ui/controls";
+import { Dialog } from "@/components/ui/dialog";
 import { InfoLines, InfoTip } from "@/components/ui/info";
 import { Collapsible, Notice, Spinner } from "@/components/ui/surfaces";
 import { describeError } from "@/lib/api/http";
 import type { ConnectionInfo, DataSourceInfo, ModuleInfo, PreviewResponse, PullResponse } from "@/lib/api/types";
+import { isOrgAdmin, useAuth } from "@/lib/auth";
 import { readTextFile } from "@/lib/files";
 import { initialValues } from "@/lib/params";
 import { fetchSampleText, type Sample } from "@/lib/samples";
+import { keys, useModules } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 import { ADAPTER_HELP, FIELD_HELP, FORMAT_HELP, paramHelp } from "@/pages/compose/help";
 import {
@@ -41,8 +46,11 @@ import {
   type SourceRow,
 } from "@/pages/compose/model";
 import { PullPanel } from "@/pages/compose/PullPanel";
+import { SourceForm } from "@/pages/datasources/SourceForm";
 
 const NO_SAMPLE = "";
+/** The last entry of a data source dropdown, for an org admin: not a source, a way to add one. */
+export const CREATE_SOURCE = "__create_source__";
 const PREVIEW_LINES = 5;
 
 /** The ways a source's data can arrive, in the order offered, with what each one is. */
@@ -108,9 +116,57 @@ function ModeChoice({
 }
 
 const sourceLabel = (sources: readonly DataSourceInfo[]) => (id: string) => {
+  if (id === CREATE_SOURCE) return "+ Create new data source…";
   const source = sources.find((item) => item.source_id === id);
   return source ? `${source.type} · ${source.name}` : "— none —";
 };
+
+/**
+ * Add a data source without leaving Compose: the Data sources page's own form in a dialog, so
+ * the chain composed so far stays on screen. The saved source is put straight into the cached
+ * list (the refetch the form triggers follows), so the picker can show it the moment it closes.
+ */
+function CreateSourceDialog({
+  open,
+  connections,
+  onClose,
+  onCreated,
+}: {
+  readonly open: boolean;
+  readonly connections: readonly ConnectionInfo[];
+  readonly onClose: () => void;
+  readonly onCreated: (source: DataSourceInfo) => void;
+}) {
+  const queryClient = useQueryClient();
+  const modules = useModules(open);
+  return (
+    <Dialog
+      open={open}
+      title="Create a data source"
+      description="Added to your organization's data sources, as on the Data sources page, and chosen for this source."
+      onClose={onClose}
+      data-testid="create_source"
+    >
+      <QueryState query={modules} label="Loading the normalizers…">
+        {(catalogue) => (
+          <SourceForm
+            normalizers={catalogue.normalizers}
+            connections={connections}
+            editing={null}
+            onSaved={(saved) => {
+              queryClient.setQueryData<DataSourceInfo[]>(keys.dataSources, (old) =>
+                old && !old.some((item) => item.source_id === saved.source_id) ? [...old, saved] : old,
+              );
+              onCreated(saved);
+            }}
+            onDone={onClose}
+            onCancel={onClose}
+          />
+        )}
+      </QueryState>
+    </Dialog>
+  );
+}
 
 const readerHint = (source: DataSourceInfo) =>
   source.normalizer
@@ -268,6 +324,9 @@ export function SourceCard({
   const [loadingSample, setLoadingSample] = React.useState(false);
   const chosenSample = samples.find((sample) => sample.file === row.fileName);
   const lines = nonBlank(row.content);
+  const canCreateSource = isOrgAdmin(useAuth().data);
+  const [creatingSource, setCreatingSource] = React.useState(false);
+  const [createdNote, setCreatedNote] = React.useState<string | null>(null);
 
   const pickNormalizer = (name: string) => {
     const next = normalizers.find((item) => item.name === name);
@@ -295,7 +354,25 @@ export function SourceCard({
       (mode === "pull" ? pullable.length > 0 : mode === "sample" ? samples.length > 0 : true),
   );
   const pickDataSource = (sourceId: string) => {
-    const source = dataSources.find((item) => item.source_id === sourceId);
+    setCreatedNote(null);
+    if (sourceId === CREATE_SOURCE) {
+      setCreatingSource(true); // the choice made so far stands until a source is saved
+      return;
+    }
+    applySource(dataSources.find((item) => item.source_id === sourceId));
+  };
+  // A source made in the dialog is chosen at once — unless this way cannot use it.
+  const onCreated = (source: DataSourceInfo) => {
+    if (row.mode === "pull" && !isPullable(source, connections)) {
+      setCreatedNote(
+        `“${source.name}” was added, but it has no connection or HTTP API, so there is nothing to pull from it.`,
+      );
+      return;
+    }
+    applySource(source);
+  };
+  const createOption = canCreateSource ? [CREATE_SOURCE] : [];
+  const applySource = (source: DataSourceInfo | undefined) => {
     if (source === undefined) {
       onChange({ ...row, dataSource: null, pull: null });
       return;
@@ -407,12 +484,17 @@ export function SourceCard({
             <Select
               id={`src_${index}_source`}
               data-testid={`src_${index}_source`}
-              options={[NO_SAMPLE, ...pullable.map((source) => source.source_id)]}
+              options={[NO_SAMPLE, ...pullable.map((source) => source.source_id), ...createOption]}
               labelFor={sourceLabel(pullable)}
               value={chosenSource?.source_id ?? NO_SAMPLE}
               onChange={(event) => pickDataSource(event.target.value)}
             />
           </Field>
+          {createdNote ? (
+            <p className="caption" data-testid={`src_${index}_created_note`}>
+              {createdNote}
+            </p>
+          ) : null}
           {chosenSource && connection ? (
             <PullPanel
               key={chosenSource.source_id}
@@ -470,7 +552,7 @@ export function SourceCard({
               <Select
                 id={`src_${index}_source`}
                 data-testid={`src_${index}_source`}
-                options={[NO_SAMPLE, ...dataSources.map((source) => source.source_id)]}
+                options={[NO_SAMPLE, ...dataSources.map((source) => source.source_id), ...createOption]}
                 labelFor={sourceLabel(dataSources)}
                 value={chosenSource?.source_id ?? NO_SAMPLE}
                 onChange={(event) => pickDataSource(event.target.value)}
@@ -605,6 +687,13 @@ export function SourceCard({
           ) : null}
         </div>
       ) : null}
+
+      <CreateSourceDialog
+        open={creatingSource}
+        connections={connections}
+        onClose={() => setCreatingSource(false)}
+        onCreated={onCreated}
+      />
     </div>
   );
 }

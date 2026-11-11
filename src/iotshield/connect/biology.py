@@ -17,7 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, bindparam, text
 
-from iotshield.connect.port import ConnectorSpec, Device, row
+from iotshield.connect.port import ConnectorSpec, Device, row, time_slices
 
 COLUMNS: tuple[str, ...] = (
     "src_ip",
@@ -67,24 +67,28 @@ def _stream(
     columns = ", ".join(quote(column) for column in COLUMNS)
     where, binds = _where(engine, params)
     sql = f"SELECT {columns} FROM packets{where} ORDER BY {quote('timestamp')}, id"
-    with engine.connect() as connection:
-        result = connection.execution_options(stream_results=True, yield_per=5_000).execute(
-            _statement(sql, binds), {"start": start, "end": end, **binds}
-        )
-        # A flow record stands alone (the flow normalizer is line-wise), so no group: a chunk
-        # may end after any line.
-        for record in result:
-            yield None, row(record)
+    stmt = _statement(sql, binds)
+    # A long window is read a slice at a time (ADR-0052): the stream is ordered by time, so
+    # consecutive slices in order are the same stream, and no query sorts more than a quarter.
+    for first, after in time_slices(start, end):
+        with engine.connect() as connection:
+            result = connection.execution_options(stream_results=True, yield_per=5_000).execute(
+                stmt, {"start": first, "end": after, **binds}
+            )
+            # A flow record stands alone (the flow normalizer is line-wise), so no group: a
+            # chunk may end after any line.
+            for record in result:
+                yield None, row(record)
 
 
 def _count(engine: Engine, start: datetime, end: datetime, params: BiologyParams) -> int:
     where, binds = _where(engine, params)
+    stmt = _statement(f"SELECT COUNT(*) FROM packets{where}", binds)
+    total = 0
     with engine.connect() as connection:
-        value = connection.execute(
-            _statement(f"SELECT COUNT(*) FROM packets{where}", binds),
-            {"start": start, "end": end, **binds},
-        ).scalar_one()
-    return int(value)
+        for first, after in time_slices(start, end):
+            total += connection.execute(stmt, {"start": first, "end": after, **binds}).scalar_one()
+    return int(total)
 
 
 def _devices(engine: Engine, _params: BiologyParams) -> list[Device]:

@@ -10,7 +10,6 @@ import {
   EVERY_LABEL,
   fixedButScheduled,
   localTime,
-  MAX_JOB_DAYS,
   resolveWindow,
   WEEKDAYS,
   type Every,
@@ -88,7 +87,6 @@ export function JobForm({
                     id={`job-days-${index}`}
                     data-testid={`job_days_${index}`}
                     min={1}
-                    max={MAX_JOB_DAYS}
                     value={window.days}
                     onChange={(event) => setWindow(index, { ...window, days: event.target.value })}
                   />

@@ -405,7 +405,9 @@ every meter is an ordinary run. The saved run records the pull, and Open in Comp
 
 Days are the source's own calendar (SensiPro: Cyprus time, Biology: UTC), both inclusive. Every
 session is read-only with a 30 s query timeout (SensiPro is read 100 meters per query, so no one
-query sorts a whole fleet). A window over 92 days is a 422. A database that does not answer is a
+query sorts a whole fleet). There is **no window limit** (ADR-0052): a longer window is read as
+more queries of the same size (SensiPro shrinks the meter group in proportion, Biology and an
+API read it a quarter at a time). An end before the start is a 422. A database that does not answer is a
 502 naming the connection and nothing else — before the run or during it, in which case nothing
 was stored. A connection not declared, or reserved for another organization, is a 422 either way.
 
@@ -416,7 +418,7 @@ such limit, because the worker runs it and no request waits.
 ## Jobs (ADR-0050)
 
 A job is a chain whose inputs are all pulls, saved to run again. Each pull has a window rule —
-`{"kind": "fixed", "start", "end"}` or `{"kind": "rolling", "days": 1..92, "through":
+`{"kind": "fixed", "start", "end"}` or `{"kind": "rolling", "days": 1.., "through":
 "yesterday" | "today"}`, resolved in UTC when the run starts — and the job an optional
 `schedule`: `{"every": "hour" | "day" | "week", "minute", "hour", "weekday"}` (UTC, 0 = Monday).
 

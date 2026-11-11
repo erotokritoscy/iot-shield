@@ -59,8 +59,8 @@ class SourceInput(BaseModel):
     """One source's input, aligned to ``spec.sources`` by position: its text, or a pull.
 
     A pull is a *reference* (ADR-0047): the server streams the window from the source's
-    database during the run, a batch of assets at a time, so it has no size limit beyond the
-    pull's 92-day window. ``content`` is text the caller already holds — an upload, a paste —
+    database during the run, a batch of assets at a time, so it has no size limit and no window
+    limit (ADR-0052). ``content`` is text the caller already holds — an upload, a paste —
     and keeps its ceiling, because it travels in this request.
     """
 

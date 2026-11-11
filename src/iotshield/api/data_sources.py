@@ -457,7 +457,7 @@ def create_data_sources_router() -> APIRouter:
         """How many rows a date range of this source holds, and its first lines. Read-only.
 
         The rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in
-        batches, so there is no row limit here — only the 92-day window.
+        batches, so there is no row limit here, and no limit on the window (ADR-0052).
         """
         source, target = pull_target(source_id, session, org_id=account.org_id)
         try:

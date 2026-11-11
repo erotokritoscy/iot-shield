@@ -17,7 +17,7 @@ export const FIELD_HELP = {
   pullFrom:
     "The first day to pull, in the source's own clock (SensiPro: Cyprus time; Biology: UTC). Included.",
   pullTo:
-    "The last day to pull, included. One pull covers at most 92 days, with no limit on rows: the run reads the window from the database itself, a batch at a time.",
+    "The last day to pull, included. There is no limit on days or rows: the run reads the window from the source itself, a quarter per query and a batch at a time. A window of years can take longer than an interactive run allows — save it as a job instead.",
   pullDevices:
     "Narrow the pull to some meters or hosts. Pick several with Ctrl/⌘-click; pick none to pull every one. The filter box only changes what is listed.",
   sample:

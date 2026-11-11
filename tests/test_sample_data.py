@@ -18,7 +18,6 @@ import pytest
 
 from iotshield._paths import REPO_ROOT
 from iotshield.connect.connections import load_connections
-from iotshield.connect.port import MAX_PULL_DAYS
 from iotshield.connect.registry import CONNECTORS
 from iotshield.pipeline.compat import check_compatibility
 from iotshield.pipeline.config import PipelineSpec
@@ -82,7 +81,7 @@ def test_each_pull_scenario_is_a_pull_and_a_chain_that_would_be_accepted(
         connector = CONNECTORS[declared[pull["connection"]].connector]
         connector.params_type.model_validate(pull["params"])
         start, end = date.fromisoformat(pull["start"]), date.fromisoformat(pull["end"])
-        assert 0 <= (end - start).days < MAX_PULL_DAYS, scenario["id"]
+        assert start <= end, scenario["id"]
         sources.append(
             {"normalizer": connector.normalizer, "source_format": connector.source_format}
         )

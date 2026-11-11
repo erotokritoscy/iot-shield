@@ -5,7 +5,6 @@ import {
   Notice,
   PageHeader,
   Section,
-  Truncated,
 } from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { telemetryTimeline } from "@/charts/specs";
@@ -82,27 +81,18 @@ function AssetDetail({
       </p>
 
       <QueryState query={events} label="Loading telemetry…">
-        {(eventPage) => (
+        {(readings) => (
           <QueryState
             query={telemetryDetections}
             label="Loading telemetry detections…"
           >
-            {(detectionPage) => {
-              const spec = telemetryTimeline(
-                eventPage.rows,
-                detectionPage.rows,
-                palette,
-              );
+            {(telemetryFindings) => {
+              const spec = telemetryTimeline(readings, telemetryFindings, palette);
               return (
                 <>
-                  {/* The server orders events `timestamp DESC` and *then* limits, so the cap
-                      keeps the NEWEST readings — which means a truncated chart silently
-                      begins at an arbitrary instant rather than at the start of the record. */}
-                  <Truncated
-                    page={eventPage}
-                    noun="telemetry readings"
-                    order="the most recent window only, so the axis does not start where the data does"
-                  />
+                  {/* Every reading in the range, not a capped slice (`readApi.allEvents`):
+                      a cap kept the newest rows, so the axis began at an arbitrary instant
+                      rather than where the record does. */}
                   {spec === null ? (
                     <Notice tone="info">
                       No telemetry with numeric values for this asset
@@ -123,22 +113,17 @@ function AssetDetail({
       </QueryState>
 
       <QueryState query={allDetections} label="Loading detections…">
-        {(page) =>
-          page.rows.length === 0 ? (
+        {(detections) =>
+          detections.length === 0 ? (
             <Notice tone="info">
               No detections for this asset
               {isOpen(range) ? "" : " in this time range"}.
             </Notice>
           ) : (
             <Section title="Detections">
-              <Truncated
-                page={page}
-                noun="detections"
-                order="the most recent window only"
-              />
               <DataTable
                 columns={detectionColumns}
-                rows={page.rows}
+                rows={detections}
                 rowKey={(row, index) => row.detection_id ?? String(index)}
                 pageSize={PAGE_SIZE}
               />

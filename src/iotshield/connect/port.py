@@ -11,8 +11,10 @@ connection and nothing about where it is.
 and posted back with the run, which is what the 100,000-row ceiling protected; now a run reads
 the window itself, chunk by chunk (``pull_chunks``), and the browser is shown a count and a
 sample (``pull_summary``). There is no row ceiling: memory is bounded by the run's batching,
-not by refusing a large window. The 92-day window limit stays — it bounds a *query*, not a
-result.
+not by refusing a large window. There is no limit on the window either (ADR-0052): a long one
+is read as consecutive queries of at most ``SLICE_DAYS`` each (``time_slices``), so every query
+stays the size the connection's 30-second statement timeout was measured against, however many
+days the pull covers.
 
 The window is **calendar days in the source's own clock** — ``start`` inclusive, ``end``
 inclusive — because both shipped schemas store naive timestamps (SensiPro in Cyprus local
@@ -35,9 +37,13 @@ from iotshield.connect.connections import Connection, ConnectionUnavailable
 
 log = logging.getLogger(__name__)
 
-MAX_PULL_DAYS: Final = 92
-"""Longest window one pull may ask for: a quarter, which bounds the query as well as its
-result — a two-year scan of SensiPro's 5 million hourly rows is refused before it starts."""
+SLICE_DAYS: Final = 92
+"""Most days one *query* covers (ADR-0052). A pull may ask for any number of days; a connector
+reads a longer window as consecutive slices of this many (``time_slices``) — or, where its
+output must stay ordered by something other than time, shrinks another dimension in proportion
+(SensiPro's meters per query) — so no single query scans more than a quarter of a fleet's
+history. It used to be the longest window a pull could ask for, which refused a year outright
+to protect a query that slicing protects as well."""
 
 
 class PullRefused(ValueError):
@@ -122,10 +128,42 @@ def pull_window(start: date, end: date) -> tuple[datetime, datetime]:
 def _window(start: date, end: date) -> tuple[datetime, datetime]:
     if end < start:
         raise PullRefused("the end date is before the start date")
-    days = (end - start).days + 1
-    if days > MAX_PULL_DAYS:
-        raise PullRefused(f"{days} days asked for; one pull covers at most {MAX_PULL_DAYS}")
     return datetime.combine(start, time.min), datetime.combine(end + timedelta(days=1), time.min)
+
+
+def time_slices(
+    start: datetime, end: datetime, *, days: int | None = None
+) -> list[tuple[datetime, datetime]]:
+    """``[start, end)`` as consecutive half-open slices of at most ``days`` days, in order.
+
+    Each boundary is the next slice's start, so a row stamped exactly on one is read once, and
+    reading the slices in order yields the window in time order.
+    """
+    step = timedelta(days=days or SLICE_DAYS)
+    slices: list[tuple[datetime, datetime]] = []
+    at = start
+    while at < end:
+        slices.append((at, min(at + step, end)))
+        at += step
+    return slices
+
+
+def day_slices(start: date, end: date, *, days: int | None = None) -> list[tuple[date, date]]:
+    """``start``..``end`` (both inclusive) as consecutive inclusive spans of at most ``days``
+    (``SLICE_DAYS`` unless given)."""
+    span = timedelta(days=(days or SLICE_DAYS) - 1)
+    slices: list[tuple[date, date]] = []
+    at = start
+    while at <= end:
+        last = min(at + span, end)
+        slices.append((at, last))
+        at = last + timedelta(days=1)
+    return slices
+
+
+def window_days(start: datetime, end: datetime) -> int:
+    """Whole days ``[start, end)`` touches — what a connector sizes its queries by."""
+    return max(1, -((start - end) // timedelta(days=1)))
 
 
 def _unavailable(connection: Connection, exc: Exception) -> ConnectionUnavailable:

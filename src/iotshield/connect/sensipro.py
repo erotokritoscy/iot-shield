@@ -33,7 +33,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, bindparam, text
 
-from iotshield.connect.port import ConnectorSpec, Device, row
+from iotshield.connect.port import SLICE_DAYS, ConnectorSpec, Device, row, time_slices, window_days
 
 UNIT: dict[str, str] = {"electricity": "kWh", "water": "m3"}
 
@@ -58,12 +58,22 @@ class SensiproParams(BaseModel):
 _METER = "COALESCE(d.destination_address, CAST(d.id AS VARCHAR(32)))"
 
 METERS_PER_QUERY: Final = 100
-"""How many meters one query reads (ADR-0047). The stream must be ordered by meter — the
-normalizer differences each meter's counter in order — and one query sorted over a whole fleet
-and a quarter is millions of rows sorted before the first arrives, against the connection's
-30-second statement timeout. A group of meters is bounded by construction (100 meters x 92 days
-x 24 hours), and the groups follow the fleet's own meter order, so the whole stream is still
-ordered by meter."""
+"""How many meters one query reads over a window of up to ``SLICE_DAYS`` (ADR-0047). The stream
+must be ordered by meter — the normalizer differences each meter's counter in order — and one
+query sorted over a whole fleet and a quarter is millions of rows sorted before the first
+arrives, against the connection's 30-second statement timeout. A group of meters is bounded by
+construction (100 meters x 92 days x 24 hours), and the groups follow the fleet's own meter
+order, so the whole stream is still ordered by meter.
+
+A longer window cannot be cut by time without breaking that order (meter A's second quarter
+would arrive after meter B's first), so it shrinks the group instead (``meters_per_query``,
+ADR-0052): 1,220 days reads 7 meters a query, which is the same rows per query as 100 meters
+over a quarter."""
+
+
+def meters_per_query(days: int) -> int:
+    """Meters one query reads over ``days`` days: ``METERS_PER_QUERY`` scaled to keep its rows."""
+    return max(1, METERS_PER_QUERY * SLICE_DAYS // max(days, SLICE_DAYS))
 
 
 def _device_filter(params: SensiproParams) -> tuple[str, dict[str, Any]]:
@@ -102,8 +112,9 @@ WHERE a.from_timestamp >= :start AND a.from_timestamp < :end AND a.device_id IN 
 ORDER BY meter, a.from_timestamp
 """
     stmt = _expand(sql, "ids")
-    for offset in range(0, len(ids), METERS_PER_QUERY):
-        group = ids[offset : offset + METERS_PER_QUERY]
+    size = meters_per_query(window_days(start, end))
+    for offset in range(0, len(ids), size):
+        group = ids[offset : offset + size]
         with engine.connect() as connection:
             result = connection.execution_options(stream_results=True, yield_per=5_000).execute(
                 stmt, {"start": start, "end": end, "ids": group}
@@ -122,12 +133,15 @@ def _count(engine: Engine, start: datetime, end: datetime, params: SensiproParam
         "SELECT COUNT(*) FROM ascendinghourlyreading a JOIN devices d ON d.id = a.device_id "
         f"WHERE a.from_timestamp >= :start AND a.from_timestamp < :end AND d.unit = :unit{where}"
     )
+    stmt = _expand(sql, *binds)
+    total = 0
     with engine.connect() as connection:
-        value = connection.execute(
-            _expand(sql, *binds),
-            {"start": start, "end": end, "unit": UNIT[params.utility], **binds},
-        ).scalar_one()
-    return int(value)
+        # One count per slice (ADR-0052), so counting a long window is as bounded as reading it.
+        for first, after in time_slices(start, end):
+            total += connection.execute(
+                stmt, {"start": first, "end": after, "unit": UNIT[params.utility], **binds}
+            ).scalar_one()
+    return int(total)
 
 
 def _devices(engine: Engine, params: SensiproParams) -> list[Device]:

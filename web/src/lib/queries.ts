@@ -152,11 +152,12 @@ export const useMalformed = (range: TimeRange = OPEN) =>
 export const useEvents = (assetId: string | undefined, lane?: Lane, range: TimeRange = OPEN) =>
   useQuery({
     queryKey: keys.events(assetId ?? "", lane, range),
-    queryFn: () =>
-      readApi.events({
+    queryFn: ({ signal }) =>
+      readApi.allEvents({
         ...(assetId ? { assetId } : {}),
         ...(lane ? { lane } : {}),
         ...rangeQuery(range),
+        signal,
       }),
     enabled: Boolean(assetId),
     placeholderData: keepPreviousData,
@@ -165,11 +166,12 @@ export const useEvents = (assetId: string | undefined, lane?: Lane, range: TimeR
 export const useDetections = (assetId: string | undefined, lane?: Lane, range: TimeRange = OPEN) =>
   useQuery({
     queryKey: keys.detections(assetId ?? "", lane, range),
-    queryFn: () =>
-      readApi.detections({
+    queryFn: ({ signal }) =>
+      readApi.allDetections({
         ...(assetId ? { assetId } : {}),
         ...(lane ? { lane } : {}),
         ...rangeQuery(range),
+        signal,
       }),
     enabled: Boolean(assetId),
     placeholderData: keepPreviousData,

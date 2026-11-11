@@ -82,11 +82,16 @@ class TestWindows:
             date(2026, 11, 8),
         )
 
+    def test_a_rolling_window_of_years_is_accepted(self) -> None:
+        # ADR-0052: no window limit; the connector reads it a quarter per query.
+        window = RollingWindow(days=1220)
+        start, end = window.resolve(datetime(2026, 11, 11, tzinfo=UTC))
+        assert (end - start).days + 1 == 1220
+
     @pytest.mark.parametrize(
         "window",
         [
             {"kind": "rolling", "days": 0},
-            {"kind": "rolling", "days": 93},
             {"kind": "fixed", "start": "2026-11-03", "end": "2026-11-01"},
             {"kind": "weekly"},
         ],

@@ -121,6 +121,30 @@ async function cappedList<T>(
   return { rows: rows.slice(0, limit), truncated: rows.length > limit, limit };
 }
 
+/**
+ * Read a paged list WHOLE, a server page at a time, for a view that must not show a slice.
+ *
+ * The Assets page plots one device's readings on a clock, and a capped list there kept only
+ * the newest rows, so the axis began at an arbitrary instant rather than where the record
+ * does. Paging by `offset` is safe because every list ordering is total (`api/app.py:
+ * OffsetParam`). It stops on a short page, or once `X-Total-Count` is reached, so a list of
+ * exactly one page costs one request when the server reports its total. There is no ceiling:
+ * the time range is the caller's way to ask for less.
+ */
+async function wholeList<T>(
+  request: (page: { limit: number; offset: number }) => Promise<{ readonly data: readonly T[]; readonly total: number | null }>,
+): Promise<readonly T[]> {
+  const rows: T[] = [];
+  for (;;) {
+    const { data, total } = await request({ limit: SERVER_LIMIT_CEILING, offset: rows.length });
+    for (const row of data) rows.push(row);
+    if (data.length < SERVER_LIMIT_CEILING || (total !== null && rows.length >= total)) return rows;
+  }
+}
+
+/** The filters the whole-list reads take, beside a cancel signal from the query. */
+type WholeListOptions = { assetId?: string; lane?: Lane; signal?: AbortSignal } & TimeBounds;
+
 export const readApi = {
   health: (signal?: AbortSignal) =>
     apiRequest(READ_BASE, "/health", { schema: healthSchema, ...(signal ? { signal } : {}) }),
@@ -158,6 +182,40 @@ export const readApi = {
           end: options.end,
           limit,
         },
+      }),
+    ),
+
+  /** Every event matching the filters, however many (the Assets page's chart). */
+  allEvents: (options: WholeListOptions = {}) =>
+    wholeList(({ limit, offset }) =>
+      apiPage(READ_BASE, "/events", {
+        schema: eventsSchema,
+        query: {
+          asset_id: options.assetId,
+          lane: options.lane,
+          start: options.start,
+          end: options.end,
+          limit,
+          offset,
+        },
+        ...(options.signal ? { signal: options.signal } : {}),
+      }),
+    ),
+
+  /** Every detection matching the filters, however many (the Assets page). */
+  allDetections: (options: WholeListOptions = {}) =>
+    wholeList(({ limit, offset }) =>
+      apiPage(READ_BASE, "/detections", {
+        schema: detectionsSchema,
+        query: {
+          asset_id: options.assetId,
+          lane: options.lane,
+          start: options.start,
+          end: options.end,
+          limit,
+          offset,
+        },
+        ...(options.signal ? { signal: options.signal } : {}),
       }),
     ),
 

@@ -608,6 +608,9 @@ export function TriagePage() {
                 <Chart
                   spec={spec}
                   label="Alert count per severity"
+                  // Fixed on purpose: a handful of bars, read at a glance — zooming the count
+                  // axis would only cut bars off, and the wheel would stop scrolling the page.
+                  zoom={false}
                   // Counted by the server over the whole queue in scope (run and range), not
                   // drawn from the page on screen — and not narrowed by the severity and
                   // asset filters, which choose among these bars rather than redraw them.

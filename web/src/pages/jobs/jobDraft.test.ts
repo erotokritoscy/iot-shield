@@ -127,12 +127,18 @@ describe("the request body", () => {
     expect(jobProblem({ ...draftFromPulls([PULL], "ok"), ...change })).toBe(problem);
   });
 
-  it("refuses a rolling window of no days or more than 92", () => {
+  it("refuses a rolling window of no days or a fraction of one", () => {
     const base = draftFromPulls([PULL], "ok");
-    for (const days of ["0", "93", "2.5"]) {
+    for (const days of ["0", "2.5"]) {
       const draft = { ...base, windows: base.windows.map((w) => ({ ...w, kind: "rolling" as const, days })) };
-      expect(jobProblem(draft)).toMatch(/1 to 92 days/);
+      expect(jobProblem(draft)).toMatch(/whole number of days, at least 1/);
     }
+  });
+
+  it("accepts a rolling window of years (ADR-0052)", () => {
+    const base = draftFromPulls([PULL], "ok");
+    const draft = { ...base, windows: base.windows.map((w) => ({ ...w, kind: "rolling" as const, days: "1220" })) };
+    expect(jobProblem(draft)).toBeNull();
   });
 
   it("round-trips a saved job through the form", () => {

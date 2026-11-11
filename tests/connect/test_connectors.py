@@ -5,7 +5,8 @@ normalizer reads, row for row, or a pull would arrive on the Compose page as a p
 malformed records. So every pull here is fed through the real normalizer.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from iotshield.connect import (
 from iotshield.connect import port as port_module
 from iotshield.connect import sensipro as sensipro_module
 from iotshield.connect.connections import Connection, load_connections
+from iotshield.connect.port import SLICE_DAYS, day_slices, time_slices
 from iotshield.contracts import Lane
 from iotshield.flow import METADATA_KEY as FLOW_KEY
 from iotshield.flow import FlowRecord
@@ -177,11 +179,18 @@ class TestThePullRules:
         with pytest.raises(PullRefused, match="before the start"):
             pull(SENSIPRO, world.sensipro, JULY_1, date(2023, 6, 30), {}, max_chars=10**6)
 
-    def test_a_window_longer_than_a_quarter_is_refused_before_querying(self, world: World) -> None:
-        with pytest.raises(PullRefused, match="at most 92"):
-            pull(
-                SENSIPRO, world.sensipro, date(2023, 1, 1), date(2023, 12, 31), {}, max_chars=10**6
-            )
+    def test_a_window_of_years_is_read_whole(self, world: World) -> None:
+        # ADR-0052: no window limit. The fixture's rows all fall in July 2023, so a 1,220-day
+        # window around it reads exactly what that month does, from either connector.
+        years = (date(2021, 1, 1), date(2024, 5, 4))
+        assert (years[1] - years[0]).days + 1 == 1220
+        for spec, connection in ((SENSIPRO, world.sensipro), (BIOLOGY, world.biology)):
+            month = pull(spec, connection, JUNE_20, JULY_22, {}, max_chars=10**6)
+            long = pull(spec, connection, *years, {}, max_chars=10**6)
+            assert long.content == month.content, spec.name
+            # The count is of rows read, before SensiPro's filler hours are dropped.
+            counted = pull_summary(spec, connection, JUNE_20, JULY_22, {}).rows
+            assert pull_summary(spec, connection, *years, {}).rows == counted, spec.name
 
     def test_there_is_no_row_ceiling(self, world: World, monkeypatch: pytest.MonkeyPatch) -> None:
         # ADR-0047: a run streams the window and batches it, so a large window is no longer
@@ -265,8 +274,64 @@ class TestStreaming:
             next(chunks)
 
     def test_a_bad_window_is_refused_before_anything_is_read(self, world: World) -> None:
-        with pytest.raises(PullRefused, match="at most 92"):
-            next(pull_chunks(SENSIPRO, world.sensipro, date(2023, 1, 1), date(2023, 12, 31), {}))
+        with pytest.raises(PullRefused, match="before the start"):
+            next(pull_chunks(SENSIPRO, world.sensipro, date(2023, 12, 31), date(2023, 1, 1), {}))
+
+
+class TestSlicing:
+    """How a long window is read without any one query growing (ADR-0052)."""
+
+    def test_time_slices_cover_the_window_once_in_order(self) -> None:
+        start, end = datetime(2021, 1, 1), datetime(2024, 5, 5)
+        slices = time_slices(start, end)
+        assert slices[0][0] == start and slices[-1][1] == end
+        assert all(a[1] == b[0] for a, b in pairwise(slices))
+        assert all(after - first <= timedelta(days=SLICE_DAYS) for first, after in slices)
+        assert time_slices(start, start + timedelta(hours=1)) == [
+            (start, start + timedelta(hours=1))
+        ]
+
+    def test_day_slices_are_inclusive_and_never_share_a_day(self) -> None:
+        assert day_slices(JULY_1, JULY_1) == [(JULY_1, JULY_1)]
+        slices = day_slices(date(2021, 1, 1), date(2024, 5, 4))
+        assert len(slices) == 14
+        assert all(b[0] - a[1] == timedelta(days=1) for a, b in pairwise(slices))
+        assert all((last - first).days + 1 <= SLICE_DAYS for first, last in slices)
+
+    @pytest.mark.parametrize(
+        ("days", "meters"), [(1, 100), (92, 100), (184, 50), (365, 25), (1220, 7), (10**6, 1)]
+    )
+    def test_sensipro_shrinks_its_meter_group_to_keep_rows_per_query(
+        self, days: int, meters: int
+    ) -> None:
+        assert sensipro_module.meters_per_query(days) == meters
+
+    def test_sensipro_keeps_meter_order_over_a_long_window(
+        self, world: World, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # One meter per query at this length, and still one contiguous run per meter.
+        monkeypatch.setattr(sensipro_module, "METERS_PER_QUERY", 2)
+        assert sensipro_module.meters_per_query(1220) == 1
+        content = pull(
+            SENSIPRO, world.sensipro, date(2021, 1, 1), date(2024, 5, 4), {}, max_chars=10**6
+        ).content
+        meters = [line.split(",")[0] for line in content.splitlines()[1:]]
+        runs = [m for i, m in enumerate(meters) if i == 0 or meters[i - 1] != m]
+        assert runs == sorted(set(meters))
+
+    def test_biology_reads_a_window_split_across_slices_in_time_order(
+        self, world: World, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Slices of one day put the fixture's four flows into separate queries.
+        monkeypatch.setattr(port_module, "SLICE_DAYS", 1)
+        sliced = [
+            line
+            for chunk in pull_chunks(BIOLOGY, world.biology, JUNE_20, JULY_22, {})
+            for line in chunk.splitlines()[1:]
+        ]
+        monkeypatch.undo()
+        whole = pull(BIOLOGY, world.biology, JUNE_20, JULY_22, {}).content.splitlines()[1:]
+        assert sliced == whole and len(whole) == 4
 
 
 class TestSummary:

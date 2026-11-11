@@ -475,3 +475,146 @@ the matching meters. Sensors with the most detections, to try: `bw791`, `bw80b1`
 |---|---|
 | CICFlowMeter flows (98 flows, 8 detections) | http://localhost:8080/overview/it?start=2023-06-20&end=2023-07-22 |
 | The walkthrough's Zeek flows | http://localhost:8080/overview/it?start=2026-07-30&end=2026-08-03 |
+
+---
+
+# Manual test: mapping an HTTP API's response to events
+
+An HTTP API data source (ADR-0049) returns JSON in a shape nobody here chose, so you tell
+iotshield where things are in it. This is the **Mapping the response to events** part of the
+form. Each mapped record becomes one or more `normalized-jsonl` lines, which the `passthrough`
+normalizer reads, so a record that cannot be mapped is shown on **Data health** instead of
+being dropped. The expected events below are what `src/iotshield/connect/api/mapping.py`
+actually writes for each response.
+
+You need an **https** API that returns one of these responses for a window. A host on your LAN
+or `host.docker.internal` only works if it is listed in `IOTSHIELD_API_ALLOWED_HOSTS` in `.env`.
+Saving an API source that needs credentials also needs `IOTSHIELD_SECRET_KEY`.
+
+## Steps
+
+1. Sign in as an org **admin** and go to **Operate → Data sources**.
+2. Add a source. **Pull from:** `An HTTP API…`. Fill in the API URL, the authentication and
+   the window's **Start parameter** / **End parameter**.
+3. Under **Mapping the response to events**, fill in one of the examples below, then save.
+4. Go to **Operate → Compose & run**, choose **Pull** and pick the source. Choose a window and pull.
+   The sample of the first lines should match the example's *Expected events*.
+5. Run it, then open **Monitor → Data health** to see any malformed records.
+
+## Example 1: sensor readings (telemetry), nested JSON
+
+**The API returns:**
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "items": [
+      { "device": { "id": "pump-02" }, "time": "2026-11-10T08:00:00Z",
+        "readings": { "temp": 71.5, "pressure": 3.2 } },
+      { "device": { "id": "pump-02" }, "time": "2026-11-10T08:01:00Z",
+        "readings": { "temp": 84.0 } }
+    ]
+  }
+}
+```
+
+**Mapping:**
+
+| Field | Value | Why |
+|---|---|---|
+| Events are | Readings (telemetry) | these are numbers |
+| Records path | `data.items` | where the list is |
+| Timestamp path | `time` | inside each record |
+| Timestamp format | `iso` | `2026-11-10T08:00:00Z` |
+| Asset id path | `device.id` | nested: a dot goes one level deeper |
+| Metrics | `Temperature = readings.temp`<br>`Pressure = readings.pressure` | one line per metric: `name = path` |
+
+**Expected events** (one per metric per record):
+
+| Asset | Time (UTC) | Metric | Value |
+|---|---|---|---|
+| `pump-02` | 2026-11-10 08:00 | Temperature | 71.5 |
+| `pump-02` | 2026-11-10 08:00 | Pressure | 3.2 |
+| `pump-02` | 2026-11-10 08:01 | Temperature | 84.0 |
+| `pump-02` | 2026-11-10 08:01 | Pressure | **malformed**: `missing: readings.pressure` |
+
+The second record has no `pressure`. It is not silently dropped: it shows up on **Data health**
+with the path that was missing.
+
+## Example 2: log lines, epoch timestamps
+
+**The API returns** (the response itself is the list):
+
+```json
+[
+  { "ts": 1762761600, "host": "gw-01", "level": "WARN",
+    "text": "Failed password for root from 203.0.113.9" },
+  { "ts": 1762761660, "host": "gw-01", "level": "info", "text": "session closed" }
+]
+```
+
+**Mapping:**
+
+| Field | Value |
+|---|---|
+| Events are | Log lines |
+| Records path | *(blank: the response is the list)* |
+| Timestamp path | `ts` |
+| Timestamp format | `epoch_s` (use `epoch_ms` for milliseconds) |
+| Asset id path | `host` |
+| Message path | `text` |
+| Level path | `level` |
+
+**Expected events:**
+
+| Asset | Time (UTC) | Severity | Message |
+|---|---|---|---|
+| `gw-01` | 2025-11-10 08:00 | warning | Failed password for root from 203.0.113.9 |
+| `gw-01` | 2025-11-10 08:01 | info | session closed |
+
+`WARN` becomes `warning`. Common spellings are translated (`warn`, `err`, `crit`, `fatal`,
+`notice`, …), and a level that is not recognised is refused.
+
+## Example 3: local time with no time zone, numeric device id
+
+**The API returns:**
+
+```json
+[ { "t": "2026-11-10 10:00:00", "meter": 1203, "kwh": 0.62 } ]
+```
+
+**Mapping:**
+
+| Field | Value |
+|---|---|
+| Events are | Readings (telemetry) |
+| Records path | *(blank)* |
+| Timestamp path | `t` |
+| Timestamp format | `iso` |
+| Time zone | `Asia/Nicosia` |
+| Asset id path | `meter` |
+| Metrics | `Consumption = kwh` |
+
+**Expected events:**
+
+| Asset | Time (UTC) | Metric | Value |
+|---|---|---|---|
+| `1203` | 2026-11-10 08:00 | Consumption | 0.62 |
+
+- **The time is converted to UTC:** 10:00 Cyprus time is 08:00 UTC. With **Time zone** left
+  blank, a time with no zone is **refused** (malformed), because every timestamp must be UTC.
+- **The numeric id** `1203` becomes the text `"1203"`.
+
+## Path rules
+
+| Path | Means |
+|---|---|
+| `data.items` | the key `items` inside the key `data` |
+| `device.id` | the `id` inside `device` |
+| `sensors.0.id` | the `id` of the **first** item in the list `sensors` |
+| *(blank Records path)* | the response itself is the list |
+
+- Telemetry needs at least one metric, and at most 50.
+- A log mapping needs a **Message path**; the **Level path** is optional.
+- Only the telemetry and log lanes can be mapped. Flow data cannot come from an API source.

@@ -126,6 +126,9 @@ held. The report's top alerts are kept across batches with the engines' own rank
 The window bounds the *query* — how far back one pull scans — not the size of what comes back.
 It was not what refused a month of meters, and dropping it is a separate question.
 
+> **Superseded by ADR-0052 (2026-11-11).** There is no window limit now. A long window is read
+> as more queries of the same size, so the query this decision protected stays bounded.
+
 ## Measured
 
 A SensiPro-shaped window of hourly cumulative readings, through the meter normalizer,

@@ -38,6 +38,7 @@ from iotshield.connect.api.mapping import (
     records_of,
 )
 from iotshield.connect.connections import ConnectionUnavailable
+from iotshield.connect.port import day_slices
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +111,18 @@ def _read(client: httpx.Client, name: str, url: str, params: dict[str, str] | No
 def pages(
     name: str, endpoint: ApiEndpoint, credentials: ApiCredentials, start: date, end: date
 ) -> Iterator[Any]:
-    """Each response document of the window, in order, following ``next_path``."""
+    """Each response document of the window, in order, following ``next_path``.
+
+    A long window is asked for as consecutive spans of at most ``SLICE_DAYS`` (ADR-0052), so
+    ``MAX_PAGES`` bounds one span's paging rather than refusing a long window for its length.
+    """
+    for first, last in day_slices(start, end):
+        yield from _span_pages(name, endpoint, credentials, first, last)
+
+
+def _span_pages(
+    name: str, endpoint: ApiEndpoint, credentials: ApiCredentials, start: date, end: date
+) -> Iterator[Any]:
     try:
         check_url(endpoint.url, resolve=_resolver)
     except UrlRefused as exc:
@@ -144,7 +156,7 @@ def pages(
             except UrlRefused as exc:
                 raise _failure(name, str(exc)) from exc
             params = None  # a next-page URL carries its own query
-        raise _failure(name, f"more than {MAX_PAGES} pages in one window")
+        raise _failure(name, f"more than {MAX_PAGES} pages in one {start}..{end} request")
 
 
 def api_stream(

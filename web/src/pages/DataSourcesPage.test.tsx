@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionInfo, DataSourceInfo, MeResponse } from "@/lib/api/types";
 import * as seed from "@/test/fixtures";
 import { captured, PIPELINE, server } from "@/test/msw";
+import { CREATE_SOURCE } from "@/pages/compose/SourceCard";
 import { renderApp } from "@/test/render";
 
 const CAMERAS: DataSourceInfo = {
@@ -415,7 +416,8 @@ describe("Compose — picking a data source", () => {
     const options = within(await screen.findByTestId("src_0_source"))
       .getAllByRole("option")
       .map((option) => option.textContent);
-    expect(options).toEqual(["— none —", "OT · SensiPro meters"]);
+    // The cameras have no connection, so only the meters are offered — then a way to add another.
+    expect(options).toEqual(["— none —", "OT · SensiPro meters", "+ Create new data source…"]);
   });
 
   it("sends the run the pull to read, never the rows (ADR-0047)", async () => {
@@ -469,7 +471,7 @@ describe("Compose — picking a data source", () => {
       http.post(`${PIPELINE}/data-sources/:id/pull`, () =>
         HttpResponse.json(
           {
-            detail: "365 days asked for; one pull covers at most 92",
+            detail: "invalid pull parameters for sensipro: utility: Input should be 'electricity' or 'water'",
           },
           { status: 422 },
         ),
@@ -477,7 +479,7 @@ describe("Compose — picking a data source", () => {
     );
     await composeWith("pull");
     await pullMeters("2023-07-31");
-    expect(await screen.findByText(/one pull covers at most 92/)).toBeInTheDocument();
+    expect(await screen.findByText(/invalid pull parameters for sensipro/)).toBeInTheDocument();
     expect(screen.queryByTestId("src_0_pulled")).not.toBeInTheDocument();
   });
 
@@ -532,6 +534,100 @@ const LOG_API: DataSourceInfo = {
   reader_params: { lane: "log" },
   created_at: "2026-11-09T09:00:00+00:00",
 };
+
+describe("Compose — creating a data source in a dialog", () => {
+  const CREATED_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const dialog = () => screen.findByRole("dialog", { name: "Create a data source" });
+
+  async function openDialog(mode: "pull" | "paste"): Promise<HTMLElement> {
+    await composeWith(mode);
+    const picker = await screen.findByTestId("src_0_source");
+    await userEvent.selectOptions(picker, CREATE_SOURCE);
+    return picker;
+  }
+
+  it("ends the picker with the entry and opens the form over Compose, keeping the choice", async () => {
+    register([CAMERAS]);
+    const picker = await openDialog("paste");
+    expect(within(picker).getAllByRole("option").at(-1)).toHaveTextContent("+ Create new data source…");
+    const form = await dialog();
+    expect(within(form).getByTestId("source_form")).toBeInTheDocument();
+    expect(within(form).getByTestId("ds_name")).toHaveFocus();
+    expect(picker).toHaveValue(""); // the entry is an action, never a choice
+    expect(screen.getByTestId("src_0_card")).toBeInTheDocument(); // Compose stayed put
+  });
+
+  it("saves the source, closes, and chooses it with the reader it names", async () => {
+    register([CAMERAS]);
+    const picker = await openDialog("paste");
+    const form = await dialog();
+    await userEvent.type(within(form).getByTestId("ds_name"), "Gateway logs");
+    await userEvent.selectOptions(within(form).getByTestId("ds_normalizer"), "flow");
+    await userEvent.selectOptions(within(form).getByTestId("ds_format"), "zeek-conn");
+    await userEvent.click(within(form).getByTestId("ds_save"));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(sent.posted).toEqual([expect.objectContaining({ name: "Gateway logs", normalizer: "flow" })]);
+    expect(picker).toHaveValue(CREATED_ID);
+    expect(screen.getByTestId("src_0_norm")).toHaveValue("flow");
+    expect(screen.getByTestId("src_0_fmt")).toHaveValue("zeek-conn");
+  });
+
+  it("chooses a new connected source for a pull and opens its pull panel", async () => {
+    register([METERS]);
+    connections();
+    const picker = await openDialog("pull");
+    const form = await dialog();
+    await userEvent.type(within(form).getByTestId("ds_name"), "More meters");
+    await userEvent.selectOptions(within(form).getByTestId("ds_connection"), "sensipro");
+    await userEvent.click(within(form).getByTestId("ds_save"));
+
+    await waitFor(() => expect(picker).toHaveValue(CREATED_ID));
+    expect(await screen.findByTestId("src_0_pull_start")).toBeInTheDocument();
+  });
+
+  it("says why a new source with nothing to pull from is not chosen for a pull", async () => {
+    register([METERS]);
+    connections();
+    const picker = await openDialog("pull");
+    const form = await dialog();
+    await userEvent.type(within(form).getByTestId("ds_name"), "Paper logbook");
+    await userEvent.click(within(form).getByTestId("ds_save"));
+
+    expect(await screen.findByTestId("src_0_created_note")).toHaveTextContent(
+      "“Paper logbook” was added, but it has no connection or HTTP API, so there is nothing to pull from it.",
+    );
+    expect(picker).toHaveValue("");
+  });
+
+  it.each([
+    ["Cancel", () => userEvent.click(screen.getByTestId("ds_cancel"))],
+    ["the close button", () => userEvent.click(screen.getByTestId("create_source_close"))],
+    ["Escape", () => userEvent.keyboard("{Escape}")],
+  ])("closes on %s without saving anything", async (_how, close) => {
+    register([CAMERAS]);
+    const picker = await openDialog("paste");
+    await userEvent.type(within(await dialog()).getByTestId("ds_name"), "Never mind");
+    await close();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(sent.posted).toEqual([]);
+    expect(picker).toHaveValue("");
+  });
+
+  it("is not offered to a member, who cannot add data sources", async () => {
+    const member: MeResponse = {
+      user_id: "22222222-2222-4222-8222-222222222222",
+      username: "bob",
+      role: "member",
+      organization: { org_id: "acme", name: "Acme" },
+    };
+    server.use(http.get(`${PIPELINE}/auth/me`, () => HttpResponse.json(member)));
+    register([CAMERAS]);
+    await composeWith("paste");
+    const options = within(await screen.findByTestId("src_0_source")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["— none —", "IT · Camera network"]);
+  });
+});
 
 describe("Data sources page — an HTTP API (ADR-0049)", () => {
   it("registers an API with a key and a mapping, sending the key once", async () => {

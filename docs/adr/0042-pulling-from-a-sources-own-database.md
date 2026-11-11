@@ -171,4 +171,5 @@ database itself, streamed and judged a batch of assets at a time, so D5's **Most
 and **Most characters** limits are gone for pulls, and `MAX_PULL_ROWS` was removed. `Fetch` became
 `stream` + `count`; `POST /data-sources/{id}/pull` now returns a row count and a sample rather
 than the content. The connect and query timeouts, read-only sessions and the 92-day window stand.
-See ADR-0047.
+See ADR-0047. *(2026-11-11: the 92-day window is gone too. A long window is read a quarter per
+query — ADR-0052.)*

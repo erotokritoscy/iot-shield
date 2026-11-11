@@ -17,8 +17,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from iotshield.connect import MAX_PULL_DAYS
-
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
@@ -47,7 +45,7 @@ class RollingWindow(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["rolling"] = "rolling"
-    days: int = Field(ge=1, le=MAX_PULL_DAYS, description="How many days the window covers")
+    days: int = Field(ge=1, description="How many days the window covers")
     through: Literal["yesterday", "today"] = Field(
         default="yesterday",
         description="Its last day: yesterday (complete days only) or today (so far)",

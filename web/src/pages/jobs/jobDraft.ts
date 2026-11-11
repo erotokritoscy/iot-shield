@@ -12,7 +12,6 @@ export type WindowKind = "fixed" | "rolling";
 export type Through = "yesterday" | "today";
 export type Every = "none" | "hour" | "day" | "week";
 
-export const MAX_JOB_DAYS = 92;
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 export const EVERY: readonly Every[] = ["none", "hour", "day", "week"];
 export const EVERY_LABEL: Record<Every, string> = {
@@ -127,8 +126,8 @@ export function jobProblem(draft: JobDraft): string | null {
     const label = draft.windows.length > 1 ? `Source ${index + 1}: ` : "";
     if (window.kind === "rolling") {
       const days = Number(window.days);
-      if (!Number.isInteger(days) || days < 1 || days > MAX_JOB_DAYS) {
-        return `${label}a rolling window is 1 to ${MAX_JOB_DAYS} days.`;
+      if (!Number.isInteger(days) || days < 1) {
+        return `${label}a rolling window is a whole number of days, at least 1.`;
       }
     } else if (!window.start || !window.end || window.end < window.start) {
       return `${label}the window's end is before its start.`;

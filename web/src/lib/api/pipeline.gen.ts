@@ -210,7 +210,7 @@ export interface paths {
          * @description How many rows a date range of this source holds, and its first lines. Read-only.
          *
          *     The rows themselves are read by the run (``POST /runs``, a ``pull`` input), streamed in
-         *     batches, so there is no row limit here — only the 92-day window.
+         *     batches, so there is no row limit here, and no limit on the window (ADR-0052).
          */
         post: operations["pull_source_data_sources__source_id__pull_post"];
         delete?: never;
@@ -2147,8 +2147,8 @@ export interface components {
          * @description One source's input, aligned to ``spec.sources`` by position: its text, or a pull.
          *
          *     A pull is a *reference* (ADR-0047): the server streams the window from the source's
-         *     database during the run, a batch of assets at a time, so it has no size limit beyond the
-         *     pull's 92-day window. ``content`` is text the caller already holds — an upload, a paste —
+         *     database during the run, a batch of assets at a time, so it has no size limit and no window
+         *     limit (ADR-0052). ``content`` is text the caller already holds — an upload, a paste —
          *     and keeps its ceiling, because it travels in this request.
          */
         SourceInput: {

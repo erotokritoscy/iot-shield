@@ -28,7 +28,7 @@ from iotshield.connect.connections import (
     load_connections,
 )
 from iotshield.connect.port import (
-    MAX_PULL_DAYS,
+    SLICE_DAYS,
     ConnectorSpec,
     Device,
     Pulled,
@@ -47,7 +47,7 @@ __all__ = [
     "API_NORMALIZER",
     "CONNECTIONS_PATH_ENV",
     "CONNECTORS",
-    "MAX_PULL_DAYS",
+    "SLICE_DAYS",
     "ApiTarget",
     "Connection",
     "ConnectionUnavailable",

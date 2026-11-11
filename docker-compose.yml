@@ -223,6 +223,17 @@ services:
       IOTSHIELD_PIPELINE_API_URL: http://pipeline-api:8100
     ports:
       - "127.0.0.1:8080:80"
+    # `docker compose up --watch` (or `docker compose watch`) rebuilds and restarts this
+    # service whenever a file under web/ changes, so :8080 always serves the current code.
+    # It is the production build, so each change takes a rebuild rather than a hot reload.
+    develop:
+      watch:
+        - path: ./web
+          action: rebuild
+          ignore:
+            - node_modules/
+            - dist/
+            - tsconfig.tsbuildinfo
     depends_on:
       api:
         condition: service_healthy

@@ -57,6 +57,7 @@ Run all four before considering any task done.
 ```
 cd web && npm install   # the React dashboard's toolchain (node >= 20)
 npm run dev             # :5173, proxying /api and /pipeline to the two APIs
+docker compose watch    # rebuild :8080's dashboard whenever web/ changes
 npm run check           # typecheck + lint + vitest + build — the web gate, CI runs it too
                         # (.github/workflows/ci.yml has a `web` job beside the Python one)
 npm run gen:types       # regenerate the TS view of both APIs after changing either one
@@ -457,7 +458,11 @@ The sink port became `open(header) -> RunWriter` with `add`/`finish`/`abort` (`w
 whole result): Postgres keeps **one transaction** per run and expunges after each batch; the file
 sink stitches its one line from part files. No row limit; measured 534 MB peak at 2 million
 events against 1.6 GB for a third of that on the old path. Still synchronous under nginx's 600 s.
-`compute_run` (eval, tests) is unchanged. The 92-day window stays.
+`compute_run` (eval, tests) is unchanged. **There is no window limit either (ADR-0052)**: the
+92-day cap protected a *query*, so a long window is read as more queries of the same size —
+Biology and an API a quarter at a time (`connect.port.time_slices`/`day_slices`), SensiPro by
+shrinking its meter group in proportion (`meters_per_query`, since its stream must stay ordered
+by meter). Years of a fleet belong in a job, which no nginx timeout cuts off.
 
 **The super admin (ADR-0040)** manages every org under `/admin` — create, suspend,
 delete-with-all-data (`?confirm=<org_id>`, server-checked), and any org's users. It **may have a
