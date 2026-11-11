@@ -30,6 +30,7 @@ import { isOpen, useTimeRange, type TimeRange } from "@/lib/timeRange";
 import { useUrlChoice } from "@/lib/urlChoice";
 import { TimeRangeFilter } from "@/components/TimeRangeFilter";
 import { bandRange, COUNT_HELP, SEVERITY_GUIDE, TRIAGE_HELP } from "@/pages/triage/help";
+import { CHART_SEVERITIES, SeverityChartFilter } from "@/pages/triage/SeverityChartFilter";
 
 /**
  * What each severity means and what to do about it. Collapsed by default: an analyst needs
@@ -467,6 +468,7 @@ export function TriagePage() {
   const [severity, setSeverity] = React.useState<AlertSeverity | "">("");
   const [asset, setAsset] = React.useState("");
   const [page, setPage] = React.useState(0);
+  const [chartSeverities, setChartSeverities] = React.useState<AlertSeverity[]>([...CHART_SEVERITIES]);
   const queue = useAlertPage({
     runId,
     range,
@@ -581,7 +583,11 @@ export function TriagePage() {
               </Notice>
             );
           }
-          const spec = facets.data ? severityBar(facets.data.by_severity, palette) : null;
+          const spec = facets.data ? severityBar(facets.data.by_severity, palette, chartSeverities) : null;
+          // Something to draw before the chart filter, so "nothing drawn" can be told apart
+          // from "no alerts" and the filter stays on screen to be changed back.
+          const anyAlerts = facets.data ? severityBar(facets.data.by_severity, palette) !== null : false;
+          const hidden = CHART_SEVERITIES.filter((s) => !chartSeverities.includes(s));
           return (
             <div className="space-y-8">
               {/* Asked of the server, so it scopes the chart and the queue alike. */}
@@ -590,18 +596,32 @@ export function TriagePage() {
                 onChange={onRange}
                 idPrefix="triage_range"
                 basis="An alert is in the range when its window STARTS at or after From and before To."
-              />
+              >
+                <SeverityChartFilter
+                  value={chartSeverities}
+                  onValueChange={setChartSeverities}
+                  info={TRIAGE_HELP.chartSeverities}
+                />
+              </TimeRangeFilter>
 
-              {spec === null ? null : (
+              {spec !== null ? (
                 <Chart
                   spec={spec}
                   label="Alert count per severity"
                   // Counted by the server over the whole queue in scope (run and range), not
                   // drawn from the page on screen — and not narrowed by the severity and
                   // asset filters, which choose among these bars rather than redraw them.
-                  caption="Alert count per severity."
+                  caption={
+                    hidden.length === 0
+                      ? "Alert count per severity."
+                      : `Alert count per severity. Hidden: ${hidden.join(", ")}.`
+                  }
                 />
-              )}
+              ) : anyAlerts ? (
+                <p className="caption" role="status" data-testid="chart_nothing_shown">
+                  No alerts in the severities selected for the chart.
+                </p>
+              ) : null}
 
               <SeverityGuide />
 

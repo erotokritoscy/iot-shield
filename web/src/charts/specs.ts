@@ -180,8 +180,13 @@ export function telemetryTimeline(
 export function severityBar(
   counts: Readonly<Record<string, number>>,
   palette: Palette,
+  /** The severities to draw; absent means all. A hidden band leaves the axis too, so the
+   * remaining bars keep their fixed order and the y axis re-scales to what is shown. */
+  shown?: readonly string[],
 ): ChartSpec | null {
-  const values = SEVERITY_ORDER.filter((severity) => (counts[severity] ?? 0) > 0).map(
+  const order =
+    shown === undefined ? SEVERITY_ORDER : SEVERITY_ORDER.filter((severity) => shown.includes(severity));
+  const values = order.filter((severity) => (counts[severity] ?? 0) > 0).map(
     (severity) => ({ severity, alerts: counts[severity] ?? 0 }),
   );
   if (values.length === 0) return null;
@@ -198,7 +203,7 @@ export function severityBar(
       x: {
         field: "severity",
         type: "nominal",
-        sort: [...SEVERITY_ORDER],
+        sort: [...order],
         title: null,
         // Horizontal: five short words fit, and Vega's default rotation turned the one thing
         // this chart's identity rides on (the axis labels) into vertical text.

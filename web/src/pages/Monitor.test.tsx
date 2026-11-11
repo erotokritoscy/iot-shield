@@ -85,6 +85,29 @@ describe("paging through the whole queue", () => {
     expect(await screen.findByRole("option", { name: "high (11,000)" })).toBeInTheDocument();
   });
 
+  it("hides chart severities beside the range, without touching the queue's filter", async () => {
+    server.use(
+      http.get(`${API}/alerts/facets`, () =>
+        HttpResponse.json({ total: 11_377, by_severity: { high: 11_000, critical: 377 }, assets: ["pump-02"] }),
+      ),
+    );
+    renderApp("/");
+    const filter = await screen.findByRole("group", { name: "Chart severities" });
+    // In the range row, right after "To (UTC)".
+    expect(within(screen.getByTestId("time_range")).getByRole("group", { name: "Chart severities" })).toBe(filter);
+
+    await userEvent.click(within(filter).getByRole("checkbox", { name: "high" }));
+    expect(await screen.findByText("Alert count per severity. Hidden: high.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Severity")).toHaveValue("");
+
+    await userEvent.click(within(filter).getByRole("checkbox", { name: "critical" }));
+    expect(await screen.findByTestId("chart_nothing_shown")).toBeInTheDocument();
+    // The filter stays to be changed back.
+    await userEvent.click(within(filter).getByRole("checkbox", { name: "high" }));
+    await userEvent.click(within(filter).getByRole("checkbox", { name: "critical" }));
+    expect(await screen.findByText("Alert count per severity.")).toBeInTheDocument();
+  });
+
   it("explains every severity in a table, with its priority band", async () => {
     renderApp("/");
     const toggle = await screen.findByRole("button", { name: /What the severities mean/ });

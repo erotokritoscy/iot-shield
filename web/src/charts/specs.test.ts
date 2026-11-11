@@ -283,6 +283,20 @@ describe("the severity bar", () => {
     ]);
   });
 
+  it("draws only the severities it is told to show, bars and axis alike", () => {
+    const spec = severityBar({ critical: 2, low: 9_000, high: 4 }, palette, ["critical", "high"]);
+    expect((spec?.["data"] as { values: unknown[] }).values).toEqual([
+      { severity: "high", alerts: 4 },
+      { severity: "critical", alerts: 2 },
+    ]);
+    expect((spec?.["encoding"] as { x: { sort: string[] } }).x.sort).toEqual(["high", "critical"]);
+  });
+
+  it("is hidden when nothing shown has alerts", () => {
+    expect(severityBar({ low: 5 }, palette, [])).toBeNull();
+    expect(severityBar({ low: 5 }, palette, ["critical"])).toBeNull();
+  });
+
   it("is hidden entirely when there are no alerts", () => {
     expect(severityBar({}, palette)).toBeNull();
     expect(severityBar({ high: 0 }, palette)).toBeNull();

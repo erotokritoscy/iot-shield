@@ -20,6 +20,8 @@ export const TRIAGE_HELP = {
     "Pipeline runs saved for this organization: from the Compose page, saved jobs, the command line and the demo seed. Each one produced some of the events, detections and alerts counted beside it; open them under Operate → Runs.",
   severity:
     "Show only alerts of one severity. Severity is a band of the 0–100 priority: medium from 30, high from 50, critical from 70, emergency from 90, and low below 30.",
+  chartSeverities:
+    "Which severities the chart draws. It changes the chart only, not the queue below (use its Severity filter for that). Hiding a band re-scales the chart to what is left, e.g. hide low to see a handful of critical alerts beside thousands of low ones.",
   asset: "Show only one device's alerts. Lists the devices that appear in the alerts loaded here.",
   run: "Show only the alerts one saved run produced (Operate → Runs). Any shows the alerts of every run.",
   queue: [

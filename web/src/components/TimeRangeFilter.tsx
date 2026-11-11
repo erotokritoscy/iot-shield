@@ -13,6 +13,7 @@ export function TimeRangeFilter({
   onChange,
   basis,
   idPrefix,
+  children,
 }: {
   readonly range: TimeRange;
   readonly onChange: (range: TimeRange) => void;
@@ -20,6 +21,8 @@ export function TimeRangeFilter({
   readonly basis: React.ReactNode;
   /** Keeps input ids unique where a page also renders another filter row. */
   readonly idPrefix: string;
+  /** A page's own filter, placed in the row right after "To" (Triage's chart severities). */
+  readonly children?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-end gap-3" data-testid="time_range">
@@ -41,6 +44,7 @@ export function TimeRangeFilter({
           onChange={(event) => onChange({ ...range, to: event.target.value || null })}
         />
       </Field>
+      {children}
       <Button size="sm" variant="ghost" disabled={isOpen(range)} onClick={() => onChange(OPEN_RANGE)}>
         Clear range
       </Button>
