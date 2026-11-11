@@ -2,25 +2,87 @@ import * as React from "react";
 
 import { Chart, useChartPalette } from "@/components/Chart";
 import { QueryState } from "@/components/QueryState";
-import { Field, Select } from "@/components/ui/controls";
+import { Button, Field, Select } from "@/components/ui/controls";
+import { InfoLines, InfoTip } from "@/components/ui/info";
 import {
   Collapsible,
   JsonBlock,
   Notice,
   PageHeader,
   Section,
-  Truncated,
 } from "@/components/ui/surfaces";
 import { DataTable, DynamicTable, SeverityBadge, StatTile, type Column } from "@/components/ui/table";
 import { severityBar } from "@/charts/specs";
 import { actionSteps, explanationOf, mitreOf } from "@/lib/evidence";
 import { formatNumber, formatUtc } from "@/lib/format";
-import type { DetectionResult, PrioritizedAlert, SavedRunInfo } from "@/lib/api/types";
+import type { AlertFacets, AlertSeverity, DetectionResult, PrioritizedAlert, SavedRunInfo } from "@/lib/api/types";
 import { SEVERITY_ORDER, SUMMARY_KEYS } from "@/lib/api/types";
-import { useAlertDetections, useAlerts, useSavedRuns, useSummary } from "@/lib/queries";
-import { isOpen, useTimeRange } from "@/lib/timeRange";
+import {
+  ALERT_PAGE_SIZE,
+  useAlert,
+  useAlertDetections,
+  useAlertFacets,
+  useAlertPage,
+  useSavedRuns,
+  useSummary,
+} from "@/lib/queries";
+import { isOpen, useTimeRange, type TimeRange } from "@/lib/timeRange";
 import { useUrlChoice } from "@/lib/urlChoice";
 import { TimeRangeFilter } from "@/components/TimeRangeFilter";
+import { bandRange, COUNT_HELP, SEVERITY_GUIDE, TRIAGE_HELP } from "@/pages/triage/help";
+
+/**
+ * What each severity means and what to do about it. Collapsed by default: an analyst needs
+ * it the first few times, and the queue is what the page is for after that.
+ */
+function SeverityGuide() {
+  return (
+    <Collapsible label="What the severities mean">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" data-testid="severity_guide">
+          <thead>
+            <tr className="border-b border-line text-left text-2xs uppercase tracking-wide text-muted">
+              <th className="py-2 pr-4 font-semibold">Severity</th>
+              <th className="py-2 pr-4 font-semibold">Priority</th>
+              <th className="py-2 pr-4 font-semibold">What it means</th>
+              <th className="py-2 font-semibold">What to do</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SEVERITY_GUIDE.map((band, index) => (
+              <tr key={band.severity} className="border-b border-line align-top last:border-0">
+                <td className="py-2 pr-4">
+                  <SeverityBadge severity={band.severity} />
+                </td>
+                <td className="tabular whitespace-nowrap py-2 pr-4">{bandRange(index)}</td>
+                <td className="py-2 pr-4 text-dim">{band.meaning}</td>
+                <td className="py-2">{band.response}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="caption mt-2">
+        The priority (0–100) is computed by the alert engine from how far the detections went past their
+        thresholds, how many lanes agree, how many detections there are and how critical the device is; the
+        severity is only its band.
+      </p>
+    </Collapsible>
+  );
+}
+
+/** `1 alert`, `11,377 alerts`. */
+const alertCount = (count: number) => `${count.toLocaleString("en-US")} alert${count === 1 ? "" : "s"}`;
+
+/** A section title with its (i): one string, or several lines (the first in full ink). */
+function HelpHeading({ label, help }: { readonly label: string; readonly help: string | readonly string[] }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {label}
+      <InfoTip label={label}>{typeof help === "string" ? help : <InfoLines lines={help} />}</InfoTip>
+    </span>
+  );
+}
 
 /** `HIGH 62.0 — pump-02 @ 2026-07-07 12:00`, UTC — the label format the old picker used. */
 export function alertLabel(alert: PrioritizedAlert): string {
@@ -58,8 +120,6 @@ const evidenceColumns: Column<DetectionResult>[] = [
   },
 ];
 
-const PAGE_SIZE = 50;
-
 /**
  * What one piece of evidence is *called*.
  *
@@ -91,23 +151,29 @@ function AlertInspector({
   chosenId,
   onChoose,
 }: {
+  /** The page of the queue on screen. */
   readonly alerts: readonly PrioritizedAlert[];
   readonly chosenId: string | null;
   readonly onChoose: (id: string) => void;
 }) {
   // Preselection is a *derivation*, never a write back into state — so an operator's explicit
   // choice is never overwritten by a refetch, and a choice that no longer exists falls back to
-  // the top of the queue rather than blanking the panel (§4.1, "widget index= honored on first
-  // render"). Moving the backing store from useState to the URL does not disturb either
-  // property; it only stops the choice evaporating when the page unmounts.
-  // Indexed, not scanned. Selection now re-renders the whole route (the choice lives in the
-  // URL), and a linear `find` inside `labelFor` made that a 1,000 × 1,000 pass on every row
-  // click — measured at 7.5 ms, versus 1.7 ms indexed.
+  // the top of the page rather than blanking the panel (§4.1, "widget index= honored on first
+  // render"). The choice lives in the URL, so it can name an alert on another page of the
+  // queue (a shared link, or paging on after choosing): that one is read by id.
   const byId = React.useMemo(
     () => new Map(alerts.map((alert) => [alert.alert_id ?? "", alert])),
     [alerts],
   );
-  const selected = (chosenId === null ? undefined : byId.get(chosenId)) ?? alerts[0];
+  const onPage = chosenId === null ? undefined : byId.get(chosenId);
+  const fetched = useAlert(chosenId !== null && onPage === undefined ? chosenId : null);
+  const waiting = chosenId !== null && onPage === undefined && fetched.isPending && fetched.fetchStatus !== "idle";
+  const selected = onPage ?? fetched.data ?? (waiting ? undefined : alerts[0]);
+  // The chosen alert is offered even when it is not on this page: a Select whose value is not
+  // among its options would display the first option while showing another (ADR-0036 D2).
+  const options = alerts.map((alert) => alert.alert_id ?? "");
+  const selectedId = selected?.alert_id ?? "";
+  if (selectedId && !byId.has(selectedId)) options.unshift(selectedId);
   const detections = useAlertDetections(selected?.alert_id);
 
   if (selected === undefined) return null;
@@ -120,15 +186,15 @@ function AlertInspector({
   const techniques = mitreOf(detections.data ?? []);
 
   return (
-    <Section title="Alert inspector">
-      <Field label="Inspect alert" htmlFor="triage_alert">
+    <Section title={<HelpHeading label="Alert inspector" help={TRIAGE_HELP.inspector} />}>
+      <Field label="Inspect alert" htmlFor="triage_alert" info={TRIAGE_HELP.inspect}>
         <Select
           id="triage_alert"
-          value={selected.alert_id ?? ""}
+          value={selectedId}
           onChange={(event) => onChoose(event.target.value)}
-          options={alerts.map((alert) => alert.alert_id ?? "")}
+          options={options}
           labelFor={(id) => {
-            const alert = byId.get(id);
+            const alert = id === selectedId ? selected : byId.get(id);
             return alert ? alertLabel(alert) : id;
           }}
         />
@@ -136,15 +202,17 @@ function AlertInspector({
 
       <dl className="space-y-2 text-sm">
         <div>
-          <dt className="text-2xs font-semibold uppercase tracking-wide text-muted">Rationale</dt>
+          <dt className="flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide text-muted">
+            Rationale <InfoTip label="Rationale">{TRIAGE_HELP.rationale}</InfoTip>
+          </dt>
           <dd className="text-ink">{selected.rationale}</dd>
         </div>
         {/* Only when present: an engine that recommends nothing must not render an empty
             heading that reads as "no action needed". */}
         {steps.length > 0 ? (
           <div>
-            <dt className="text-2xs font-semibold uppercase tracking-wide text-muted">
-              Recommended action
+            <dt className="flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide text-muted">
+              Recommended action <InfoTip label="Recommended action">{TRIAGE_HELP.actions}</InfoTip>
             </dt>
             {/* A list, because the field IS one: up to six steps unioned from every rule
                 that fired (ADR-0032 D5), which an analyst works through one at a time. The
@@ -165,8 +233,8 @@ function AlertInspector({
         ) : null}
         {techniques.length > 0 ? (
           <div>
-            <dt className="text-2xs font-semibold uppercase tracking-wide text-muted">
-              MITRE ATT&CK
+            <dt className="flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide text-muted">
+              MITRE ATT&CK <InfoTip label="MITRE ATT&CK">{TRIAGE_HELP.mitre}</InfoTip>
             </dt>
             {/* `threat_class` already carries the winning technique, but only that one, and
                 without its tactic. An alert whose evidence spans four rules implicates four
@@ -192,8 +260,11 @@ function AlertInspector({
       </dl>
 
       <div>
-        <p className="mb-2 text-xs font-medium text-dim">
+        <p className="mb-2 flex items-center gap-1 text-xs font-medium text-dim">
           Score components <span className="text-muted">(the explainability receipt)</span>
+          <InfoTip label="Score components">
+            <InfoLines lines={TRIAGE_HELP.components} />
+          </InfoTip>
         </p>
         {Object.keys(components).length > 0 ? (
           <DynamicTable rows={[components]} />
@@ -203,8 +274,11 @@ function AlertInspector({
       </div>
 
       <div>
-        <p className="mb-2 text-xs font-medium text-dim">
+        <p className="mb-2 flex items-center gap-1 text-xs font-medium text-dim">
           Evidence — the detections behind this alert
+          <InfoTip label="Evidence">
+            <InfoLines lines={TRIAGE_HELP.evidence} />
+          </InfoTip>
         </p>
         <QueryState query={detections} label="Loading evidence…">
           {(rows) => (
@@ -245,22 +319,37 @@ export function runLabel(run: SavedRunInfo): string {
 
 function RankedQueue({
   rows,
+  matched,
+  facets,
+  page,
+  onPage,
+  severity,
+  onSeverity,
+  asset,
+  onAsset,
   chosenId,
   onChoose,
   runs,
   runId,
   onRun,
 }: {
+  /** One page of the queue, already filtered and ranked by the server. */
   readonly rows: readonly PrioritizedAlert[];
+  /** How many alerts the filters match in all; null if the server did not say. */
+  readonly matched: number | null;
+  readonly facets: AlertFacets | undefined;
+  readonly page: number;
+  readonly onPage: (page: number) => void;
+  readonly severity: AlertSeverity | "";
+  readonly onSeverity: (severity: AlertSeverity | "") => void;
+  readonly asset: string;
+  readonly onAsset: (asset: string) => void;
   readonly chosenId: string | null;
   readonly onChoose: (id: string) => void;
   readonly runs: readonly SavedRunInfo[];
   readonly runId: string | null;
   readonly onRun: (id: string) => void;
 }) {
-  const [severity, setSeverity] = React.useState("");
-  const [asset, setAsset] = React.useState("");
-
   // A run id from the URL that the list does not hold (deleted, or older than the list's cap)
   // is still offered, by id: a Select whose value is not among its options would display the
   // first option while filtering by another — the defect ADR-0036 D2 names.
@@ -268,49 +357,47 @@ function RankedQueue({
   const runOptions = ["", ...runs.map((run) => run.run_id)];
   if (runId && !runsById.has(runId)) runOptions.push(runId);
 
-  // Unmemoised on purpose: measured at 19 µs for 1,000 alerts across 40 assets, which is 0.1%
-  // of a frame. A `useMemo` here would cost more in dependency bookkeeping and reading
-  // difficulty than it saves.
-  const assets = [...new Set(rows.map((row) => row.asset_id))].sort();
-  const filtered = rows.filter(
-    (row) =>
-      (severity === "" || row.severity === severity) && (asset === "" || row.asset_id === asset),
-  );
+  // The whole queue's assets, not this page's: a dropdown built from fifty rows would offer
+  // only the devices that happen to rank on the page being shown. Same rule for the chosen one.
+  const assets = [...(facets?.assets ?? [])];
+  if (asset && !assets.includes(asset)) assets.unshift(asset);
+  const total = facets?.total ?? null;
+  const counts = facets?.by_severity ?? {};
+
+  const pages = matched === null ? null : Math.max(1, Math.ceil(matched / ALERT_PAGE_SIZE));
+  const filteredBy = severity !== "" || asset !== "";
 
   return (
-    <Section title="Ranked queue">
-      {/* Filtering is a view over rows the server already ranked. Sorting is deliberately not
-          offered: the order IS the product's output (H3), and a client-side re-sort would
-          quietly replace a ranking with a preference. */}
+    <Section title={<HelpHeading label="Ranked queue" help={TRIAGE_HELP.queue} />}>
+      {/* Every filter is asked of the server, so the queue can be paged through end to end.
+          Sorting is deliberately not offered: the order IS the product's output (H3), and a
+          client-side re-sort would quietly replace a ranking with a preference. */}
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Severity" htmlFor="triage_severity">
+        <Field label="Severity" htmlFor="triage_severity" info={TRIAGE_HELP.severity}>
           <Select
             id="triage_severity"
             value={severity}
-            onChange={(event) => setSeverity(event.target.value)}
+            onChange={(event) => onSeverity(event.target.value as AlertSeverity | "")}
             options={["", ...SEVERITY_ORDER]}
-            labelFor={(value) => (value === "" ? "any" : value)}
+            labelFor={(value) =>
+              value === "" ? "any" : `${value} (${(counts[value] ?? 0).toLocaleString("en-US")})`
+            }
           />
         </Field>
-        <Field label="Asset" htmlFor="triage_asset">
+        <Field label="Asset" htmlFor="triage_asset" info={TRIAGE_HELP.asset}>
           <Select
             id="triage_asset"
             value={asset}
-            onChange={(event) => setAsset(event.target.value)}
+            onChange={(event) => onAsset(event.target.value)}
             options={["", ...assets]}
             labelFor={(value) => (value === "" ? "any" : value)}
           />
         </Field>
-        {/* Unlike the two above, this one asks the server (ADR-0045): see `useAlerts`. The
-            asset choice is cleared with it, since the asset may not occur in the new run. */}
-        <Field label="Run" htmlFor="triage_run">
+        <Field label="Run" htmlFor="triage_run" info={TRIAGE_HELP.run}>
           <Select
             id="triage_run"
             value={runId ?? ""}
-            onChange={(event) => {
-              setAsset("");
-              onRun(event.target.value);
-            }}
+            onChange={(event) => onRun(event.target.value)}
             options={runOptions}
             labelFor={(value) => {
               if (value === "") return "any";
@@ -319,16 +406,19 @@ function RankedQueue({
             }}
           />
         </Field>
-        <p className="caption pb-2">
-          {filtered.length.toLocaleString("en-US")} of {rows.length.toLocaleString("en-US")} shown
+        <p className="caption pb-2" data-testid="triage_matched">
+          {matched === null
+            ? `${rows.length.toLocaleString("en-US")} shown`
+            : filteredBy && total !== null
+              ? `${matched.toLocaleString("en-US")} of ${alertCount(total)} match`
+              : alertCount(matched)}
         </p>
       </div>
 
       <DataTable
         columns={queueColumns}
-        rows={filtered}
+        rows={rows}
         rowKey={(row, index) => row.alert_id ?? String(index)}
-        pageSize={PAGE_SIZE}
         selection={{
           key: chosenId,
           onSelect: (row) => onChoose(row.alert_id ?? ""),
@@ -336,6 +426,35 @@ function RankedQueue({
         }}
         empty={<p className="caption">No alert matches this filter.</p>}
       />
+      {pages !== null && pages > 1 ? (
+        <div className="flex flex-wrap items-center gap-3" data-testid="triage_pager">
+          <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => onPage(0)}>
+            First
+          </Button>
+          <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => onPage(page - 1)}>
+            Previous
+          </Button>
+          <span className="caption tabular">
+            Page {(page + 1).toLocaleString("en-US")} of {pages.toLocaleString("en-US")}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={page >= pages - 1}
+            onClick={() => onPage(page + 1)}
+          >
+            Next
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={page >= pages - 1}
+            onClick={() => onPage(pages - 1)}
+          >
+            Last
+          </Button>
+        </div>
+      ) : null}
     </Section>
   );
 }
@@ -345,12 +464,54 @@ export function TriagePage() {
   const [runId, chooseRun] = useUrlChoice("run");
   const [range, setRange] = useTimeRange();
   const ranged = !isOpen(range);
-  const alerts = useAlerts(runId, range);
+  const [severity, setSeverity] = React.useState<AlertSeverity | "">("");
+  const [asset, setAsset] = React.useState("");
+  const [page, setPage] = React.useState(0);
+  const queue = useAlertPage({
+    runId,
+    range,
+    severity: severity === "" ? null : severity,
+    assetId: asset === "" ? null : asset,
+    page,
+  });
+  const facets = useAlertFacets(runId, range);
   // Only names the options: if the Pipeline API cannot list runs, the filter offers "any" and
   // the queue still renders.
   const savedRuns = useSavedRuns();
   const palette = useChartPalette();
   const [chosenId, choose] = useUrlChoice("alert");
+
+  // A filter changes which alerts are ranked where, so it goes back to the top of the queue.
+  // The asset is cleared with the run and the range, since it may not occur in the new scope.
+  const onSeverity = (next: AlertSeverity | "") => {
+    setSeverity(next);
+    setPage(0);
+  };
+  const onAsset = (next: string) => {
+    setAsset(next);
+    setPage(0);
+  };
+  const onRun = (next: string) => {
+    setAsset("");
+    setPage(0);
+    chooseRun(next);
+  };
+  const onRange = (next: TimeRange) => {
+    setAsset("");
+    setPage(0);
+    setRange(next);
+  };
+
+  // A refresh can shrink the queue under the page being shown; step back to its last page
+  // rather than strand the table on one that no longer exists.
+  const matched = queue.data?.total ?? null;
+  React.useEffect(() => {
+    if (matched === null || queue.isPlaceholderData) return;
+    const last = Math.max(0, Math.ceil(matched / ALERT_PAGE_SIZE) - 1);
+    if (page > last) setPage(last);
+  }, [matched, page, queue.isPlaceholderData]);
+
+  const filtered = Boolean(runId) || ranged || severity !== "" || asset !== "";
 
   return (
     <>
@@ -362,11 +523,11 @@ export function TriagePage() {
             {/* Without this, a queue held open for an hour is indistinguishable from a fresh
                 one, and the analyst has no way to tell that "no new alerts" means "none
                 since I loaded the page". */}
-            {alerts.dataUpdatedAt > 0 ? (
+            {queue.dataUpdatedAt > 0 ? (
               <>
                 {" "}
                 Data as of{" "}
-                <span className="tabular">{formatUtc(alerts.dataUpdatedAt)}</span> — use
+                <span className="tabular">{formatUtc(queue.dataUpdatedAt)}</span> — use
                 Refresh data in the sidebar to re-read it.
               </>
             ) : null}
@@ -377,9 +538,26 @@ export function TriagePage() {
       <QueryState query={summary} label="Loading counts…">
         {(data) => (
           <div className="mb-8">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {/* From the Pipeline API, not `/summary`: runs are saved there (ADR-0046). It
+                  lists a capped page, so past the cap the tile says "200+" rather than a
+                  number that looks exact; if that API is unreachable it says nothing. */}
+              <StatTile
+                label="runs"
+                value={
+                  savedRuns.data
+                    ? `${savedRuns.data.rows.length.toLocaleString("en-US")}${savedRuns.data.truncated ? "+" : ""}`
+                    : "—"
+                }
+                info={TRIAGE_HELP.runs}
+              />
               {SUMMARY_KEYS.map((key) => (
-                <StatTile key={key} label={key.replace(/_/g, " ")} value={data.counts[key] ?? 0} />
+                <StatTile
+                  key={key}
+                  label={key.replace(/_/g, " ")}
+                  value={data.counts[key] ?? 0}
+                  info={COUNT_HELP[key]}
+                />
               ))}
             </div>
             {/* `/summary` counts the whole org; under a range, unmarked tiles beside a
@@ -391,63 +569,58 @@ export function TriagePage() {
         )}
       </QueryState>
 
-      <QueryState query={alerts} label="Loading alerts…">
-        {(page) => {
-          const { rows, truncated, limit } = page;
-          // With a run chosen, an empty queue is an answer about that run — keep the filter
-          // on screen so it can be changed back, rather than the "nothing has run" guidance.
-          // Likewise under a time range: the range must stay on screen to be widened again.
-          if (rows.length === 0 && !runId && !ranged) {
+      <QueryState query={queue} label="Loading alerts…">
+        {({ data: rows }) => {
+          // With any filter set, an empty queue is an answer about that filter — keep the
+          // filters on screen so they can be changed back, rather than the "nothing has run"
+          // guidance.
+          if (rows.length === 0 && !filtered) {
             return (
               <Notice tone="info">
                 No alerts yet — run the pipeline first (see README: Run the demo pipeline).
               </Notice>
             );
           }
-          const spec = severityBar(rows, palette);
+          const spec = facets.data ? severityBar(facets.data.by_severity, palette) : null;
           return (
             <div className="space-y-8">
-              {/* Asked of the server (see `useAlerts`), so it filters the chart and the queue
-                  alike — and reaches alerts ranked below the cap. */}
+              {/* Asked of the server, so it scopes the chart and the queue alike. */}
               <TimeRangeFilter
                 range={range}
-                onChange={setRange}
+                onChange={onRange}
                 idPrefix="triage_range"
                 basis="An alert is in the range when its window STARTS at or after From and before To."
-              />
-              <Truncated
-                page={page}
-                noun="alerts"
-                // `/summary` counts the whole org, so it is no total for one run's or one
-                // range's slice.
-                total={runId || ranged ? undefined : summary.data?.counts["alerts"]}
-                order="the highest-priority slice of the queue, not all of it"
               />
 
               {spec === null ? null : (
                 <Chart
                   spec={spec}
                   label="Alert count per severity"
-                  caption={
-                    // The chart is drawn from whatever the cap returned. Naming that is the
-                    // difference between "count per severity" and "count per severity among
-                    // the highest-priority 1,000" — two different claims, and only one of them
-                    // is true here.
-                    truncated
-                      ? `Alert count per severity, among the ${limit.toLocaleString("en-US")} highest-priority alerts.`
-                      : "Alert count per severity."
-                  }
+                  // Counted by the server over the whole queue in scope (run and range), not
+                  // drawn from the page on screen — and not narrowed by the severity and
+                  // asset filters, which choose among these bars rather than redraw them.
+                  caption="Alert count per severity."
                 />
               )}
+
+              <SeverityGuide />
 
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
                 <RankedQueue
                   rows={rows}
+                  matched={matched}
+                  facets={facets.data}
+                  page={page}
+                  onPage={setPage}
+                  severity={severity}
+                  onSeverity={onSeverity}
+                  asset={asset}
+                  onAsset={onAsset}
                   chosenId={chosenId}
                   onChoose={choose}
                   runs={savedRuns.data?.rows ?? []}
                   runId={runId}
-                  onRun={chooseRun}
+                  onRun={onRun}
                 />
                 {/* Sticky, and beside the queue rather than below it: an alert is chosen
                     *because* of where it sits relative to its neighbours, so the ranking has

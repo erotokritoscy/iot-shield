@@ -174,7 +174,6 @@ class TestOt:
         "query",
         [
             "start=2023-07-02&end=2023-07-01",
-            "start=2022-01-01&end=2023-12-31",
             "start=x&end=2023-07-01",
         ],
     )
@@ -195,6 +194,12 @@ class TestIt:
             {"bucket": "2026-07-07", "flows": 2, "flagged": 1, "detections": 1},
             {"bucket": "2026-07-08", "flows": 1, "flagged": 0, "detections": 0},
         ]
+        # Any length of range is answered (the 366-day cap was lifted, ADR-0044 amendment),
+        # and counts the same flows as the two days that hold them.
+        years = apps.read.get("/overview/it?start=2022-01-05&end=2026-11-11")
+        assert years.status_code == 200
+        assert (years.json()["flows"], years.json()["flagged"]) == (3, 1)
+        assert years.json()["series"] == body["series"]
         hourly = apps.read.get("/overview/it?start=2026-07-07&end=2026-07-07&bucket=hour").json()
         assert [point["bucket"] for point in hourly["series"]] == ["2026-07-07T12:00:00+00:00"]
 

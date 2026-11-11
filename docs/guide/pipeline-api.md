@@ -46,6 +46,7 @@ definition.
 | `POST /runs/validate` | the compatibility guard, no execution | live feedback while somebody edits a config |
 | `POST /runs/preview` | one source read by its normalizer, nothing judged or stored | "is this file in the format I said?" |
 | `POST /runs` | run it, return a summary | the only path that writes results |
+| `GET /runs/progress/{id}` | how far a running `POST /runs` has got | the Compose page's progress bar (ADR-0051) |
 | `/data-sources` | the organization's IT/OT data sources: list (anyone), add/edit/remove (admins) | see *Data sources* below |
 | `/jobs` | saved chains of pulls, run again on demand or on a schedule by the `worker` service | see *Jobs* below |
 | `GET /docs` | generated API docs | |
@@ -270,6 +271,15 @@ while a source is `unreadable`.
 raw bytes as text, exactly what the CLI would have read off disk, so a source's `path` is
 ignored here entirely. `origin` is a provenance label that lands on the events and on every
 malformed record, and defaults to `api-run`.
+
+A run may also carry a `progress_id` (a UUID the caller mints). While the request is open,
+`GET /runs/progress/{progress_id}` answers `{phase, done, total, elapsed_s}`: `starting`
+(checking the chain, counting each pull's rows), `reading` (rows, towards the pulls' counts and
+the uploads' line counts; `total` is null when a source cannot be counted, as an API cannot),
+`judging` (events, towards every event read), `saving`, then `finished` or `failed`, readable
+for two minutes after. It is 404 before the run starts, after that, and for another
+organization's id; reusing an id that is still running, or someone else's, is a 409. The board
+lives in the API's memory, which is enough for one process (ADR-0051).
 
 A 200 is a summary, not the results:
 

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import iotshield
 from iotshield.api._auth import AccountDep, auth_enabled, authenticate
 from iotshield.contracts import (
+    AlertSeverity,
     AlertStatus,
     Asset,
     DetectionResult,
@@ -113,6 +114,14 @@ class Summary(BaseModel):
     top_alert: PrioritizedAlert | None
 
 
+class AlertFacets(BaseModel):
+    """What the triage page draws from the whole queue while it shows one page of it."""
+
+    total: int
+    by_severity: dict[str, int]
+    assets: list[str]
+
+
 def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     """``auth`` overrides ``IOTSHIELD_AUTH`` (tests pass it; services read the env)."""
     # The API is read-only and never creates the schema: the compose init step
@@ -193,6 +202,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         session: SessionDep,
         account: AccountDep,
         status: AlertStatus | None = None,
+        severity: AlertSeverity | None = None,
         asset_id: str | None = None,
         start: TimeParam = None,
         end: TimeParam = None,
@@ -205,6 +215,7 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             session,
             org_id=account.org_id,
             status=status,
+            severity=severity,
             asset_id=asset_id,
             start=start,
             end=end,
@@ -212,6 +223,25 @@ def create_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
             limit=limit,
             offset=offset,
         )
+
+    # Before `/alerts/{alert_id}`, which would otherwise claim the path and 422 on "facets".
+    @app.get("/alerts/facets")
+    def alert_facets(
+        session: SessionDep,
+        account: AccountDep,
+        status: AlertStatus | None = None,
+        start: TimeParam = None,
+        end: TimeParam = None,
+        run_id: UUID | None = None,
+    ) -> AlertFacets:
+        """The whole queue's severity counts and assets, under the same scope as `/alerts`.
+
+        Not narrowed by `severity` or `asset_id` — those are what it counts.
+        """
+        facets = repository.alert_facets(
+            session, org_id=account.org_id, status=status, start=start, end=end, run_id=run_id
+        )
+        return AlertFacets(total=facets.total, by_severity=facets.by_severity, assets=facets.assets)
 
     @app.get("/alerts/{alert_id}")
     def alert_by_id(session: SessionDep, account: AccountDep, alert_id: UUID) -> PrioritizedAlert:

@@ -58,6 +58,7 @@ import {
   type SourceRow,
 } from "@/pages/compose/model";
 import { ADAPTER_HELP, FIELD_HELP, paramHelp, RESULT_HELP } from "@/pages/compose/help";
+import { newProgressId, RunProgress } from "@/pages/compose/RunProgress";
 import { SourceCard, SourceTabs, unreadable } from "@/pages/compose/SourceCard";
 import { jobPulls } from "@/pages/jobs/jobDraft";
 import { SaveAsJob } from "@/pages/jobs/SaveAsJob";
@@ -363,7 +364,8 @@ function ComposeWizard({
   const validation = useValidation(spec);
   const queryClient = useQueryClient();
   const run = useMutation({
-    mutationFn: () => pipelineApi.run(spec, inputs, runName),
+    // The id the run's progress is polled by (ADR-0051), fresh for every click: `run.variables`.
+    mutationFn: (progressId: string) => pipelineApi.run(spec, inputs, runName, progressId),
     // Every run is saved, so the Runs list is stale the moment one succeeds.
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.savedRuns }),
   });
@@ -751,11 +753,11 @@ function ComposeWizard({
             </Field>
 
             <div className="flex items-center gap-3">
-              <Button variant="primary" data-testid="compose_run" disabled={!canRun} onClick={() => run.mutate()}>
+              <Button variant="primary" data-testid="compose_run" disabled={!canRun} onClick={() => run.mutate(newProgressId())}>
                 Run pipeline
               </Button>
-              {run.isPending ? <Spinner label="Running…" /> : null}
             </div>
+            {run.isPending ? <RunProgress progressId={run.variables} /> : null}
 
             {run.isError ? <Notice tone="error">Run failed: {describeError(run.error)}</Notice> : null}
 

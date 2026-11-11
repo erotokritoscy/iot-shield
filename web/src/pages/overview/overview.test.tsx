@@ -134,6 +134,12 @@ describe("IT overview", () => {
     expect(screen.queryByTestId("range_latest")).not.toBeInTheDocument();
   });
 
+  it("asks for a range of several years as it is, by day", async () => {
+    // The routes used to refuse more than 366 days; the cap was lifted (ADR-0044 amendment).
+    renderApp("/overview/it?start=2022-01-05&end=2026-11-11");
+    await waitFor(() => expect(asked.it).toContain("?start=2022-01-05&end=2026-11-11&bucket=day"));
+  });
+
   it("does not offer the jump beside a range that has data", async () => {
     renderApp("/overview/it?start=2023-07-01&end=2023-07-22");
     expect(await screen.findByTestId("stat-flows")).toHaveTextContent("40");

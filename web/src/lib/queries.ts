@@ -14,7 +14,7 @@ import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react
 
 import { dataSourcesApi, pipelineApi, readApi, type DayRange } from "./api/client";
 import { isPlaneAbsent, isUnreachable } from "./api/http";
-import type { Lane } from "./api/types";
+import type { AlertSeverity, Lane } from "./api/types";
 import { rangeQuery, type TimeRange } from "./timeRange";
 
 /**
@@ -33,11 +33,24 @@ export const keys = {
   readHealth: ["read", "health"] as const,
   summary: ["read", "summary"] as const,
   assets: ["read", "assets"] as const,
-  alerts: (range: TimeRange = OPEN) => ["read", "alerts", range.from, range.to] as const,
   events: (assetId: string, lane?: Lane, range: TimeRange = OPEN) =>
     ["read", "events", assetId, lane ?? "all", range.from, range.to] as const,
   detections: (assetId: string, lane?: Lane, range: TimeRange = OPEN) =>
     ["read", "detections", assetId, lane ?? "all", range.from, range.to] as const,
+  alertPage: (query: AlertPageQuery) =>
+    [
+      "read",
+      "alert-page",
+      query.runId ?? "all",
+      query.range.from,
+      query.range.to,
+      query.severity ?? "any",
+      query.assetId ?? "any",
+      query.page,
+    ] as const,
+  alertFacets: (runId: string | null, range: TimeRange) =>
+    ["read", "alert-facets", runId ?? "all", range.from, range.to] as const,
+  alert: (alertId: string) => ["read", "alert", alertId] as const,
   alertDetections: (alertId: string) => ["read", "alert-detections", alertId] as const,
   malformed: (range: TimeRange = OPEN) => ["read", "malformed", range.from, range.to] as const,
   /** One run's rows of one list (ADR-0045); under "read" so Refresh data re-reads them. */
@@ -75,23 +88,54 @@ export const keys = {
 export const useReadHealth = () => useQuery({ queryKey: keys.readHealth, queryFn: () => readApi.health() });
 export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: () => readApi.summary() });
 export const useAssets = () => useQuery({ queryKey: keys.assets, queryFn: () => readApi.assets() });
+/** Alerts shown per page of the triage queue. */
+export const ALERT_PAGE_SIZE = 50;
+
+export interface AlertPageQuery {
+  readonly runId: string | null;
+  readonly range: TimeRange;
+  readonly severity: AlertSeverity | null;
+  readonly assetId: string | null;
+  /** Zero-based. */
+  readonly page: number;
+}
+
 /**
- * The ranked queue — all of it, or one run's alerts (ADR-0045). The run filter is asked of
- * the server rather than applied here: an alert carries no `run_id` (a run is a storage fact,
- * not a contract field), and filtering the capped page would silently miss a run's alerts
- * ranked below the cap. A run's key is the Run page's, so the two share one cache entry.
- * Previous data is kept while a new run loads, so the filter row does not blink away.
+ * One page of the ranked queue (the triage page), with the total its filters match. Every
+ * filter is the server's, so paging reaches the whole queue rather than a capped prefix of
+ * it. The previous page stays on screen while the next loads, so the table does not blink.
  */
-export const useAlerts = (runId?: string | null, range: TimeRange = OPEN) =>
+export const useAlertPage = (query: AlertPageQuery) =>
   useQuery({
-    // A run with an open range shares the Run page's cache entry; a ranged one is its own.
-    queryKey:
-      runId && range.from === null && range.to === null
-        ? keys.run(runId, "alerts")
-        : [...keys.alerts(range), runId ?? "all"],
-    queryFn: () => readApi.alerts({ ...(runId ? { runId } : {}), ...rangeQuery(range) }),
+    queryKey: keys.alertPage(query),
+    queryFn: () =>
+      readApi.alertPage({
+        ...(query.runId ? { runId: query.runId } : {}),
+        ...(query.severity ? { severity: query.severity } : {}),
+        ...(query.assetId ? { assetId: query.assetId } : {}),
+        ...rangeQuery(query.range),
+        limit: ALERT_PAGE_SIZE,
+        offset: query.page * ALERT_PAGE_SIZE,
+      }),
     placeholderData: keepPreviousData,
   });
+
+/** The whole queue's severity counts and assets, for the chart and the asset filter. */
+export const useAlertFacets = (runId: string | null, range: TimeRange) =>
+  useQuery({
+    queryKey: keys.alertFacets(runId, range),
+    queryFn: () => readApi.alertFacets({ ...(runId ? { runId } : {}), ...rangeQuery(range) }),
+    placeholderData: keepPreviousData,
+  });
+
+/** One alert by id: the inspector's choice when it is not on the page being shown. */
+export const useAlert = (alertId: string | null) =>
+  useQuery({
+    queryKey: keys.alert(alertId ?? ""),
+    queryFn: () => readApi.alert(alertId as string),
+    enabled: Boolean(alertId),
+  });
+
 /**
  * The time range (`lib/timeRange.ts`) is asked of the server on every list below, never
  * applied to the fetched page: each list is capped, so filtering the page would silently

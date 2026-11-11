@@ -55,7 +55,8 @@ and host runs work.
 | `GET /assets` | the inventory, id-ordered, unpaged | |
 | `GET /events` | normalized events, oldest-first | `asset_id`, `lane`, `start`, `end` |
 | `GET /detections` | detections, oldest-first | `asset_id`, `lane`, `start`, `end` |
-| `GET /alerts` | the ranked queue, priority-descending | `status`, `asset_id`, `start`, `end` |
+| `GET /alerts` | the ranked queue, priority-descending | `status`, `severity`, `asset_id`, `start`, `end`, `run_id` |
+| `GET /alerts/facets` | the queue's `total`, its count per severity and the assets that have alerts | `status`, `start`, `end`, `run_id` — not `severity` or `asset_id`, which are what it counts |
 | `GET /alerts/{id}` | one alert, 404 if unknown | |
 | `GET /alerts/{id}/detections` | the evidence behind one alert | |
 | `GET /malformed` | inputs that failed normalization | `start`, `end` — on `created_at` (ingest time; the record has no timestamp of its own), half-open |
@@ -76,7 +77,7 @@ went away fails its healthcheck instead of serving 500s.
 
 The three `/overview` routes (ADR-0044) are the exception to "rows, not answers": they count in
 SQL and return chart-sized summaries, because a chart drawn from a list capped at 10,000 rows would
-be a chart of the cap. Their ranges are whole UTC days, both ends included, at most 366, and each
+be a chart of the cap. Their ranges are whole UTC days, both ends included, of any length, and each
 answer carries `latest_day` (the latest day with any flow or meter reading) so a page can find the
 data. OT counts come from two places, as ADR-0043 split them: `meter_quality` detections (heartbeat,
 high) and the meter normalizer's tagged rejects (valueError, zero, negative, small), whose tag

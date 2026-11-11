@@ -5,7 +5,8 @@ whatever the date range, because the counting is done in ``storage.overview`` â€
 routes are capped at 10,000 rows, and a chart drawn from a capped list would be a chart of
 the cap.
 
-Ranges are whole **UTC days**, ``start`` and ``end`` both inclusive, at most a year.
+Ranges are whole **UTC days**, ``start`` and ``end`` both inclusive, of any length (the
+year cap was lifted â€” ADR-0044 amendment of 2026-11-11).
 """
 
 from collections import Counter
@@ -21,7 +22,6 @@ from iotshield.api._auth import AccountDep
 from iotshield.meter import QualityIssue
 from iotshield.storage import overview
 
-MAX_DAYS = 366
 TOP_METERS = 20
 TOTAL_HEADER = "X-Total-Count"
 
@@ -121,8 +121,6 @@ SessionDep = Annotated[Session, Depends(_session)]
 def _window(start: date, end: date) -> tuple[datetime, datetime]:
     if end < start:
         raise HTTPException(status_code=422, detail="the end date is before the start date")
-    if (end - start).days + 1 > MAX_DAYS:
-        raise HTTPException(status_code=422, detail=f"at most {MAX_DAYS} days at a time")
     return (
         datetime.combine(start, time.min, tzinfo=UTC),
         datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC),

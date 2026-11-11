@@ -331,6 +331,12 @@ non-public address (operator allowlist: `IOTSHIELD_API_ALLOWED_HOSTS`) at save a
 request, redirects are never followed, a next page must share the origin, and errors never quote
 the response body. DNS rebinding is the recorded residual risk.
 
+**A run shows how far it has got (ADR-0051).** `execute_run(progress=...)` reports reading
+(rows, towards each pull's `COUNT(*)` taken first — an API source has no total), judging
+(events) and saving; `POST /runs` takes a client-minted `progress_id` and `GET
+/runs/progress/{id}` answers from an in-memory, tenanted board (one API process is the
+assumption), which Compose polls into a progress bar. Jobs do not report it yet.
+
 **A chain of pulls can be saved as a job (ADR-0050).** Compose's Validate & run step has *Save
 as a job*: the chain, a window rule per pull (`fixed` days, or `rolling` — the last N days to
 yesterday/today, resolved in UTC at each run) and an optional schedule (hourly/daily/weekly, UTC,

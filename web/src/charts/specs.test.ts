@@ -11,7 +11,7 @@ import {
   telemetryTimeline,
   type ScoreRow,
 } from "./specs";
-import type { DetectionResult, NormalizedEvent, PrioritizedAlert } from "@/lib/api/types";
+import type { DetectionResult, NormalizedEvent } from "@/lib/api/types";
 
 const rows = (...labels: string[]): ScoreRow[] =>
   labels.map((label) => ({ spec: label, event_f1: 0.5 }));
@@ -269,31 +269,27 @@ describe("tooltips (V3)", () => {
 });
 
 describe("the severity bar", () => {
-  const alert = (severity: string): PrioritizedAlert =>
-    ({
-      asset_id: "pump-02",
-      severity,
-      priority_score: 62,
-      threat_class: "unknown",
-      rationale: "x",
-      detection_ids: ["a"],
-      status: "new",
-      window_start: "2026-07-07T12:00:00Z",
-      window_end: "2026-07-07T12:00:00Z",
-    }) as PrioritizedAlert;
-
   it("fixes the x order so the axis cannot re-scale between runs", () => {
-    const spec = severityBar([alert("high")], palette);
+    const spec = severityBar({ high: 3 }, palette);
     const sort = (spec?.["encoding"] as { x: { sort: string[] } }).x.sort;
     expect(sort).toEqual(["low", "medium", "high", "critical", "emergency"]);
   });
 
+  it("draws the counts it is given, in severity order, and skips the empty ones", () => {
+    const spec = severityBar({ critical: 2, low: 9_000, high: 0 }, palette);
+    expect((spec?.["data"] as { values: unknown[] }).values).toEqual([
+      { severity: "low", alerts: 9_000 },
+      { severity: "critical", alerts: 2 },
+    ]);
+  });
+
   it("is hidden entirely when there are no alerts", () => {
-    expect(severityBar([], palette)).toBeNull();
+    expect(severityBar({}, palette)).toBeNull();
+    expect(severityBar({ high: 0 }, palette)).toBeNull();
   });
 
   it("uses one hue: identity is on the axis labels", () => {
-    const spec = severityBar([alert("high")], palette);
+    const spec = severityBar({ high: 1 }, palette);
     expect((spec?.["mark"] as { color: string }).color).toBe(palette.series);
   });
 });

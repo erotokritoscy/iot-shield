@@ -22,6 +22,7 @@
 import { z } from "zod";
 
 import type {
+  AlertFacets,
   AlertSeverity,
   Asset,
   CorporaResponse,
@@ -37,6 +38,7 @@ import type {
   NormalizedEvent,
   PrioritizedAlert,
   RunResponse,
+  ProgressInfo,
   SavedRunInfo,
   ExecutionInfo,
   JobInfo,
@@ -182,6 +184,12 @@ export const assetsSchema = z.array(assetSchema);
 export const eventsSchema = z.array(eventSchema);
 export const detectionsSchema = z.array(detectionSchema);
 export const alertsSchema = z.array(alertSchema);
+export const alertFacetsSchema = z.object({
+  total: z.number(),
+  by_severity: z.record(z.number()),
+  assets: z.array(z.string()),
+});
+export type _AlertFacetsOk = Assert<Satisfies<AlertFacets, z.infer<typeof alertFacetsSchema>>>;
 export const malformedListSchema = z.array(malformedSchema);
 
 // --- Pipeline plane -----------------------------------------------------------
@@ -244,6 +252,15 @@ export const runSchema = z.object({
   top_alerts: z.array(alertSchema),
 });
 export type _RunOk = Assert<Satisfies<RunResponse, z.infer<typeof runSchema>>>;
+
+/** How far a running `POST /runs` has got, polled while it runs (ADR-0051). */
+export const progressSchema = z.object({
+  phase: z.enum(["starting", "reading", "judging", "saving", "finished", "failed"]),
+  done: z.number(),
+  total: z.number().nullable(),
+  elapsed_s: z.number(),
+});
+export type _ProgressOk = Assert<Satisfies<ProgressInfo, z.infer<typeof progressSchema>>>;
 
 /**
  * A saved run (ADR-0046): its name, who ran it, the chain it ran and its counts. `spec` is

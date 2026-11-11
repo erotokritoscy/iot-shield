@@ -222,6 +222,47 @@
         }
       }
     },
+    "/runs/progress/{progress_id}": {
+      "get": {
+        "summary": "Run Progress",
+        "description": "How far the run posted with this ``progress_id`` has got (ADR-0051).\n\n404 until the run has started, after it has been finished for a while, and for an id\nthat is another organization's \u2014 the three are indistinguishable on purpose.",
+        "operationId": "run_progress_runs_progress__progress_id__get",
+        "parameters": [
+          {
+            "name": "progress_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Progress Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/data-sources": {
       "get": {
         "tags": [
@@ -4169,6 +4210,54 @@
         "title": "PrioritizedAlert",
         "description": "The analyst-facing decision: ranked, labeled, explained.\n\n``detection_ids`` is the lineage; more than one entry means corroboration.\nEvery detection bucket becomes an alert \u2014 ranking, not a hidden gate,\ndecides what analysts look at first (ADR-0003 D3)."
       },
+      "ProgressInfo": {
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "reading",
+              "judging",
+              "saving",
+              "finished",
+              "failed"
+            ],
+            "title": "Phase",
+            "description": "starting (checking and counting), reading, judging, saving, finished, failed"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done",
+            "description": "Rows read, or events judged, so far in this phase"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "What `done` is counting towards; null when unknown"
+          },
+          "elapsed_s": {
+            "type": "number",
+            "title": "Elapsed S",
+            "description": "Seconds since the run started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase",
+          "done",
+          "total",
+          "elapsed_s"
+        ],
+        "title": "ProgressInfo",
+        "description": "One run's progress as the dashboard reads it."
+      },
       "PullInput": {
         "properties": {
           "source_id": {
@@ -4455,6 +4544,19 @@
             ],
             "title": "Name",
             "description": "What the saved run is called (ADR-0046); blank names it after its inputs"
+          },
+          "progress_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Id",
+            "description": "An id of the caller's choosing to poll GET /runs/progress/{progress_id} with while the run is going (ADR-0051)"
           }
         },
         "additionalProperties": false,

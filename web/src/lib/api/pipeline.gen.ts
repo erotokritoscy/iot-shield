@@ -111,6 +111,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/progress/{progress_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Progress
+         * @description How far the run posted with this ``progress_id`` has got (ADR-0051).
+         *
+         *     404 until the run has started, after it has been finished for a while, and for an id
+         *     that is another organization's — the three are indistinguishable on purpose.
+         */
+        get: operations["run_progress_runs_progress__progress_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/data-sources": {
         parameters: {
             query?: never;
@@ -1801,6 +1824,33 @@ export interface components {
             created_at?: string;
         };
         /**
+         * ProgressInfo
+         * @description One run's progress as the dashboard reads it.
+         */
+        ProgressInfo: {
+            /**
+             * Phase
+             * @description starting (checking and counting), reading, judging, saving, finished, failed
+             * @enum {string}
+             */
+            phase: "starting" | "reading" | "judging" | "saving" | "finished" | "failed";
+            /**
+             * Done
+             * @description Rows read, or events judged, so far in this phase
+             */
+            done: number;
+            /**
+             * Total
+             * @description What `done` is counting towards; null when unknown
+             */
+            total: number | null;
+            /**
+             * Elapsed S
+             * @description Seconds since the run started
+             */
+            elapsed_s: number;
+        };
+        /**
          * PullInput
          * @description A window of an organization's data source, read by the server when the run starts.
          */
@@ -1971,6 +2021,11 @@ export interface components {
              * @description What the saved run is called (ADR-0046); blank names it after its inputs
              */
             name?: string | null;
+            /**
+             * Progress Id
+             * @description An id of the caller's choosing to poll GET /runs/progress/{progress_id} with while the run is going (ADR-0051)
+             */
+            progress_id?: string | null;
         };
         /**
          * RunResponse
@@ -2397,6 +2452,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_progress_runs_progress__progress_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                progress_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressInfo"];
                 };
             };
             /** @description Validation Error */

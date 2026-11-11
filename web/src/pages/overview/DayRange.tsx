@@ -58,33 +58,35 @@ export function DayRangePicker({
 }) {
   const outside = empty && latestDay && (latestDay < range.start || latestDay > range.end);
   return (
-    <div className="flex flex-wrap items-end gap-3" data-testid="day_range">
-      <Field label="From (UTC)" htmlFor="range_start" info={info}>
-        <TextInput
-          id="range_start"
-          data-testid="range_start"
-          type="date"
-          value={range.start}
-          max={range.end}
-          onChange={(event) => PATTERN.test(event.target.value) && onChange({ ...range, start: event.target.value })}
-        />
-      </Field>
-      <Field label="To (UTC)" htmlFor="range_end" info={info}>
-        <TextInput
-          id="range_end"
-          data-testid="range_end"
-          type="date"
-          value={range.end}
-          min={range.start}
-          onChange={(event) => PATTERN.test(event.target.value) && onChange({ ...range, end: event.target.value })}
-        />
-      </Field>
-      {children}
-      {outside ? (
-        <Button size="sm" data-testid="range_latest" onClick={() => onChange(weekEnding(latestDay))}>
-          Show the week ending {latestDay}, the latest data
-        </Button>
-      ) : null}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end gap-3" data-testid="day_range">
+        <Field label="From (UTC)" htmlFor="range_start" info={info}>
+          <TextInput
+            id="range_start"
+            data-testid="range_start"
+            type="date"
+            value={range.start}
+            max={range.end}
+            onChange={(event) => PATTERN.test(event.target.value) && onChange({ ...range, start: event.target.value })}
+          />
+        </Field>
+        <Field label="To (UTC)" htmlFor="range_end" info={info}>
+          <TextInput
+            id="range_end"
+            data-testid="range_end"
+            type="date"
+            value={range.end}
+            min={range.start}
+            onChange={(event) => PATTERN.test(event.target.value) && onChange({ ...range, end: event.target.value })}
+          />
+        </Field>
+        {children}
+        {outside ? (
+          <Button size="sm" data-testid="range_latest" onClick={() => onChange(weekEnding(latestDay))}>
+            Show the week ending {latestDay}, the latest data
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

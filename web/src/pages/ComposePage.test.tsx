@@ -180,6 +180,75 @@ describe("Compose & run — the wizard", () => {
     expect(picker.value).toBe("weighted");
   });
 
+  it("shows a progress bar while the run is going, polled by the id the run was posted with", async () => {
+    // Hold the run open until the bar has been seen, as a long pull would.
+    let finish: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let polledId: string | null = null;
+    server.use(
+      http.get(`${PIPELINE}/runs/progress/:id`, ({ params }) => {
+        polledId = String(params["id"]);
+        return HttpResponse.json({ phase: "reading", done: 412_000, total: 968_000, elapsed_s: 102 });
+      }),
+      http.post(`${PIPELINE}/runs`, async ({ request }) => {
+        captured.runBody = await request.json();
+        await held;
+        return HttpResponse.json({
+          run_id: RUN_ID,
+          events: 1,
+          malformed: 0,
+          detections: 1,
+          alerts: 1,
+          warnings: [],
+          destinations: ["postgres"],
+          top_alerts: [],
+        });
+      }),
+    );
+    await withContent();
+    await toStep(4);
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+
+    expect(await screen.findByText(/Reading 412,000 \/ 968,000 rows · 1:42 elapsed/)).toBeInTheDocument();
+    const bar = screen.getByRole("progressbar", { name: "Run progress" });
+    // Reading is 2–60% of the bar: 412k of 968k rows lands at 27%.
+    expect(bar).toHaveAttribute("aria-valuenow", "27");
+    const body = captured.runBody as { progress_id?: string };
+    expect(body.progress_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(polledId).toBe(body.progress_id);
+
+    finish();
+    expect(await screen.findByText("Run complete.")).toBeInTheDocument();
+    expect(screen.queryByTestId("compose_progress")).not.toBeInTheDocument();
+  });
+
+  it("reads a progress 404 as not started yet, not as a failure", async () => {
+    let finish: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    server.use(
+      http.get(`${PIPELINE}/runs/progress/:id`, () =>
+        HttpResponse.json({ detail: { message: "no run with that progress id", issues: [] } }, { status: 404 }),
+      ),
+      http.post(`${PIPELINE}/runs`, async () => {
+        await held;
+        return HttpResponse.json({ detail: { message: "boom", issues: [] } }, { status: 500 });
+      }),
+    );
+    await withContent();
+    await toStep(4);
+    await waitFor(() => expect(screen.getByTestId("compose_run")).toBeEnabled());
+    await userEvent.click(screen.getByTestId("compose_run"));
+    expect(await screen.findByText("Starting…")).toBeInTheDocument();
+    expect(screen.queryByText(/Run failed/)).not.toBeInTheDocument();
+    finish();
+    expect(await screen.findByText(/Run failed/)).toBeInTheDocument();
+  });
+
   it("withholds the verdict while the edited chain is still being checked", async () => {
     // The 350 ms debounce opens a window in which a verdict on screen would describe a spec
     // that no longer exists; a green "Chain is compatible." there would be a claim the page

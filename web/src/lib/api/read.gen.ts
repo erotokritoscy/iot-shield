@@ -98,6 +98,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/alerts/facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Alert Facets
+         * @description The whole queue's severity counts and assets, under the same scope as `/alerts`.
+         *
+         *     Not narrowed by `severity` or `asset_id` — those are what it counts.
+         */
+        get: operations["alert_facets_alerts_facets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/alerts/{alert_id}": {
         parameters: {
             query?: never;
@@ -239,6 +261,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AlertFacets
+         * @description What the triage page draws from the whole queue while it shows one page of it.
+         */
+        AlertFacets: {
+            /** Total */
+            total: number;
+            /** By Severity */
+            by_severity: {
+                [key: string]: number;
+            };
+            /** Assets */
+            assets: string[];
+        };
         /**
          * AlertSeverity
          * @description Analyst-facing alert severity (five labels, driven by absolute priority score).
@@ -777,6 +813,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: components["schemas"]["AlertStatus"] | null;
+                severity?: components["schemas"]["AlertSeverity"] | null;
                 asset_id?: string | null;
                 start?: string | null;
                 end?: string | null;
@@ -798,6 +835,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrioritizedAlert"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    alert_facets_alerts_facets_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["AlertStatus"] | null;
+                start?: string | null;
+                end?: string | null;
+                run_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertFacets"];
                 };
             };
             /** @description Validation Error */

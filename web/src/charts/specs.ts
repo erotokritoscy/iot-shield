@@ -13,7 +13,7 @@
  */
 import { explanationOf } from "@/lib/evidence";
 import { utcInstant } from "@/lib/format";
-import type { DetectionResult, NormalizedEvent, PrioritizedAlert } from "@/lib/api/types";
+import type { DetectionResult, NormalizedEvent } from "@/lib/api/types";
 import { SEVERITY_ORDER } from "@/lib/api/types";
 
 import type { Palette } from "./palette";
@@ -173,15 +173,21 @@ export function telemetryTimeline(
  * Alert counts per severity: a magnitude comparison, so one hue — the axis labels carry
  * identity (multi-hue would add nothing but noise). The x order is fixed, so the axis does
  * not silently re-scale between runs.
+ *
+ * Drawn from counts (`/alerts/facets`), not from alert rows: the triage page holds one page
+ * of the queue, and a chart of a page would describe fifty alerts while labelled as all.
  */
 export function severityBar(
-  alerts: readonly PrioritizedAlert[],
+  counts: Readonly<Record<string, number>>,
   palette: Palette,
 ): ChartSpec | null {
-  if (alerts.length === 0) return null;
+  const values = SEVERITY_ORDER.filter((severity) => (counts[severity] ?? 0) > 0).map(
+    (severity) => ({ severity, alerts: counts[severity] ?? 0 }),
+  );
+  if (values.length === 0) return null;
   return {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
-    data: { values: alerts.map((alert) => ({ severity: alert.severity })) },
+    data: { values },
     mark: {
       type: "bar",
       color: palette.series,
@@ -199,7 +205,7 @@ export function severityBar(
         axis: { labelAngle: 0 },
       },
       y: {
-        aggregate: "count",
+        field: "alerts",
         type: "quantitative",
         title: "alerts",
         // Whole alerts only: with two in the tallest bar Vega ticks at 0.5, and half an
@@ -208,7 +214,7 @@ export function severityBar(
       },
       tooltip: [
         { field: "severity", type: "nominal" },
-        { aggregate: "count", type: "quantitative" },
+        { field: "alerts", type: "quantitative", format: "," },
       ],
     },
     height: 180,

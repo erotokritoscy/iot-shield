@@ -39,7 +39,8 @@ The `/overview` router on the **read** API counts in SQL and returns chart-sized
   a series by day or by hour, the top 20 meters, and the number of meters affected.
 - **`/overview/ot/records`:** the anomalies themselves, with `X-Total-Count`.
 
-Ranges are whole UTC days, both ends included, at most 366 days. Each answer also carries
+Ranges are whole UTC days, both ends included, at most 366 days (lifted — see the 2026-11-11
+amendment). Each answer also carries
 `latest_day`, the latest day holding any flow (IT) or meter reading (OT). SensiPro's export
 is from 2023, so a page that opened on "this week" would be empty with no hint where to
 look; the page offers a jump to the week ending at `latest_day` instead.
@@ -121,3 +122,19 @@ nothing. When it ends, the page shows the whole range again.
 
 It never starts on its own. Under *reduce motion* it steps three times slower, and the feed's
 slide-in is off.
+
+## Amendment (2026-11-11): No range limit
+
+The 366-day cap is removed. It turned a reasonable question — *what happened since 2022?* — into
+a 422 that the page showed as its error, and nothing behind the routes needed it: every answer is
+already counted on the server, and the series are sparse (only buckets that hold something).
+
+What a long range costs instead, accepted rather than capped:
+
+- **Day buckets for anything over a week.** Five years is about 1,800 bars per chart, and the
+  replay plays them one by one. Week or month buckets are the natural next step if that proves
+  unreadable; nothing here prevents adding them.
+- **`/overview/ot` reads every anomaly in the range** to bucket it, so its time grows with the
+  range. The answer stays small; the query does not.
+- **`bucket=hour` is still accepted for any range.** The page asks for it only up to a week.
+

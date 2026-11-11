@@ -35,6 +35,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, selectinload
 
 from iotshield.contracts import (
+    AlertSeverity,
     AlertStatus,
     Asset,
     DetectionResult,
@@ -361,6 +362,7 @@ def get_alerts(
     *,
     org_id: str,
     status: AlertStatus | None = None,
+    severity: AlertSeverity | None = None,
     detection_id: UUID | None = None,
     asset_id: str | None = None,
     start: datetime | None = None,
@@ -374,7 +376,9 @@ def get_alerts(
     ``asset_id`` and the time bounds mirror ``get_detections``: the ranked queue is the
     headline output, and "which alerts fired on this device last week" was unanswerable
     without pulling the whole queue and filtering client-side. Time is matched on
-    ``window_start``, half-open, exactly as detections are.
+    ``window_start``, half-open, exactly as detections are. ``severity`` is asked of the
+    server for the same reason: the triage page pages through the whole queue, so filtering
+    one page client-side would hide every match on the pages it has not fetched.
     """
     stmt = (
         select(AlertRow)
@@ -386,6 +390,8 @@ def get_alerts(
     )
     if status is not None:
         stmt = stmt.where(AlertRow.status == status.value)
+    if severity is not None:
+        stmt = stmt.where(AlertRow.severity == severity.value)
     if asset_id is not None:
         stmt = stmt.where(AlertRow.asset_id == asset_id)
     if run_id is not None:
@@ -425,6 +431,53 @@ def get_detections_by_ids(
         .order_by(DetectionRow.window_start, DetectionRow.detection_id)
     )
     return [row.to_contract() for row in session.scalars(stmt)]
+
+
+@dataclass(frozen=True)
+class AlertFacets:
+    """What the triage page needs about the WHOLE queue while it shows one page of it."""
+
+    total: int
+    by_severity: dict[str, int]
+    assets: list[str]
+
+
+def alert_facets(
+    session: Session,
+    *,
+    org_id: str,
+    status: AlertStatus | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    run_id: UUID | None = None,
+) -> AlertFacets:
+    """Counts per severity and the assets with alerts, under ``get_alerts``' scope filters.
+
+    The page used to draw its severity chart and its asset dropdown from the rows it had
+    loaded, which was the whole queue only while the queue fit under the list cap. Paging
+    through the queue makes that a page, so both come from here instead. Deliberately not
+    narrowed by ``severity``/``asset_id``: those are the facets themselves, and a chart of
+    one severity, or a dropdown holding only the chosen asset, would be no choice at all.
+    """
+    conditions = [AlertRow.org_id == org_id]
+    if status is not None:
+        conditions.append(AlertRow.status == status.value)
+    if run_id is not None:
+        conditions.append(AlertRow.run_id == run_id)
+    if start is not None:
+        conditions.append(AlertRow.window_start >= start)
+    if end is not None:
+        conditions.append(AlertRow.window_start < end)
+    counts = session.execute(
+        select(AlertRow.severity, func.count()).where(*conditions).group_by(AlertRow.severity)
+    ).all()
+    by_severity = {str(severity): int(count) for severity, count in counts}
+    assets = list(
+        session.scalars(
+            select(AlertRow.asset_id).where(*conditions).distinct().order_by(AlertRow.asset_id)
+        )
+    )
+    return AlertFacets(sum(by_severity.values()), by_severity, assets)
 
 
 def count_summary(session: Session, *, org_id: str) -> dict[str, int]:

@@ -19,6 +19,7 @@ export type DetectionResult = R["DetectionResult"];
 export type PrioritizedAlert = R["PrioritizedAlert"];
 export type MalformedRecord = R["MalformedRecord"];
 export type Summary = R["Summary"];
+export type AlertFacets = R["AlertFacets"];
 export type Lane = R["Lane"];
 export type AlertSeverity = R["AlertSeverity"];
 export type Criticality = R["Criticality"];
@@ -49,6 +50,8 @@ export type DeviceInfo = P["DeviceInfo"];
 export type PullRequest = P["PullRequest"];
 export type PullResponse = P["PullResponse"];
 export type RunResponse = P["RunResponse"];
+/** How far a running `POST /runs` has got (ADR-0051). */
+export type ProgressInfo = P["ProgressInfo"];
 export type SavedRunInfo = P["SavedRunInfo"];
 export type PipelineSpec = P["PipelineSpec"];
 // --- Saved jobs (ADR-0050) ----------------------------------------------------------

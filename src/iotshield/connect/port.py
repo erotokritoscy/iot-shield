@@ -234,6 +234,25 @@ def pull_summary(
     )
 
 
+def pull_count(
+    spec: ConnectorSpec,
+    connection: Connection,
+    start: date,
+    end: date,
+    params: Mapping[str, Any],
+) -> int:
+    """How many rows the window holds — a run's reading total (ADR-0051), counted, not read.
+
+    The same count ``pull_summary`` shows, so it is of rows *read*, before a connector drops
+    any: a progress total, not a promise of how many lines the run receives.
+    """
+    parsed, window_start, window_end = check_pull(spec, start, end, params)
+    try:
+        return spec.count(connection.engine(), window_start, window_end, parsed)
+    except SQLAlchemyError as exc:
+        raise _unavailable(connection, exc) from exc
+
+
 def pull(
     spec: ConnectorSpec,
     connection: Connection,

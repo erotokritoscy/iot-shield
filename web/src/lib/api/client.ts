@@ -5,8 +5,10 @@
  * asked for 5,000 events/detections and 1,000 alerts/malformed records, and a chart drawn
  * from a different slice of the same database is a different chart.
  */
-import { apiRequest, PIPELINE_BASE, READ_BASE } from "./http";
+import { apiPage, apiRequest, PIPELINE_BASE, READ_BASE } from "./http";
 import {
+  alertFacetsSchema,
+  alertSchema,
   alertsSchema,
   assetsSchema,
   benchSpecsSchema,
@@ -32,6 +34,7 @@ import {
   previewSchema,
   pullSchema,
   qualityRecordsSchema,
+  progressSchema,
   runSchema,
   savedRunSchema,
   savedRunsSchema,
@@ -45,7 +48,7 @@ import {
   validateSchema,
   type EvalReport,
 } from "./schemas";
-import type { DataSourceRequest, JobRequest, Lane, OrgRole, PullRequest } from "./types";
+import type { AlertSeverity, DataSourceRequest, JobRequest, Lane, OrgRole, PullRequest } from "./types";
 
 const EVENT_LIMIT = 5000;
 const DETECTION_LIMIT = 5000;
@@ -166,6 +169,44 @@ export const readApi = {
       }),
     ),
 
+  /**
+   * One page of the ranked queue, and how many alerts the same filters match in all. The
+   * triage page pages through the whole queue this way rather than loading a capped prefix
+   * of it, so `severity` and `assetId` are asked of the server: filtering one page here would
+   * hide every match on the pages not fetched.
+   */
+  alertPage: (
+    options: {
+      runId?: string;
+      severity?: AlertSeverity;
+      assetId?: string;
+      limit: number;
+      offset: number;
+    } & TimeBounds,
+  ) =>
+    apiPage(READ_BASE, "/alerts", {
+      schema: alertsSchema,
+      query: {
+        run_id: options.runId,
+        severity: options.severity,
+        asset_id: options.assetId,
+        start: options.start,
+        end: options.end,
+        limit: options.limit,
+        offset: options.offset,
+      },
+    }),
+
+  alert: (alertId: string) =>
+    apiRequest(READ_BASE, `/alerts/${encodeURIComponent(alertId)}`, { schema: alertSchema }),
+
+  /** The whole queue's severity counts and assets, under the same run and time scope. */
+  alertFacets: (options: { runId?: string } & TimeBounds = {}) =>
+    apiRequest(READ_BASE, "/alerts/facets", {
+      schema: alertFacetsSchema,
+      query: { run_id: options.runId, start: options.start, end: options.end },
+    }),
+
   // Uncapped on purpose, and the only list here that is: an alert's evidence is the set of
   // detections that justify it, so a partial answer would be an incomplete argument rather
   // than a long list. The route takes no `limit` (`api/app.py`), so there is none to pass.
@@ -281,11 +322,22 @@ export const pipelineApi = {
     }),
 
   /** Run and save the chain; a blank `name` lets the server name it after its inputs (ADR-0046). */
-  run: (spec: unknown, inputs: SourceInput[], name?: string) =>
+  run: (spec: unknown, inputs: SourceInput[], name?: string, progressId?: string) =>
     apiRequest(PIPELINE_BASE, "/runs", {
       schema: runSchema,
       method: "POST",
-      body: { spec, inputs, ...(name?.trim() ? { name: name.trim() } : {}) },
+      body: {
+        spec,
+        inputs,
+        ...(name?.trim() ? { name: name.trim() } : {}),
+        ...(progressId ? { progress_id: progressId } : {}),
+      },
+    }),
+
+  /** How far the run posted with this `progressId` has got; 404 until it has started (ADR-0051). */
+  runProgress: (progressId: string) =>
+    apiRequest(PIPELINE_BASE, `/runs/progress/${encodeURIComponent(progressId)}`, {
+      schema: progressSchema,
     }),
 
   // --- Saved runs (ADR-0046) -------------------------------------------------------------

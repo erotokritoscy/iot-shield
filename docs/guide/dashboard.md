@@ -243,6 +243,22 @@ The alert table is the read API's ordering, not the page's: alerts arrive priori
 are rendered in the order they came. Sorting here would mean the UI had an opinion about ranking,
 which is the alert engine's job.
 
+**What the severities mean** is a collapsed table under the severity chart: each band, its priority
+range, what it means and what to do. Its text is `SEVERITY_GUIDE` in `pages/triage/help.ts`; the
+band floors there must equal `_SEVERITY_FLOOR` in `alert/_correlate.py`, and
+`tests/adapters/test_severity_guide.py` reads them out of the TypeScript and fails if they drift.
+
+**The whole queue is reachable, a page at a time.** The page used to load the top 1,000 alerts and
+say so, which left everything ranked below that unreachable — 10,377 of one deployment's 11,377.
+Now each page of 50 is its own `/alerts?limit=50&offset=…` request, and the pager's total is the
+response's `X-Total-Count`. That makes every filter a server filter: **Severity** and **Asset**
+are sent as `severity` and `asset_id` like Run and the time range already were, because filtering
+the page on screen would hide every match on the pages not fetched. For the same reason the
+severity chart, the per-severity counts in the Severity dropdown and the Asset dropdown's list come
+from `/alerts/facets` — the whole queue in the current run and range — rather than from the rows
+on screen. Changing a filter goes back to page one. The inspector's choice is in the URL and may
+name an alert on another page, so it is then read by id (`/alerts/{id}`).
+
 The inspector is where an alert stops being a number:
 
 - the **rationale**, the engine's own sentence;
@@ -294,7 +310,8 @@ The iotShield prototype's two dashboards, rebuilt over iotshield's own results (
 `pages/overview/`, charts in `charts/overview.ts`). All counting happens on the read API's
 `/overview` routes, so the charts are complete whatever the range. Each page keeps its range of
 UTC days in the URL (`?start=&end=`) and, when the range holds no data, offers to jump to the week
-ending at the latest day that does.
+ending at the latest day that does. A range may be of any length; beyond a week it is drawn day
+by day, so several years is a chart of a few thousand daily bars (ADR-0044 amendment, 2026-11-11).
 
 - **IT overview**: flows, how many fall inside a flow-lane detection on the same device (the
   prototype's "attack vs normal", stated as what iotshield can claim), detections per day (every
@@ -449,6 +466,13 @@ every list is asked for by `run_id` (ADR-0045), so the counts in its section tit
 tile's counts. A new tab, so following a number never loses the composed chain; alerts link on to
 Triage for the inspector. The tiles link only when postgres was written, since a file-only run
 stored nothing the page could read.
+
+**A run shows its progress (ADR-0051).** While `POST /runs` is open, Review & run shows a bar
+under **Run pipeline** (`pages/compose/RunProgress.tsx`), polled once a second by the
+`progress_id` the page sent with the run: "Reading 412,000 / 968,000 rows · 1:42 elapsed", then
+"Judging … events", then "Saving the results…". Reading fills 2–60% of the bar, judging 60–95%,
+and saving holds at 95%, since a commit has no count. Leaving the page drops the bar (the run
+carries on and is saved; open it from Runs).
 
 **Every run is saved (ADR-0046).** Review & run has an optional **Run name**; left blank, the
 server names the run after its inputs and the time. **Operate → Runs** (`RunsPage.tsx`) lists the

@@ -14,6 +14,52 @@ import * as seed from "./fixtures";
 export const API = "http://localhost/api";
 export const PIPELINE = "http://localhost/pipeline";
 
+type Alert = typeof seed.alert;
+
+/**
+ * `/alerts` and `/alerts/facets` the way the read API answers them: severity, asset and run
+ * filtered, paged by `limit`/`offset`, with `X-Total-Count`. Faithful because the triage page
+ * now asks the server for every filter and page — a mock that ignored them would let a
+ * client-side filter pass. A row's `run_id` is the test's to set (`{ ...alert, run_id }`).
+ */
+export function alertHandlers(alerts: readonly (Alert & { run_id?: string })[]): RequestHandler[] {
+  const scoped = (params: URLSearchParams) =>
+    alerts.filter((row) => {
+      const run = params.get("run_id");
+      // A row the test gave no run belongs to every run, so the seeded world answers a run.
+      return run === null || row.run_id === undefined || row.run_id === run;
+    });
+  return [
+    http.get(`${API}/alerts`, ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const severity = params.get("severity");
+      const asset = params.get("asset_id");
+      const matched = scoped(params).filter(
+        (row) => (severity === null || row.severity === severity) && (asset === null || row.asset_id === asset),
+      );
+      const offset = Number(params.get("offset") ?? 0);
+      const limit = Number(params.get("limit") ?? 1000);
+      return HttpResponse.json(matched.slice(offset, offset + limit), {
+        headers: { "X-Total-Count": String(matched.length) },
+      });
+    }),
+    http.get(`${API}/alerts/facets`, ({ request }) => {
+      const rows = scoped(new URL(request.url).searchParams);
+      const bySeverity: Record<string, number> = {};
+      for (const row of rows) bySeverity[row.severity] = (bySeverity[row.severity] ?? 0) + 1;
+      return HttpResponse.json({
+        total: rows.length,
+        by_severity: bySeverity,
+        assets: [...new Set(rows.map((row) => row.asset_id))].sort(),
+      });
+    }),
+    http.get(`${API}/alerts/:id`, ({ params }) => {
+      const found = alerts.find((row) => row.alert_id === params["id"]);
+      return found ? HttpResponse.json(found) : HttpResponse.json({ detail: "not found" }, { status: 404 });
+    }),
+  ];
+}
+
 /** The seeded world: pump-02 at T0, one detection, one HIGH alert, one malformed record. */
 export const seededHandlers: RequestHandler[] = [
   http.get(`${API}/health`, () => HttpResponse.json({ status: "ok", version: "test" })),
@@ -21,8 +67,8 @@ export const seededHandlers: RequestHandler[] = [
   http.get(`${API}/assets`, () => HttpResponse.json([seed.asset])),
   http.get(`${API}/events`, () => HttpResponse.json(seed.events)),
   http.get(`${API}/detections`, () => HttpResponse.json([seed.detection])),
-  http.get(`${API}/alerts`, () => HttpResponse.json([seed.alert])),
   http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json([seed.detection])),
+  ...alertHandlers([seed.alert]),
   http.get(`${API}/malformed`, () => HttpResponse.json([seed.malformed])),
 ];
 
@@ -33,8 +79,8 @@ export const emptyHandlers: RequestHandler[] = [
   http.get(`${API}/assets`, () => HttpResponse.json([])),
   http.get(`${API}/events`, () => HttpResponse.json([])),
   http.get(`${API}/detections`, () => HttpResponse.json([])),
-  http.get(`${API}/alerts`, () => HttpResponse.json([])),
   http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json([])),
+  ...alertHandlers([]),
   http.get(`${API}/malformed`, () => HttpResponse.json([])),
 ];
 
@@ -77,6 +123,10 @@ export const pipelineHandlers: RequestHandler[] = [
     return HttpResponse.json({ events, malformed: 0, level: "clean", rejected: [] });
   }),
   // Saved runs (ADR-0046): one saved run, renamable and deletable.
+  // A run's progress (ADR-0051): two path segments, so it never reaches `/runs/:id` below.
+  http.get(`${PIPELINE}/runs/progress/:id`, () =>
+    HttpResponse.json({ phase: "reading", done: 412_000, total: 968_000, elapsed_s: 102 }),
+  ),
   http.get(`${PIPELINE}/runs`, () => HttpResponse.json([seed.savedRun])),
   http.get(`${PIPELINE}/runs/:id`, ({ params }) =>
     params["id"] === seed.savedRun.run_id

@@ -158,6 +158,64 @@ class TestReads:
         scores = [a["priority_score"] for a in api.client.get("/alerts").json()]
         assert scores == sorted(scores, reverse=True)
 
+    def _seed_queue(self, api: ApiHarness) -> None:
+        """Three alerts on two assets: gw-01 CRITICAL 95, pump-02 HIGH 70 and LOW 10."""
+        seed_incident(api)
+        extra = detection(asset_id="gw-01", offset_s=7200)
+        quiet = detection(offset_s=9000)
+        with api.session_factory() as session, session.begin():
+            repository.insert_detections(session, [extra, quiet], org_id=DEFAULT_ORG_ID)
+            repository.insert_alerts(
+                session,
+                [
+                    alert([extra], priority=95.0).model_copy(
+                        update={"severity": AlertSeverity.CRITICAL}
+                    ),
+                    alert([quiet], priority=10.0).model_copy(
+                        update={"severity": AlertSeverity.LOW}
+                    ),
+                ],
+                org_id=DEFAULT_ORG_ID,
+            )
+
+    def test_alerts_filter_by_severity_and_count_the_match(self, api: ApiHarness) -> None:
+        self._seed_queue(api)
+        response = api.client.get("/alerts", params={"severity": "high"})
+        assert [a["severity"] for a in response.json()] == ["high"]
+        assert response.headers["X-Total-Count"] == "1"
+        assert api.client.get("/alerts", params={"severity": "loud"}).status_code == 422
+
+    def test_alerts_page_through_the_ranking_with_offset(self, api: ApiHarness) -> None:
+        self._seed_queue(api)
+        pages = [
+            api.client.get("/alerts", params={"limit": 1, "offset": offset}) for offset in range(3)
+        ]
+        assert [page.json()[0]["priority_score"] for page in pages] == [95.0, 70.0, 10.0]
+        assert {page.headers["X-Total-Count"] for page in pages} == {"3"}
+
+    def test_facets_count_the_whole_queue(self, api: ApiHarness) -> None:
+        self._seed_queue(api)
+        body = api.client.get("/alerts/facets").json()
+        assert body == {
+            "total": 3,
+            "by_severity": {"critical": 1, "high": 1, "low": 1},
+            "assets": ["gw-01", "pump-02"],
+        }
+
+    def test_facets_share_the_queues_scope(self, api: ApiHarness) -> None:
+        self._seed_queue(api)
+        # Only the seeded incident starts inside the first hour; gw-01's and the LOW one are later.
+        body = api.client.get(
+            "/alerts/facets", params={"end": (T0 + timedelta(hours=1)).isoformat()}
+        ).json()
+        assert body["assets"] == ["pump-02"]
+        assert body["total"] == 1
+        assert api.client.get("/alerts/facets", params={"run_id": str(uuid4())}).json() == {
+            "total": 0,
+            "by_severity": {},
+            "assets": [],
+        }
+
     def test_alert_drill_down_returns_its_evidence(self, api: ApiHarness) -> None:
         detections, stored_alert = seed_incident(api)
         rows = api.client.get(f"/alerts/{stored_alert.alert_id}/detections").json()

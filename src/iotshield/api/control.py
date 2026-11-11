@@ -38,6 +38,7 @@ from iotshield.api.execution import (
     issue_info,
     perform_run,
 )
+from iotshield.api.progress import ProgressBoard, ProgressInfo
 from iotshield.capabilities import formats_in
 from iotshield.contracts import MalformedRecord, PrioritizedAlert
 from iotshield.pipeline.compat import (
@@ -149,6 +150,13 @@ class RunRequest(BaseModel):
         default=None,
         max_length=MAX_RUN_NAME_LENGTH,
         description="What the saved run is called (ADR-0046); blank names it after its inputs",
+    )
+    progress_id: UUID | None = Field(
+        default=None,
+        description=(
+            "An id of the caller's choosing to poll GET /runs/progress/{progress_id} with "
+            "while the run is going (ADR-0051)"
+        ),
     )
 
 
@@ -439,6 +447,7 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
     # If an operator selects a file sink, it writes under this server-configured dir; a
     # caller-supplied filename is confined to it (sink/file.py). Overridable per deploy.
     app.state.output_dir = Path(os.environ.get("IOTSHIELD_OUTPUT_DIR", "results"))
+    app.state.progress = ProgressBoard()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -480,17 +489,50 @@ def create_control_app(engine: Engine, *, auth: bool | None = None) -> FastAPI:
         The checks, the streaming of pulls and the mapping of failures to statuses are
         ``api/execution.py``'s, shared with the job worker (ADR-0050).
         """
+        board: ProgressBoard = app.state.progress
+        progress_id = request.progress_id
+        if progress_id is not None and not board.start(progress_id, org_id=account.org_id):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "that progress_id is another run's; pick a new one",
+                    "issues": [],
+                },
+            )
         config = config_from_spec(request.spec, app.state.database_url)
-        report = perform_run(
-            config,
-            request.inputs,
-            session_factory=app.state.session_factory,
-            output_dir=app.state.output_dir,
-            org_id=account.org_id,
-            run_name=request.name,
-            run_by=account.user.username,
-        )
+        failed = True
+        try:
+            report = perform_run(
+                config,
+                request.inputs,
+                session_factory=app.state.session_factory,
+                output_dir=app.state.output_dir,
+                org_id=account.org_id,
+                run_name=request.name,
+                run_by=account.user.username,
+                progress=None
+                if progress_id is None
+                else (lambda step: board.update(progress_id, step)),
+            )
+            failed = False
+        finally:
+            if progress_id is not None:
+                board.end(progress_id, failed=failed)
         return _run_response(report)
+
+    @app.get("/runs/progress/{progress_id}")
+    def run_progress(progress_id: UUID, account: AccountDep) -> ProgressInfo:
+        """How far the run posted with this ``progress_id`` has got (ADR-0051).
+
+        404 until the run has started, after it has been finished for a while, and for an id
+        that is another organization's — the three are indistinguishable on purpose.
+        """
+        info = app.state.progress.read(progress_id, org_id=account.org_id)
+        if info is None:
+            raise HTTPException(
+                status_code=404, detail={"message": "no run with that progress id", "issues": []}
+            )
+        return info
 
     # An organization's register of its IT and OT data sources (ADR-0041). Always mounted:
     # with auth off it is the default organization's, like every other route here. Imported

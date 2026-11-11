@@ -188,6 +188,31 @@ function withQuery(path: string, query: RequestOptions<unknown>["query"]): strin
 }
 
 export async function apiRequest<T>(base: string, path: string, options: RequestOptions<T>): Promise<T> {
+  return (await send(base, path, options)).data;
+}
+
+/**
+ * One page of a paged list, with the server's `X-Total-Count` — every paged route sets it
+ * (`api/app.py: _paged`), and without it a page is indistinguishable from the whole list.
+ * `null` when the header is absent or not a count, so a caller can say "unknown" rather than
+ * mistake the page's length for the total.
+ */
+export async function apiPage<T>(
+  base: string,
+  path: string,
+  options: RequestOptions<T>,
+): Promise<{ readonly data: T; readonly total: number | null }> {
+  const { data, response } = await send(base, path, options);
+  const header = response.headers.get("X-Total-Count");
+  const total = header === null || !/^\d+$/.test(header) ? null : Number(header);
+  return { data, total };
+}
+
+async function send<T>(
+  base: string,
+  path: string,
+  options: RequestOptions<T>,
+): Promise<{ readonly data: T; readonly response: Response }> {
   const url = withQuery(`${base}${path}`, options.query);
   let response: Response;
   try {
@@ -238,5 +263,5 @@ export async function apiRequest<T>(base: string, path: string, options: Request
       response.status,
     );
   }
-  return parsed.data;
+  return { data: parsed.data, response };
 }

@@ -10,8 +10,9 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http, type JsonBodyType } from "msw";
 import { describe, expect, it } from "vitest";
 
+import { TRIAGE_HELP } from "@/pages/triage/help";
 import * as seed from "@/test/fixtures";
-import { API, emptyHandlers, server } from "@/test/msw";
+import { alertHandlers, API, emptyHandlers, PIPELINE, server } from "@/test/msw";
 import { renderApp } from "@/test/render";
 
 /** Record the `start`/`end` each request to `path` carried, answering with `body`. */
@@ -29,37 +30,130 @@ function recordRange(path: string, body: readonly unknown[]) {
 
 
 
-describe("truncation", () => {
-  it("says so when the queue is only the top slice, and scopes the chart's claim to it", async () => {
-    // Every list endpoint takes a `limit`, so every one of them can return a prefix of the
-    // truth that looks exactly like the whole of it. `/alerts` is priority-descending, so the
-    // rows dropped are the low-priority tail — which skews the severity chart drawn from them
-    // while the KPI tile beside it reports the true total from an uncapped `/summary`.
-    // The client asks for limit+1 and renders limit, which is the only test that generalises
-    // to the per-asset queries (`counts.events` is global; `/events` is filtered).
-    const many = Array.from({ length: 1001 }, (_, index) => ({
-      ...seed.alert,
-      alert_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    }));
+/** `count` alerts ranked by descending priority, on `assets` devices in turn. */
+function rankedAlerts(count: number, assets = ["pump-02"]) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...seed.alert,
+    alert_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    asset_id: assets[index % assets.length] as string,
+    priority_score: 99 - index * 0.01,
+  }));
+}
+
+describe("paging through the whole queue", () => {
+  it("pages through every alert from the server, not a capped prefix of them", async () => {
+    // The page used to load the top 1,000 and say so; past that the queue was unreachable.
+    // Now each page is its own request, so the 120th alert is as reachable as the first.
+    const offsets: (string | null)[] = [];
+    const many = rankedAlerts(120);
     server.use(
-      http.get(`${API}/alerts`, () => HttpResponse.json(many)),
-      http.get(`${API}/summary`, () =>
-        HttpResponse.json({ ...seed.summary, counts: { ...seed.summary.counts, alerts: 4312 } }),
-      ),
+      http.get(`${API}/alerts`, ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        offsets.push(params.get("offset"));
+        const offset = Number(params.get("offset"));
+        const limit = Number(params.get("limit"));
+        return HttpResponse.json(many.slice(offset, offset + limit), {
+          headers: { "X-Total-Count": "120" },
+        });
+      }),
     );
     renderApp("/");
 
-    expect(await screen.findByText(/Showing 1,000 of 4,312 alerts/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/among the 1,000 highest-priority alerts/),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("triage_matched")).toHaveTextContent("120 alerts");
+    expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
+    expect(screen.queryByText(/Showing .* of .* alerts/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Last" }));
+    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument();
+    expect(offsets).toEqual(["0", "100"]);
+    // The last page holds the 20 lowest-ranked alerts, the 120th among them.
+    const queue = (await screen.findAllByRole("table"))[0] as HTMLElement;
+    await waitFor(() => expect(within(queue).getAllByRole("row")).toHaveLength(21));
+    expect(within(queue).getAllByText("97.8").length).toBeGreaterThan(0);
   });
 
-  it("stays quiet when the list is complete", async () => {
+  it("draws the severity chart from the server's counts of the whole queue", async () => {
+    server.use(
+      http.get(`${API}/alerts/facets`, () =>
+        HttpResponse.json({ total: 11_377, by_severity: { high: 11_000, critical: 377 }, assets: ["pump-02"] }),
+      ),
+    );
     renderApp("/");
-    expect(await screen.findByTestId("stat-alerts")).toHaveTextContent("1");
-    expect(screen.queryByText(/Showing .* of .* alerts/)).not.toBeInTheDocument();
-    expect(screen.getByText("Alert count per severity.")).toBeInTheDocument();
+    expect(await screen.findByText("Alert count per severity.")).toBeInTheDocument();
+    expect(screen.queryByText(/highest-priority/)).not.toBeInTheDocument();
+    // The severity filter names how many each choice holds, from the same counts.
+    expect(await screen.findByRole("option", { name: "high (11,000)" })).toBeInTheDocument();
+  });
+
+  it("explains every severity in a table, with its priority band", async () => {
+    renderApp("/");
+    const toggle = await screen.findByRole("button", { name: /What the severities mean/ });
+    expect(screen.queryByTestId("severity_guide")).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    const rows = within(screen.getByTestId("severity_guide")).getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(0, 2).map((cell) => cell.textContent))).toEqual([
+      ["emergency", "90–100"],
+      ["critical", "70–89.9"],
+      ["high", "50–69.9"],
+      ["medium", "30–49.9"],
+      ["low", "0–29.9"],
+    ]);
+    expect(rows[1]).toHaveTextContent("Investigate immediately");
+  });
+
+  it("offers every asset with alerts, not only the ones ranked on this page", async () => {
+    // The page holds pump-02's alerts only; gw-01 and cam-07 rank further down the queue.
+    server.use(
+      http.get(`${API}/alerts/facets`, () =>
+        HttpResponse.json({ total: 60, by_severity: { high: 60 }, assets: ["cam-07", "gw-01", "pump-02"] }),
+      ),
+    );
+    renderApp("/");
+    const asset = await screen.findByLabelText("Asset");
+    await waitFor(() =>
+      expect(within(asset).getAllByRole("option").map((option) => option.textContent)).toEqual([
+        "any",
+        "cam-07",
+        "gw-01",
+        "pump-02",
+      ]),
+    );
+  });
+
+  it("asks the server for the severity and the asset, and goes back to page one", async () => {
+    const asked: string[] = [];
+    server.use(...alertHandlers(rankedAlerts(120, ["pump-02", "gw-01"])));
+    server.use(
+      http.get(`${API}/alerts`, ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        asked.push(`${params.get("severity")}/${params.get("asset_id")}/${params.get("offset")}`);
+        // Unfiltered, a queue; filtered, nothing — so the empty state is the filter's answer.
+        const unfiltered = params.get("severity") === null && params.get("asset_id") === null;
+        return HttpResponse.json(unfiltered ? [seed.alert] : [], {
+          headers: { "X-Total-Count": unfiltered ? "1" : "0" },
+        });
+      }),
+    );
+    renderApp("/");
+    await screen.findByTestId("triage_matched");
+    await userEvent.selectOptions(screen.getByLabelText("Severity"), "critical");
+    await userEvent.selectOptions(screen.getByLabelText("Asset"), "gw-01");
+    await waitFor(() => expect(asked.at(-1)).toBe("critical/gw-01/0"));
+    expect(await screen.findByText("No alert matches this filter.")).toBeInTheDocument();
+  });
+
+  it("inspects an alert named in the URL even when it is not on the page shown", async () => {
+    const elsewhere = {
+      ...seed.alert,
+      alert_id: "00000000-0000-4000-8000-00000000beef",
+      asset_id: "cam-07",
+      rationale: "an alert from page 40 of the queue",
+    };
+    server.use(...alertHandlers([seed.alert]));
+    server.use(http.get(`${API}/alerts/:id`, () => HttpResponse.json(elsewhere)));
+    renderApp(`/?alert=${elsewhere.alert_id}`);
+    expect(await screen.findByText("an alert from page 40 of the queue")).toBeInTheDocument();
+    expect(screen.getByLabelText("Inspect alert")).toHaveValue(elsewhere.alert_id);
   });
 });
 
@@ -102,14 +196,14 @@ describe("Triage", () => {
     // a ranking with a preference.
     renderApp("/");
     const severity = await screen.findByLabelText("Severity");
-    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+    expect(await screen.findByText("1 alert")).toBeInTheDocument();
 
     await userEvent.selectOptions(severity, "low");
     expect(await screen.findByText("No alert matches this filter.")).toBeInTheDocument();
-    expect(screen.getByText("0 of 1 shown")).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 alert match")).toBeInTheDocument();
 
     await userEvent.selectOptions(severity, "high");
-    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+    expect(await screen.findByText("1 of 1 alert match")).toBeInTheDocument();
   });
 
   it("filters by run on the server, naming each run, and keeps the filter on an empty run", async () => {
@@ -137,7 +231,7 @@ describe("Triage", () => {
     expect(screen.queryByText(/run the pipeline first/)).not.toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText("Run"), "");
-    expect(await screen.findByText("1 of 1 shown")).toBeInTheDocument();
+    expect(await screen.findByText("1 shown")).toBeInTheDocument();
   });
 
   it("filters by time range on the server, as UTC, and keeps the filter on an empty range", async () => {
@@ -278,6 +372,50 @@ describe("Triage", () => {
       "Lateral Movement — Remote Services (T1021)",
       "Exfiltration — Exfiltration Over C2 Channel (T1041)",
     ]);
+  });
+
+  it("explains the counts, the filters and the inspector behind an (i)", async () => {
+    server.use(
+      http.get(`${API}/alerts`, () =>
+        HttpResponse.json([{ ...seed.alert, recommended_action: "Isolate the device." }]),
+      ),
+      http.get(`${API}/alerts/:id/detections`, () => HttpResponse.json(seed.ruleDetections)),
+    );
+    renderApp("/");
+    await screen.findByRole("list", { name: "MITRE ATT&CK techniques" });
+    const topics = [
+      ...["runs", "events", "detections", "alerts", "malformed records"],
+      ...["Ranked queue", "Severity", "Asset", "Run"],
+      ...["Alert inspector", "Inspect alert", "Rationale", "Recommended action", "MITRE ATT&CK"],
+      ...["Score components", "Evidence"],
+    ];
+    for (const topic of topics) {
+      expect(screen.getByRole("button", { name: `About ${topic}` }), topic).toBeInTheDocument();
+    }
+    await userEvent.click(screen.getByRole("button", { name: "About Severity" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(TRIAGE_HELP.severity);
+  });
+
+  it("counts the saved runs first, before the events", async () => {
+    renderApp("/");
+    expect(await screen.findByTestId("stat-runs")).toHaveTextContent("1");
+    const tiles = screen.getAllByTestId(/^stat-/).map((tile) => tile.dataset["testid"]);
+    expect(tiles.slice(0, 2)).toEqual(["stat-runs", "stat-events"]);
+  });
+
+  it("marks a capped run list as a lower bound rather than an exact count", async () => {
+    server.use(
+      http.get(`${PIPELINE}/runs`, () =>
+        HttpResponse.json(
+          Array.from({ length: 201 }, (_, index) => ({
+            ...seed.savedRun,
+            run_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          })),
+        ),
+      ),
+    );
+    renderApp("/");
+    await waitFor(() => expect(screen.getByTestId("stat-runs")).toHaveTextContent("200+"));
   });
 
   it("draws the severity chart with its caption", async () => {
