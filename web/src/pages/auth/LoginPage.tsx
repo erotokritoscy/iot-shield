@@ -30,7 +30,7 @@ export function LoginPage() {
   return (
     <AuthLayout title="Sign in" description="Sign in to see your organization's alerts.">
       <form className="space-y-4" onSubmit={submit} noValidate>
-        <Field label="Username" htmlFor="login-username">
+        <Field label="Email" htmlFor="login-username">
           <TextInput
             id="login-username"
             autoComplete="username"
@@ -53,7 +53,7 @@ export function LoginPage() {
         {login.isError ? (
           <Notice tone="error">
             {login.error instanceof ApiError && login.error.status === 401
-              ? "Wrong username or password."
+              ? "Wrong email or password."
               : describeRefusal(login.error)}
           </Notice>
         ) : null}

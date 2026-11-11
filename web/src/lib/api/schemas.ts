@@ -346,6 +346,7 @@ export const jobSchema = z.object({
   schedule_text: z.string().nullable(),
   enabled: z.boolean(),
   next_run_at: z.string().nullable(),
+  notify_emails: z.array(z.string()),
   last: executionSchema.nullable(),
 });
 export type _JobOk = Assert<Satisfies<JobInfo, z.infer<typeof jobSchema>>>;

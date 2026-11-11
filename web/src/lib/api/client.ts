@@ -321,8 +321,12 @@ export const pipelineApi = {
       ...(signal ? { signal } : {}),
     }),
 
-  /** Run and save the chain; a blank `name` lets the server name it after its inputs (ADR-0046). */
-  run: (spec: unknown, inputs: SourceInput[], name?: string, progressId?: string) =>
+  /**
+   * Run and save the chain; a blank `name` lets the server name it after its inputs (ADR-0046).
+   * `emailResult` mails the outcome to the signed-in user (ADR-0052 amendment); the server's
+   * default is on.
+   */
+  run: (spec: unknown, inputs: SourceInput[], name?: string, progressId?: string, emailResult = true) =>
     apiRequest(PIPELINE_BASE, "/runs", {
       schema: runSchema,
       method: "POST",
@@ -331,6 +335,7 @@ export const pipelineApi = {
         inputs,
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(progressId ? { progress_id: progressId } : {}),
+        email_result: emailResult,
       },
     }),
 

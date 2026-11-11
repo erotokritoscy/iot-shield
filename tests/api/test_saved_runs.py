@@ -23,7 +23,7 @@ def _run(browser: Browser, name: str | None = None, origin: str = "pumps.csv") -
     return response.json()
 
 
-def _admin(stack: Stack, org: str = "Acme", username: str = "ana") -> Browser:
+def _admin(stack: Stack, org: str = "Acme", username: str = "ana@example.com") -> Browser:
     browser = stack.browser()
     assert browser.register(org, username).status_code == 201
     return browser
@@ -31,11 +31,11 @@ def _admin(stack: Stack, org: str = "Acme", username: str = "ana") -> Browser:
 
 def _member(stack: Stack, admin: Browser) -> Browser:
     created = admin.pipeline.post(
-        "/auth/users", json={"username": "bob", "password": "temp-pass-1"}
+        "/auth/users", json={"username": "bob@example.com", "password": "temp-pass-1"}
     )
     assert created.status_code == 201
     member = stack.browser()
-    assert member.login("bob", "temp-pass-1").status_code == 200
+    assert member.login("bob@example.com", "temp-pass-1").status_code == 200
     return member
 
 
@@ -53,7 +53,7 @@ class TestSaving:
 
         saved = admin.pipeline.get(f"/runs/{result['run_id']}").json()
         assert saved["name"] == "Night shift check"  # whitespace collapsed, not kept verbatim
-        assert saved["created_by"] == "ana"
+        assert saved["created_by"] == "ana@example.com"
         assert {key: saved[key] for key in ("events", "malformed", "detections", "alerts")} == {
             key: result[key] for key in ("events", "malformed", "detections", "alerts")
         }
@@ -120,7 +120,7 @@ class TestDeleting:
 
 class TestTenancy:
     def test_another_organizations_run_is_not_found_by_any_route(self, stack: Stack) -> None:
-        owner, outsider = _admin(stack), _admin(stack, "Globex", "gus")
+        owner, outsider = _admin(stack), _admin(stack, "Globex", "gus@example.com")
         result = _run(owner)
         path = f"/runs/{result['run_id']}"
 
@@ -131,7 +131,7 @@ class TestTenancy:
         assert owner.pipeline.get(path).json()["name"] != "mine now"
 
     def test_deleting_an_organization_deletes_its_runs(self, stack: Stack) -> None:
-        owner, other = _admin(stack), _admin(stack, "Globex", "gus")
+        owner, other = _admin(stack), _admin(stack, "Globex", "gus@example.com")
         _run(owner)
         kept = _run(other)
         root = stack.superadmin()

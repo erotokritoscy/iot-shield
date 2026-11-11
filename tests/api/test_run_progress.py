@@ -107,7 +107,7 @@ def _run(browser: Browser, progress_id: UUID | None) -> Any:
 class TestRoute:
     def test_a_finished_run_reads_back_as_finished(self, stack: Stack) -> None:
         analyst = stack.browser()
-        assert analyst.register("Acme", "ana").status_code == 201
+        assert analyst.register("Acme", "ana@example.com").status_code == 201
         progress_id = uuid4()
         assert _run(analyst, progress_id).status_code == 200
         response = analyst.pipeline.get(f"/runs/progress/{progress_id}")
@@ -118,13 +118,13 @@ class TestRoute:
 
     def test_a_run_without_a_progress_id_runs_as_before(self, stack: Stack) -> None:
         analyst = stack.browser()
-        assert analyst.register("Acme", "ana").status_code == 201
+        assert analyst.register("Acme", "ana@example.com").status_code == 201
         assert _run(analyst, None).status_code == 200
 
     def test_an_unknown_id_is_404_and_another_organizations_too(self, stack: Stack) -> None:
         owner, outsider = stack.browser(), stack.browser()
-        assert owner.register("Acme", "ana").status_code == 201
-        assert outsider.register("Globex", "bob").status_code == 201
+        assert owner.register("Acme", "ana@example.com").status_code == 201
+        assert outsider.register("Globex", "bob@example.com").status_code == 201
         progress_id = uuid4()
         assert _run(owner, progress_id).status_code == 200
 
@@ -135,7 +135,7 @@ class TestRoute:
 
     def test_an_id_still_running_is_refused(self, stack: Stack) -> None:
         analyst = stack.browser()
-        assert analyst.register("Acme", "ana").status_code == 201
+        assert analyst.register("Acme", "ana@example.com").status_code == 201
         progress_id = uuid4()
         board: ProgressBoard = stack.pipeline_app.state.progress
         org_id = analyst.pipeline.get("/auth/me").json()["organization"]["org_id"]
@@ -144,7 +144,7 @@ class TestRoute:
 
     def test_a_refused_run_reads_back_as_failed(self, stack: Stack) -> None:
         analyst = stack.browser()
-        assert analyst.register("Acme", "ana").status_code == 201
+        assert analyst.register("Acme", "ana@example.com").status_code == 201
         progress_id = uuid4()
         bad = RUN_SPEC | {"detectors": [{"name": "no_such_detector"}]}
         response = analyst.pipeline.post(

@@ -2,6 +2,7 @@
 # dashboard, plus the pipeline runner as an on-demand job (profile "jobs").
 #
 #   docker compose up                 # postgres -> init -> APIs + job worker -> dashboard
+#                                     # (+ mailhog: run/job emails at http://127.0.0.1:8025)
 #   docker compose run --rm runner    # populate the DB with the walkthrough (config/demo.yaml)
 #
 # Login is ON in this stack (IOTSHIELD_AUTH, ADR-0039): open :8080, register an organization,
@@ -12,7 +13,7 @@
 # init step SEEDS the "UCY" organization, a super admin at home in it (admin@admin.com /
 # password unless overridden below) and the walkthrough's data into it — each only once, so
 # change that password on the Account page. More super admins, by hand:
-#   docker compose run --rm runner python -m iotshield.auth.superadmin create --username root
+#   docker compose run --rm runner python -m iotshield.auth.superadmin create --username root@example.com
 # IOTSHIELD_OPEN_REGISTRATION=0 docker compose up -d   closes public registration.
 #
 # The dashboard is the React SPA on :8080 (`dashboard-web`), a pure client of
@@ -50,6 +51,21 @@ x-auth-env: &auth-env
 # What a run needs to read its sources and write its results: the same on the Pipeline API,
 # which runs what the Compose page sends, and on the job worker, which runs saved jobs
 # (ADR-0050). One anchor so the two can never disagree about a shelf, a password or the key.
+x-mail-env: &mail-env
+  # Emails (ADR-0052): the worker mails a job execution to the job's recipients, the
+  # Pipeline API a Compose run to whoever ran it (when "Email me the result" is ticked).
+  # MailHog catches every message (read them at http://127.0.0.1:8025); point these at a
+  # real relay (plus IOTSHIELD_SMTP_USERNAME/_PASSWORD/_STARTTLS) to deliver for real.
+  # IOTSHIELD_SMTP_HOST empty = no mail.
+  IOTSHIELD_SMTP_HOST: ${IOTSHIELD_SMTP_HOST-mailhog}
+  IOTSHIELD_SMTP_PORT: ${IOTSHIELD_SMTP_PORT:-1025}
+  IOTSHIELD_MAIL_FROM: ${IOTSHIELD_MAIL_FROM:-iotshield@localhost}
+  IOTSHIELD_SMTP_USERNAME: ${IOTSHIELD_SMTP_USERNAME:-}
+  IOTSHIELD_SMTP_PASSWORD: ${IOTSHIELD_SMTP_PASSWORD:-}
+  IOTSHIELD_SMTP_STARTTLS: ${IOTSHIELD_SMTP_STARTTLS:-}
+  # Where an email's "Open the run" link points: the dashboard as its readers reach it.
+  IOTSHIELD_DASHBOARD_URL: ${IOTSHIELD_DASHBOARD_URL:-http://localhost:8080}
+
 x-run-env: &run-env
   # File-sink output dir (ADR-0018): each service bind-mounts it to the host, so a file-sink
   # run's JSONL is visible on the host and survives container recreation. A
@@ -145,7 +161,7 @@ services:
     <<: *app
     command: ["python", "-m", "iotshield.api.control"]
     environment:
-      <<: [*db-env, *auth-env, *run-env]
+      <<: [*db-env, *auth-env, *run-env, *mail-env]
       IOTSHIELD_PIPELINE_API_HOST: "0.0.0.0"  # bind all interfaces, not container loopback
       # Whether anyone may register an organization (ADR-0040). On by default; set it to 0 in
       # the shell or .env and only the super admin can create organizations.
@@ -179,6 +195,8 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+      mailhog:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/health')\""]
       interval: 5s
@@ -194,7 +212,7 @@ services:
     <<: *app
     command: ["python", "-m", "iotshield.jobs.worker"]
     environment:
-      <<: [*db-env, *run-env]
+      <<: [*db-env, *run-env, *mail-env]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -205,6 +223,17 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+      mailhog:
+        condition: service_started
+    restart: unless-stopped
+
+  # A local SMTP catcher for run and job emails (ADR-0052): accepts every message and delivers none,
+  # so nothing leaves the laptop. SMTP is reachable only inside the compose network (:1025);
+  # the web UI that lists what was "sent" is published on loopback like every other port.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "127.0.0.1:8025:8025"
     restart: unless-stopped
 
   # The dashboard (ADR-0031): the product's three planes as a single-page app served by

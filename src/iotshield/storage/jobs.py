@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from iotshield.storage.orm import JobExecutionRow, JobRow
+from iotshield.storage.orm import JobExecutionRow, JobNotificationRow, JobRow
 from iotshield.storage.repository import Page
 
 Status = Literal["queued", "running", "succeeded", "failed"]
@@ -39,6 +39,7 @@ class Job:
     schedule: dict[str, Any] | None
     enabled: bool
     next_run_at: datetime | None
+    notify_emails: tuple[str, ...] = ()  # who is emailed when an execution finishes (ADR-0052)
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,27 @@ class Execution:
     error: str | None
 
 
-def _job(row: JobRow) -> Job:
+def _recipients(session: Session, job_id: UUID) -> tuple[str, ...]:
+    row = session.get(JobNotificationRow, job_id)
+    return tuple(row.recipients) if row is not None else ()
+
+
+def _set_recipients(
+    session: Session, job_id: UUID, org_id: str, recipients: Sequence[str]
+) -> tuple[str, ...]:
+    row = session.get(JobNotificationRow, job_id)
+    if not recipients:
+        if row is not None:
+            session.delete(row)
+        return ()
+    if row is None:
+        session.add(JobNotificationRow(job_id=job_id, org_id=org_id, recipients=list(recipients)))
+    else:
+        row.recipients = list(recipients)
+    return tuple(recipients)
+
+
+def _job(row: JobRow, notify_emails: Sequence[str] = ()) -> Job:
     return Job(
         job_id=row.job_id,
         org_id=row.org_id,
@@ -69,6 +90,7 @@ def _job(row: JobRow) -> Job:
         schedule=row.schedule,
         enabled=row.enabled,
         next_run_at=row.next_run_at,
+        notify_emails=tuple(notify_emails),
     )
 
 
@@ -108,6 +130,7 @@ def add_job(
     enabled: bool,
     next_run_at: datetime | None,
     now: datetime,
+    notify_emails: Sequence[str] = (),
 ) -> Job:
     row = JobRow(
         job_id=uuid4(),
@@ -124,7 +147,9 @@ def add_job(
     )
     session.add(row)
     session.flush()
-    return _job(row)
+    recipients = _set_recipients(session, row.job_id, org_id, notify_emails)
+    session.flush()
+    return _job(row, recipients)
 
 
 def update_job(
@@ -139,6 +164,7 @@ def update_job(
     enabled: bool,
     next_run_at: datetime | None,
     now: datetime,
+    notify_emails: Sequence[str] = (),
 ) -> Job | None:
     row = _row(session, job_id, org_id)
     if row is None:
@@ -150,20 +176,24 @@ def update_job(
     row.enabled = enabled
     row.next_run_at = next_run_at
     row.updated_at = now
+    recipients = _set_recipients(session, job_id, org_id, notify_emails)
     session.flush()
-    return _job(row)
+    return _job(row, recipients)
 
 
 def get_job(session: Session, job_id: UUID, *, org_id: str) -> Job | None:
     row = _row(session, job_id, org_id)
-    return _job(row) if row is not None else None
+    return _job(row, _recipients(session, job_id)) if row is not None else None
 
 
 def list_jobs(session: Session, *, org_id: str) -> list[Job]:
     rows = session.scalars(
         select(JobRow).where(JobRow.org_id == org_id).order_by(JobRow.name, JobRow.created_at)
     )
-    return [_job(row) for row in rows]
+    rows = list(rows)
+    found = session.scalars(select(JobNotificationRow).where(JobNotificationRow.org_id == org_id))
+    recipients = {row.job_id: row.recipients for row in found}
+    return [_job(row, recipients.get(row.job_id, ())) for row in rows]
 
 
 def delete_job(session: Session, job_id: UUID, *, org_id: str) -> bool:
@@ -172,6 +202,7 @@ def delete_job(session: Session, job_id: UUID, *, org_id: str) -> bool:
     if row is None:
         return False
     session.execute(delete(JobExecutionRow).where(JobExecutionRow.job_id == job_id))
+    session.execute(delete(JobNotificationRow).where(JobNotificationRow.job_id == job_id))
     session.delete(row)
     session.flush()
     return True
@@ -328,4 +359,4 @@ def fail_stale(session: Session, *, now: datetime, stale_after: timedelta) -> in
 def job_row(session: Session, job_id: UUID) -> Job | None:
     """A job by id alone, for the worker, which already holds the execution's ``org_id``."""
     row = session.get(JobRow, job_id)
-    return _job(row) if row is not None else None
+    return _job(row, _recipients(session, job_id)) if row is not None else None

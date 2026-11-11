@@ -11,10 +11,19 @@ import { Collapsible, Notice } from "@/components/ui/surfaces";
 import { pipelineApi } from "@/lib/api/client";
 import { describeError } from "@/lib/api/http";
 import type { DataSourceInfo, JobInfo } from "@/lib/api/types";
+import { useAuth } from "@/lib/auth";
 import { keys } from "@/lib/queries";
 import type { SourceRow } from "@/pages/compose/model";
 import { JobForm } from "@/pages/jobs/JobForm";
-import { draftFromJob, draftFromPulls, jobBlocker, jobBody, jobProblem, type JobDraft } from "@/pages/jobs/jobDraft";
+import {
+  defaultRecipients,
+  draftFromJob,
+  draftFromPulls,
+  jobBlocker,
+  jobBody,
+  jobProblem,
+  type JobDraft,
+} from "@/pages/jobs/jobDraft";
 
 /** The draft follows the sources: a pull added or changed on step 1 shows up here. */
 function aligned(draft: JobDraft, sources: readonly SourceRow[]): JobDraft {
@@ -44,8 +53,16 @@ export function SaveAsJob({
   readonly dataSources: readonly DataSourceInfo[];
 }) {
   const blocker = jobBlocker(sources);
+  const auth = useAuth();
+  const me = auth.data?.kind === "user" ? auth.data.me : null;
   const [draft, setDraft] = React.useState<JobDraft>(() =>
-    job ? draftFromJob(job) : draftFromPulls(sources.flatMap((row) => (row.pull ? [row.pull] : []))),
+    job
+      ? draftFromJob(job)
+      : draftFromPulls(
+          sources.flatMap((row) => (row.pull ? [row.pull] : [])),
+          "",
+          defaultRecipients(me?.username),
+        ),
   );
   const current = aligned(draft, sources);
   const problem = jobProblem(current);

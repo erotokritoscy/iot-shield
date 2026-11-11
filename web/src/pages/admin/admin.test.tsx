@@ -13,7 +13,7 @@ import { renderApp } from "@/test/render";
 
 const root: MeResponse = {
   user_id: "00000000-0000-4000-8000-000000000001",
-  username: "root",
+  username: "root@example.com",
   role: "superadmin",
   organization: null,
 };
@@ -29,11 +29,11 @@ const acme: OrganizationAdminInfo = {
 };
 const alice: UserInfo = {
   user_id: "11111111-1111-4111-8111-111111111111",
-  username: "alice",
+  username: "alice@example.com",
   role: "admin",
   created_at: "2026-10-13T08:00:00+00:00",
 };
-const bob: UserInfo = { ...alice, user_id: "22222222-2222-4222-8222-222222222222", username: "bob", role: "member" };
+const bob: UserInfo = { ...alice, user_id: "22222222-2222-4222-8222-222222222222", username: "bob@example.com", role: "member" };
 
 const calls: { created: unknown; suspended: string[]; deleted: string[]; roles: unknown[]; resets: unknown[] } = {
   created: null,
@@ -116,11 +116,11 @@ describe("the super admin", () => {
 
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Organization name"), "Initech");
-    await user.type(screen.getByLabelText("First admin's username"), "dan");
+    await user.type(screen.getByLabelText("First admin's email"), "dan@example.com");
     await user.type(screen.getByLabelText("Temporary password"), "dan-pass-12");
     await user.click(screen.getByRole("button", { name: "Create organization" }));
     expect(await screen.findByText("Created Initech (initech).")).toBeInTheDocument();
-    expect(calls.created).toEqual({ organization: "Initech", username: "dan", password: "dan-pass-12" });
+    expect(calls.created).toEqual({ organization: "Initech", username: "dan@example.com", password: "dan-pass-12" });
   });
 
   it("suspends an organization after confirming", async () => {
@@ -158,9 +158,9 @@ describe("the super admin", () => {
     asSuperAdmin();
     renderApp("/admin/organizations/acme-water");
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByLabelText("Role of bob"), "admin");
-    expect(await screen.findByText("bob is now an admin.")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Role of alice"), "member");
+    await user.selectOptions(await screen.findByLabelText("Role of bob@example.com"), "admin");
+    expect(await screen.findByText("bob@example.com is now an admin.")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Role of alice@example.com"), "member");
     expect(await screen.findByText("'alice' is the organization's only admin")).toBeInTheDocument();
   });
 
@@ -172,7 +172,7 @@ describe("the super admin", () => {
     const prompt = window.prompt;
     window.prompt = () => "fresh-temp-2";
     try {
-      const bobRow = within(table).getByText("bob").closest("tr") as HTMLElement;
+      const bobRow = within(table).getByText("bob@example.com").closest("tr") as HTMLElement;
       await user.click(within(bobRow).getByRole("button", { name: "Reset password" }));
       await waitFor(() => expect(calls.resets).toEqual([{ user: bob.user_id, password: "fresh-temp-2" }]));
     } finally {

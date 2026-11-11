@@ -7,6 +7,7 @@ import { Notice, PageHeader, Section } from "@/components/ui/surfaces";
 import { DataTable, type Column } from "@/components/ui/table";
 import { authApi } from "@/lib/api/client";
 import { describeRefusal } from "@/lib/api/http";
+import { usernameProblem } from "@/lib/email";
 import type { OrgRole, UserInfo } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { MIN_PASSWORD } from "@/pages/auth/RegisterPage";
@@ -41,18 +42,22 @@ export function AddUserForm({
   });
 
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD;
+  const notEmail = username.trim().length > 0 ? usernameProblem(username) : null;
+  const ready = usernameProblem(username) === null && password.length >= MIN_PASSWORD;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (username.trim() && password.length >= MIN_PASSWORD) add.mutate();
+    if (ready) add.mutate();
   };
 
   return (
     <form className="space-y-4" onSubmit={submit} noValidate>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Username" htmlFor="new-username">
+        <Field label="Email" htmlFor="new-username">
           <TextInput
             id="new-username"
+            type="email"
             autoComplete="off"
+            placeholder="name@example.com"
             value={username}
             onChange={(event) => setUsername(event.target.value)}
           />
@@ -80,13 +85,14 @@ export function AddUserForm({
           />
         </Field>
       </div>
+      {notEmail ? <Notice tone="warning">{notEmail}</Notice> : null}
       {tooShort ? <Notice tone="warning">{`Passwords are at least ${MIN_PASSWORD} characters.`}</Notice> : null}
       {add.isError ? <Notice tone="error">{describeRefusal(add.error)}</Notice> : null}
       {add.isSuccess ? <Notice tone="success">{`Added ${add.data.username}.`}</Notice> : null}
       <Button
         type="submit"
         variant="primary"
-        disabled={add.isPending || !username.trim() || password.length < MIN_PASSWORD}
+        disabled={add.isPending || !ready}
       >
         {add.isPending ? "Adding…" : "Add user"}
       </Button>

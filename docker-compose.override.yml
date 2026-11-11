@@ -1,0 +1,9 @@
+# Local only (gitignored): publishes the stack's Postgres so a desktop client such as DBeaver
+# can open it. Compose merges this file automatically on `docker compose up`.
+#
+# Loopback only, like every other published port in docker-compose.yml. 5434 because 5433 is
+# where the SensiPro database publishes (config/connections.yaml).
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5434:5432"

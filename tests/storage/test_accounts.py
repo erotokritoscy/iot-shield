@@ -24,7 +24,9 @@ from iotshield.storage.orm import (
 HASH = "scrypt$1$1$1$AA==$AA=="  # storage never inspects it
 
 
-def register(session: Session, org: str = "Acme Water", user: str = "alice") -> accounts.Account:
+def register(
+    session: Session, org: str = "Acme Water", user: str = "alice@example.com"
+) -> accounts.Account:
     return accounts.register_organization(session, name=org, username=user, password_hash=HASH)
 
 
@@ -52,47 +54,51 @@ class TestRegistration:
         account = register(session)
         assert account.organization == accounts.Organization("acme-water", "Acme Water")
         assert account.user.role == "admin" and account.is_admin
-        assert account.user.username == "alice"
+        assert account.user.username == "alice@example.com"
         assert accounts.list_users(session, org_id="acme-water") == [account.user]
 
     def test_an_org_name_that_maps_to_a_taken_id_conflicts(self, session: Session) -> None:
-        register(session, "Acme Water", "alice")
+        register(session, "Acme Water", "alice@example.com")
         with pytest.raises(AccountConflict, match="already exists"):
-            register(session, "acme  WATER", "bob")
+            register(session, "acme  WATER", "bob@example.com")
 
     def test_usernames_are_unique_across_orgs_and_case(self, session: Session) -> None:
-        register(session, "Acme", "alice")
+        register(session, "Acme", "alice@example.com")
         with pytest.raises(AccountConflict, match="taken"):
-            register(session, "Globex", "ALICE")
+            register(session, "Globex", "ALICE@EXAMPLE.COM")
 
 
 class TestUsers:
     def test_add_list_and_delete_within_an_org(self, session: Session) -> None:
         admin = register(session)
         bob = accounts.add_user(
-            session, org_id=admin.org_id, username="Bob", password_hash=HASH, role="member"
+            session,
+            org_id=admin.org_id,
+            username="Bob@example.com",
+            password_hash=HASH,
+            role="member",
         )
-        assert bob.username == "bob"
+        assert bob.username == "bob@example.com"
         assert [u.username for u in accounts.list_users(session, org_id=admin.org_id)] == [
-            "alice",
-            "bob",
+            "alice@example.com",
+            "bob@example.com",
         ]
         assert accounts.count_admins(session, org_id=admin.org_id) == 1
         assert accounts.delete_user(session, bob.user_id, org_id=admin.org_id)
         assert accounts.get_user(session, bob.user_id, org_id=admin.org_id) is None
 
     def test_another_orgs_user_is_not_found_and_not_deleted(self, session: Session) -> None:
-        acme = register(session, "Acme", "alice")
-        globex = register(session, "Globex", "gina")
+        acme = register(session, "Acme", "alice@example.com")
+        globex = register(session, "Globex", "gina@example.com")
         assert accounts.get_user(session, globex.user.user_id, org_id=acme.org_id) is None
         assert not accounts.delete_user(session, globex.user.user_id, org_id=acme.org_id)
         assert accounts.get_user(session, globex.user.user_id, org_id=globex.org_id) is not None
 
     def test_credentials_are_found_case_insensitively(self, session: Session) -> None:
         register(session)
-        found = accounts.credentials_for(session, "  ALICE ")
+        found = accounts.credentials_for(session, "  ALICE@Example.COM ")
         assert found is not None and found[1] == HASH
-        assert accounts.credentials_for(session, "nobody") is None
+        assert accounts.credentials_for(session, "nobody@example.com") is None
 
 
 class TestSessions:
@@ -124,7 +130,11 @@ class TestSessions:
     def test_deleting_a_user_ends_their_sessions(self, session: Session) -> None:
         admin = register(session)
         bob = accounts.add_user(
-            session, org_id=admin.org_id, username="bob", password_hash=HASH, role="member"
+            session,
+            org_id=admin.org_id,
+            username="bob@example.com",
+            password_hash=HASH,
+            role="member",
         )
         token = accounts.create_session(session, bob.user_id)
         accounts.delete_user(session, bob.user_id, org_id=admin.org_id)
@@ -183,8 +193,8 @@ class TestTenantScoping:
 
 class TestSuperAdmin:
     def test_a_super_admin_belongs_to_no_org_and_resolves(self, session: Session) -> None:
-        root = accounts.create_superadmin(session, username="Root", password_hash=HASH)
-        assert (root.username, root.role, root.org_id) == ("root", "superadmin", None)
+        root = accounts.create_superadmin(session, username="Root@example.com", password_hash=HASH)
+        assert (root.username, root.role, root.org_id) == ("root@example.com", "superadmin", None)
         account = accounts.resolve_session(session, accounts.create_session(session, root.user_id))
         assert account is not None and account.is_superadmin and account.organization is None
         with pytest.raises(ValueError, match="no organization"):
@@ -194,7 +204,7 @@ class TestSuperAdmin:
     def test_a_super_admin_may_have_a_home_org_and_then_resolves_into_it(
         self, session: Session
     ) -> None:
-        ucy = register(session, "UCY", "ucy-admin")
+        ucy = register(session, "UCY", "ucy-admin@example.com")
         root = accounts.create_superadmin(
             session, username="admin@admin.com", password_hash=HASH, org_id=ucy.org_id
         )
@@ -213,7 +223,7 @@ class TestSuperAdmin:
             UserRow(
                 user_id=uuid4(),
                 org_id=None,
-                username="orphan",
+                username="orphan@example.com",
                 password_hash=HASH,
                 role="admin",
                 created_at=datetime.now(UTC),
@@ -225,9 +235,13 @@ class TestSuperAdmin:
 
 class TestOrganizationManagement:
     def test_summaries_count_users_admins_and_data(self, session: Session) -> None:
-        acme = register(session, "Acme", "alice")
+        acme = register(session, "Acme", "alice@example.com")
         accounts.add_user(
-            session, org_id=acme.org_id, username="bob", password_hash=HASH, role="member"
+            session,
+            org_id=acme.org_id,
+            username="bob@example.com",
+            password_hash=HASH,
+            role="member",
         )
         repository.insert_events(session, [_event("pump-02", 1.0)], org_id=acme.org_id)
         summary = accounts.organization_summary(session, acme.org_id)
@@ -276,8 +290,8 @@ class TestOrganizationManagement:
             repository.insert_detections(session, [detection], org_id=org_id)
             repository.insert_alerts(session, [alert], org_id=org_id)
 
-        acme = register(session, "Acme", "alice")
-        globex = register(session, "Globex", "gina")
+        acme = register(session, "Acme", "alice@example.com")
+        globex = register(session, "Globex", "gina@example.com")
         seed(acme.org_id)
         seed(globex.org_id)
         accounts.create_session(session, acme.user.user_id)
@@ -288,8 +302,10 @@ class TestOrganizationManagement:
             orgs = set(session.scalars(select(row_type.org_id)))
             assert acme.org_id not in orgs, row_type.__tablename__
         assert len(session.scalars(select(AlertDetectionRow)).all()) == 1  # globex's link
-        assert [u.username for u in accounts.list_users(session, org_id=globex.org_id)] == ["gina"]
-        assert accounts.credentials_for(session, "alice") is None
+        assert [u.username for u in accounts.list_users(session, org_id=globex.org_id)] == [
+            "gina@example.com"
+        ]
+        assert accounts.credentials_for(session, "alice@example.com") is None
         assert not accounts.delete_organization(session, acme.org_id)
 
     def test_set_role_refuses_to_demote_the_last_admin(self, session: Session) -> None:
@@ -297,7 +313,11 @@ class TestOrganizationManagement:
         with pytest.raises(AccountConflict, match="only admin"):
             accounts.set_role(session, acme.user.user_id, "member", org_id=acme.org_id)
         bob = accounts.add_user(
-            session, org_id=acme.org_id, username="bob", password_hash=HASH, role="member"
+            session,
+            org_id=acme.org_id,
+            username="bob@example.com",
+            password_hash=HASH,
+            role="member",
         )
         assert accounts.set_role(session, bob.user_id, "admin", org_id=acme.org_id) is not None
         demoted = accounts.set_role(session, acme.user.user_id, "member", org_id=acme.org_id)
@@ -308,7 +328,7 @@ class TestOrganizationManagement:
 class TestASuperAdminsHomeIsProtected:
     @pytest.fixture()
     def home(self, session: Session) -> accounts.User:
-        register(session, "UCY", "ucy-admin")
+        register(session, "UCY", "ucy-admin@example.com")
         return accounts.create_superadmin(
             session, username="admin@admin.com", password_hash=HASH, org_id="ucy"
         )
@@ -334,6 +354,52 @@ class TestASuperAdminsHomeIsProtected:
         assert accounts.credentials_for(session, "admin@admin.com") is not None
 
     def test_other_orgs_are_unaffected(self, session: Session, home: accounts.User) -> None:
-        other = register(session, "Acme", "alice")
+        other = register(session, "Acme", "alice@example.com")
         assert accounts.set_suspended(session, other.org_id, suspended=True) is not None
         assert accounts.delete_organization(session, other.org_id)
+
+
+class TestUsernamesAreEmailAddresses:
+    """ADR-0052: a username is the address a job's results are mailed to, so it must be one."""
+
+    @pytest.mark.parametrize(
+        ("given", "stored"),
+        [
+            ("alice@example.com", "alice@example.com"),
+            ("  Alice@Example.COM ", "alice@example.com"),
+            ("first.last+tag@mail.example.org", "first.last+tag@mail.example.org"),
+            ("admin@admin.com", "admin@admin.com"),
+        ],
+    )
+    def test_an_address_is_accepted_and_normalized(self, given: str, stored: str) -> None:
+        assert accounts.validate_username(given) == stored
+
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "alice",
+            "root",
+            "a",
+            "alice@",
+            "@example.com",
+            "alice@example",
+            "alice@example.c",
+            "alice@@example.com",
+            "al ice@example.com",
+            "alice..b@example.com",
+            ".alice@example.com",
+            "alice.@example.com",
+            "alice@-example.com",
+            "alice@example..com",
+            f"{'a' * 60}@example.com",  # over the 64-character column
+        ],
+    )
+    def test_anything_else_is_refused(self, given: str) -> None:
+        with pytest.raises(ValueError, match="valid email address"):
+            accounts.validate_username(given)
+
+    def test_a_recipient_may_be_longer_than_a_username(self) -> None:
+        long = f"{'a' * 60}@example.com"
+        assert accounts.validate_email(long) == long
+        with pytest.raises(ValueError, match="not a valid email address"):
+            accounts.validate_email("not-an-address")

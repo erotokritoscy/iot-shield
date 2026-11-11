@@ -12,7 +12,7 @@ import pytest
 from tests.api.conftest import PASSWORD, Browser, Stack
 
 
-def _org_with_data(stack: Stack, org: str = "Acme", admin: str = "alice") -> Browser:
+def _org_with_data(stack: Stack, org: str = "Acme", admin: str = "alice@example.com") -> Browser:
     browser = stack.browser()
     assert browser.register(org, admin).status_code == 201
     assert browser.run_demo().status_code == 200
@@ -49,12 +49,14 @@ class TestWhoTheSuperAdminIs:
             "/auth/password", json={"current_password": PASSWORD, "new_password": "new-root-pw"}
         )
         assert changed.status_code == 204
-        assert stack.browser().login("root", "new-root-pw").status_code == 200
+        assert stack.browser().login("root@example.com", "new-root-pw").status_code == 200
 
     def test_appears_in_no_organizations_user_list(self, stack: Stack) -> None:
         alice = _org_with_data(stack)
         stack.superadmin()
-        assert [u["username"] for u in alice.pipeline.get("/auth/users").json()] == ["alice"]
+        assert [u["username"] for u in alice.pipeline.get("/auth/users").json()] == [
+            "alice@example.com"
+        ]
 
 
 class TestOnlyTheSuperAdminReachesAdmin:
@@ -70,8 +72,8 @@ class TestOnlyTheSuperAdminReachesAdmin:
 
 class TestListingAndCreating:
     def test_lists_every_org_with_counts_but_no_rows(self, stack: Stack) -> None:
-        _org_with_data(stack, "Acme", "alice")
-        stack.browser().register("Globex", "gina")
+        _org_with_data(stack, "Acme", "alice@example.com")
+        stack.browser().register("Globex", "gina@example.com")
         orgs = _orgs(stack.superadmin())
         assert set(orgs) == {"acme", "globex"}
         acme = orgs["acme"]
@@ -86,17 +88,21 @@ class TestListingAndCreating:
         root = stack.superadmin()
         created = root.pipeline.post(
             "/admin/organizations",
-            json={"organization": "Initech", "username": "dan", "password": "dan-pass-12"},
+            json={
+                "organization": "Initech",
+                "username": "dan@example.com",
+                "password": "dan-pass-12",
+            },
         )
         assert created.status_code == 201
         assert created.json()["org_id"] == "initech" and created.json()["admins"] == 1
-        assert stack.browser().login("dan", "dan-pass-12").json()["role"] == "admin"
+        assert stack.browser().login("dan@example.com", "dan-pass-12").json()["role"] == "admin"
 
     def test_a_taken_name_is_409(self, stack: Stack) -> None:
-        stack.browser().register("Acme", "alice")
+        stack.browser().register("Acme", "alice@example.com")
         taken = stack.superadmin().pipeline.post(
             "/admin/organizations",
-            json={"organization": "ACME", "username": "zed", "password": PASSWORD},
+            json={"organization": "ACME", "username": "zed@example.com", "password": PASSWORD},
         )
         assert taken.status_code == 409
 
@@ -114,10 +120,10 @@ class TestSuspension:
         assert suspended.json()["suspended"] is True
 
         assert alice.read.get("/alerts").status_code == 401  # the live session is gone
-        refused = stack.browser().login("alice")
+        refused = stack.browser().login("alice@example.com")
         assert refused.status_code == 403 and "suspended" in refused.json()["detail"]
         # A wrong password still says only "invalid": suspension is not an existence oracle.
-        assert stack.browser().login("alice", "wrong-pass").status_code == 401
+        assert stack.browser().login("alice@example.com", "wrong-pass").status_code == 401
         assert _orgs(root)["acme"]["alerts"] == 1  # nothing deleted
 
     def test_reactivating_restores_login_and_data(self, stack: Stack) -> None:
@@ -128,14 +134,14 @@ class TestSuspension:
             root.pipeline.post("/admin/organizations/acme/reactivate").json()["suspended"] is False
         )
         alice = stack.browser()
-        assert alice.login("alice").status_code == 200
+        assert alice.login("alice@example.com").status_code == 200
         assert len(alice.read.get("/alerts").json()) == 1
 
     def test_suspension_touches_only_that_org(self, stack: Stack) -> None:
-        _org_with_data(stack, "Acme", "alice")
-        stack.browser().register("Globex", "gina")
+        _org_with_data(stack, "Acme", "alice@example.com")
+        stack.browser().register("Globex", "gina@example.com")
         stack.superadmin().pipeline.post("/admin/organizations/acme/suspend")
-        assert stack.browser().login("gina").status_code == 200
+        assert stack.browser().login("gina@example.com").status_code == 200
 
 
 class TestDeletion:
@@ -149,17 +155,17 @@ class TestDeletion:
         assert "acme" in _orgs(root)
 
     def test_deleting_removes_the_org_its_users_and_all_its_data(self, stack: Stack) -> None:
-        alice = _org_with_data(stack, "Acme", "alice")
-        globex = _org_with_data(stack, "Globex", "gina")  # same device id, other tenant
+        alice = _org_with_data(stack, "Acme", "alice@example.com")
+        globex = _org_with_data(stack, "Globex", "gina@example.com")  # same device id, other tenant
         root = stack.superadmin()
         assert root.pipeline.delete("/admin/organizations/acme?confirm=acme").status_code == 204
 
         assert set(_orgs(root)) == {"globex"}
         assert alice.read.get("/alerts").status_code == 401
-        assert stack.browser().login("alice").status_code == 401
+        assert stack.browser().login("alice@example.com").status_code == 401
         # The name is free again, and starts empty — nothing of the old tenant survived.
         reborn = stack.browser()
-        assert reborn.register("Acme", "alice2").status_code == 201
+        assert reborn.register("Acme", "alice2@example.com").status_code == 201
         assert reborn.read.get("/alerts").json() == []
         assert reborn.read.get("/assets").json() == []
         # The other tenant is untouched.
@@ -172,10 +178,11 @@ class TestDeletion:
 
 class TestManagingUsersOfAnyOrg:
     def _setup(self, stack: Stack) -> tuple[Browser, dict[str, Any]]:
-        stack.browser().register("Acme", "alice")
+        stack.browser().register("Acme", "alice@example.com")
         root = stack.superadmin()
         bob = root.pipeline.post(
-            "/admin/organizations/acme/users", json={"username": "bob", "password": "bob-temp-1"}
+            "/admin/organizations/acme/users",
+            json={"username": "bob@example.com", "password": "bob-temp-1"},
         )
         assert bob.status_code == 201
         return root, bob.json()
@@ -184,15 +191,15 @@ class TestManagingUsersOfAnyOrg:
         root, bob = self._setup(stack)
         assert bob["role"] == "member"
         users = root.pipeline.get("/admin/organizations/acme/users").json()
-        assert [u["username"] for u in users] == ["alice", "bob"]
-        assert stack.browser().login("bob", "bob-temp-1").status_code == 200
+        assert [u["username"] for u in users] == ["alice@example.com", "bob@example.com"]
+        assert stack.browser().login("bob@example.com", "bob-temp-1").status_code == 200
 
     def test_promotes_and_demotes_but_never_the_last_admin(self, stack: Stack) -> None:
         root, bob = self._setup(stack)
         users = {
             u["username"]: u for u in root.pipeline.get("/admin/organizations/acme/users").json()
         }
-        alice_url = f"/admin/organizations/acme/users/{users['alice']['user_id']}"
+        alice_url = f"/admin/organizations/acme/users/{users['alice@example.com']['user_id']}"
         bob_url = f"/admin/organizations/acme/users/{bob['user_id']}"
 
         refused = root.pipeline.patch(alice_url, json={"role": "member"})
@@ -204,38 +211,38 @@ class TestManagingUsersOfAnyOrg:
         root, bob = self._setup(stack)
         url = f"/admin/organizations/acme/users/{bob['user_id']}"
         assert root.pipeline.patch(url, json={"role": "superadmin"}).status_code == 422
-        new = {"username": "eve", "password": PASSWORD, "role": "superadmin"}
+        new = {"username": "eve@example.com", "password": PASSWORD, "role": "superadmin"}
         assert root.pipeline.post("/admin/organizations/acme/users", json=new).status_code == 422
 
     def test_resetting_a_password_signs_the_user_out(self, stack: Stack) -> None:
         root, bob = self._setup(stack)
         bobs_browser = stack.browser()
-        bobs_browser.login("bob", "bob-temp-1")
+        bobs_browser.login("bob@example.com", "bob-temp-1")
         reset = root.pipeline.post(
             f"/admin/organizations/acme/users/{bob['user_id']}/password",
             json={"password": "fresh-temp-2"},
         )
         assert reset.status_code == 204
         assert bobs_browser.read.get("/alerts").status_code == 401
-        assert stack.browser().login("bob", "bob-temp-1").status_code == 401
-        assert stack.browser().login("bob", "fresh-temp-2").status_code == 200
+        assert stack.browser().login("bob@example.com", "bob-temp-1").status_code == 401
+        assert stack.browser().login("bob@example.com", "fresh-temp-2").status_code == 200
 
     def test_removes_a_user_but_not_the_last_admin(self, stack: Stack) -> None:
         root, bob = self._setup(stack)
         users = {
             u["username"]: u for u in root.pipeline.get("/admin/organizations/acme/users").json()
         }
-        last_admin = f"/admin/organizations/acme/users/{users['alice']['user_id']}"
+        last_admin = f"/admin/organizations/acme/users/{users['alice@example.com']['user_id']}"
         assert root.pipeline.delete(last_admin).status_code == 409
         assert (
             root.pipeline.delete(f"/admin/organizations/acme/users/{bob['user_id']}").status_code
             == 204
         )
-        assert stack.browser().login("bob", "bob-temp-1").status_code == 401
+        assert stack.browser().login("bob@example.com", "bob-temp-1").status_code == 401
 
     def test_a_user_addressed_through_the_wrong_org_is_404(self, stack: Stack) -> None:
         root, bob = self._setup(stack)
-        stack.browser().register("Globex", "gina")
+        stack.browser().register("Globex", "gina@example.com")
         wrong = f"/admin/organizations/globex/users/{bob['user_id']}"
         assert root.pipeline.patch(wrong, json={"role": "admin"}).status_code == 404
         assert root.pipeline.delete(wrong).status_code == 404
@@ -245,7 +252,7 @@ class TestRegistrationSwitch:
     def test_open_by_default(self, stack: Stack) -> None:
         browser = stack.browser()
         assert browser.pipeline.get("/auth/options").json() == {"open_registration": True}
-        assert browser.register("Acme", "alice").status_code == 201
+        assert browser.register("Acme", "alice@example.com").status_code == 201
 
     @pytest.mark.parametrize("value", ["0", "false", "off", "no"])
     def test_closed_refuses_public_registration_but_not_the_super_admin(
@@ -254,11 +261,11 @@ class TestRegistrationSwitch:
         monkeypatch.setenv("IOTSHIELD_OPEN_REGISTRATION", value)
         browser = stack.browser()
         assert browser.pipeline.get("/auth/options").json() == {"open_registration": False}
-        refused = browser.register("Acme", "alice")
+        refused = browser.register("Acme", "alice@example.com")
         assert refused.status_code == 403 and "closed" in refused.json()["detail"]
         created = stack.superadmin().pipeline.post(
             "/admin/organizations",
-            json={"organization": "Acme", "username": "alice", "password": PASSWORD},
+            json={"organization": "Acme", "username": "alice@example.com", "password": PASSWORD},
         )
         assert created.status_code == 201
 
@@ -268,12 +275,12 @@ class TestASuperAdminWithAHomeOrganization:
 
     def _home(self, stack: Stack) -> Browser:
         ucy = stack.browser()
-        assert ucy.register("UCY", "ucy-admin").status_code == 201
+        assert ucy.register("UCY", "ucy-admin@example.com").status_code == 201
         assert ucy.run_demo().status_code == 200
         return stack.superadmin("admin@admin.com", org_id="ucy")
 
     def test_sees_its_home_data_and_only_that(self, stack: Stack) -> None:
-        _org_with_data(stack, "Acme", "alice")
+        _org_with_data(stack, "Acme", "alice@example.com")
         root = self._home(stack)
         me = root.pipeline.get("/auth/me").json()
         assert me["role"] == "superadmin" and me["organization"]["org_id"] == "ucy"
@@ -288,7 +295,9 @@ class TestASuperAdminWithAHomeOrganization:
         root = self._home(stack)
         assert root.run_demo().status_code == 200
         assert len(root.read.get("/alerts").json()) == 2
-        added = root.pipeline.post("/auth/users", json={"username": "carol", "password": PASSWORD})
+        added = root.pipeline.post(
+            "/auth/users", json={"username": "carol@example.com", "password": PASSWORD}
+        )
         assert added.status_code == 201
 
     def test_its_home_cannot_be_suspended_or_deleted(self, stack: Stack) -> None:
@@ -300,7 +309,7 @@ class TestASuperAdminWithAHomeOrganization:
     def test_the_home_orgs_admin_cannot_remove_it(self, stack: Stack) -> None:
         root = self._home(stack)
         ucy_admin = stack.browser()
-        ucy_admin.login("ucy-admin")
+        ucy_admin.login("ucy-admin@example.com")
         users = {u["username"]: u for u in ucy_admin.pipeline.get("/auth/users").json()}
         assert users["admin@admin.com"]["role"] == "superadmin"
         removed = ucy_admin.pipeline.delete(f"/auth/users/{users['admin@admin.com']['user_id']}")

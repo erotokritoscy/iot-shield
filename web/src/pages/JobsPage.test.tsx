@@ -40,6 +40,7 @@ const JOB: JobInfo = {
   schedule_text: "every day at 02:00 UTC",
   enabled: true,
   next_run_at: "2026-11-10T02:00:00+00:00",
+  notify_emails: ["alice@example.com"],
   last: done,
 };
 

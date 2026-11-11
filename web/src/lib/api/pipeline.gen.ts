@@ -101,6 +101,9 @@ export interface paths {
          * Create Run
          * @description Run the pipeline and return a summary; 422 with issues if the chain is incompatible.
          *
+         *     With ``email_result`` (the default), the outcome — finished, or failed while running —
+         *     is emailed to the caller in the background (``api/run_email.py``).
+         *
          *     The checks, the streaming of pulls and the mapping of failures to statuses are
          *     ``api/execution.py``'s, shared with the job worker (ADR-0050).
          */
@@ -1453,6 +1456,11 @@ export interface components {
             enabled: boolean;
             /** Next Run At */
             next_run_at: string | null;
+            /**
+             * Notify Emails
+             * @description Who is emailed each execution's outcome
+             */
+            notify_emails: string[];
             /** @description The most recent execution, if any */
             last: components["schemas"]["ExecutionInfo"] | null;
         };
@@ -1477,6 +1485,11 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /**
+             * Notify Emails
+             * @description Who is emailed each execution's outcome. Omitted on create: the creator, when their username is an email address; omitted on edit: unchanged; [] = nobody
+             */
+            notify_emails?: string[] | null;
         };
         /**
          * JobSource
@@ -2026,6 +2039,12 @@ export interface components {
              * @description An id of the caller's choosing to poll GET /runs/progress/{progress_id} with while the run is going (ADR-0051)
              */
             progress_id?: string | null;
+            /**
+             * Email Result
+             * @description Email the outcome to whoever runs it, when their username is an address and the server has mail configured (ADR-0052 amendment); false sends nothing
+             * @default true
+             */
+            email_result: boolean;
         };
         /**
          * RunResponse

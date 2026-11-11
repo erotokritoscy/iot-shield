@@ -113,7 +113,11 @@ class Stack:
         return Browser(read=read, pipeline=pipeline)
 
     def superadmin(
-        self, username: str = "root", password: str = PASSWORD, *, org_id: str | None = None
+        self,
+        username: str = "root@example.com",
+        password: str = PASSWORD,
+        *,
+        org_id: str | None = None,
     ) -> Browser:
         """A browser logged in as a super admin — created as the CLI or the seed would, never
         over HTTP. ``org_id`` gives it a home organization."""

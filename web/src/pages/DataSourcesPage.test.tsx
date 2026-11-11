@@ -743,6 +743,7 @@ describe("Compose — pulling from an HTTP API source", () => {
         sources: [{ source_id: LOG_API.source_id, params: {}, window: { kind: "rolling", days: 1, through: "yesterday" } }],
         schedule: { every: "day", hour: 3, minute: 30, weekday: 0 },
         enabled: true,
+        notify_emails: [],
       },
     ]);
   });
@@ -766,6 +767,7 @@ describe("Compose — pulling from an HTTP API source", () => {
       schedule_text: null,
       enabled: true,
       next_run_at: null,
+      notify_emails: ["ops@example.com"],
       last: null,
     };
     const puts: unknown[] = [];

@@ -348,6 +348,17 @@ compose **`worker`** service (`python -m iotshield.jobs.worker`), never in the A
 at a time, each producing an ordinary saved run. Tables `jobs` + `job_executions` (no `down -v`);
 members create and run, admins delete; Operate → Jobs polls while anything is queued or running.
 
+**A run and a job email their outcome, and a username is an email address (ADR-0052).** `validate_username`
+now accepts only an address (≤ 64), at every door that creates an account — login is unchanged,
+so an older `root` still signs in, and has no default address. A job's `notify_emails` (table
+`job_notifications`, no `down -v`; defaults to the creator on create, unchanged on edit, `[]` =
+nobody) is mailed by the **worker** after the execution is recorded — counts, top five alerts and
+a link, or why it failed — through `notify/` (stdlib SMTP, `IOTSHIELD_SMTP_HOST` unset = off). A
+run posted to `POST /runs` mails **whoever ran it** (`email_result`, default on — Compose's *Email
+me the result*), finished or failed with a 5xx, never a refused 4xx; `api/run_email.py` posts it to
+`notify.Outbox`, a background thread, so the response never waits on SMTP. A send that fails is
+logged and changes nothing. Compose runs **MailHog**: UI on `127.0.0.1:8025`.
+
 **A real meter's fit lives on a shelf (ADR-0048 D3).** A run never fits and a fit holds readings, so
 `python -m iotshield.detect.meter.train --name <fleet> --source <csv> --source-format <dialect>`
 writes to `IOTSHIELD_METER_MODELS_PATH` (`config/meter-models`, gitignored). Ids resolve by membership
@@ -401,7 +412,7 @@ reason instead of reading like a bad detector. Reported, not refused: a delibera
 detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 
 ```
-docker compose up -d            # postgres (127.0.0.1:5432) -> init -> read API (:8000) + Pipeline API (:8100) + job worker -> dashboard (:8080)
+docker compose up -d            # postgres (127.0.0.1:5432) -> init -> read API (:8000) + Pipeline API (:8100) + job worker -> dashboard (:8080); mailhog (:8025)
 docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
 IOTSHIELD_DEMO_ORG=<org-id> docker compose run --rm runner   # the walkthrough, into YOUR org
@@ -468,7 +479,7 @@ written too. A super admin's home org cannot be suspended or deleted, and no org
 remove, demote or re-key a super admin (`ProtectedAccount`) — the platform must not be able to
 lock itself out. `PrincipalDep` is "anyone logged in"
 (`/auth/me`, `/auth/password`), `SuperAdminDep` guards `/admin`. Created only from the server:
-`docker compose run --rm runner python -m iotshield.auth.superadmin create --username root` —
+`docker compose run --rm runner python -m iotshield.auth.superadmin create --username root@example.com` —
 there is deliberately no route that can mint one. Compose's `init` step also **seeds**
 (`python -m iotshield.auth.seed`): the `UCY` org (`IOTSHIELD_SEED_ORGANIZATION`), a super admin at
 home in it (`IOTSHIELD_SEED_SUPERADMIN_USERNAME`/`_PASSWORD`, compose-only defaults
@@ -702,6 +713,9 @@ src/iotshield/
                 target.py = PullTarget, what a run pulls from (a database or an API)
   jobs/         saved, schedulable jobs (ADR-0050): model.py = windows + schedule, run.py = check a job /
                 run one execution, worker.py = the compose `worker` service that queues and runs them
+  notify/       outbound mail (ADR-0052): mailer.py = SMTP from env (MailHog in compose),
+                report.py = the email a finished run or job execution sends (+ stored_run, what it reads),
+                outbox.py = the background sender the Pipeline API posts a run's email to
   storage/      SQLAlchemy models + repositories (Postgres; SQLite for tests); accounts.py = orgs/users/sessions,
                 data_sources.py = each org's IT/OT data-source register (ADR-0041),
                 endpoints.py + secrets.py = an API source's settings and sealed credentials (ADR-0049),
@@ -715,7 +729,8 @@ src/iotshield/
   api/          FastAPI services: read side (app.py) + write-side Pipeline API (control.py);
                 _auth.py = the login gate both share, auth.py = the /auth router, admin.py = the
                 super admin's /admin router (both Pipeline API only); data_sources.py = /data-sources; runs.py = saved /runs;
-                execution.py = checking + running a chain for an org, shared by POST /runs and jobs; jobs.py = /jobs
+                execution.py = checking + running a chain for an org, shared by POST /runs and jobs; jobs.py = /jobs;
+                run_email.py = emailing a POST /runs outcome to whoever ran it (ADR-0052 amendment)
   eval/         evaluation harness (ADR-0021) — the THIRD plane; imports the pipeline, never imported by it
                 sweep.py = hyperparameter sweeps (ADR-0022): one spec -> N labelled specs
                 truth.py/score.py = (asset, lane, instant) answer keys and matching (ADR-0028)

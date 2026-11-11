@@ -9,7 +9,10 @@ Serve: ``python -m iotshield.jobs.worker`` (compose's ``worker`` service). Each 
    ``next_run_at`` moves to the schedule's next time after *now* — so a worker that was down
    for a day runs a missed job once, not once per missed slot;
 3. **run** — the oldest queued execution is claimed and run to completion, its heartbeat beaten
-   from a side thread meanwhile.
+   from a side thread meanwhile;
+4. **notify** — once the execution is recorded, its outcome is emailed to the job's recipients
+   (ADR-0052), when a mailer is configured (``IOTSHIELD_SMTP_HOST``) and the job lists any. A
+   mail that cannot be sent is logged and changes nothing: the run is already stored.
 
 Rows are claimed with ``FOR UPDATE SKIP LOCKED`` on Postgres, so more than one worker may run;
 SQLite (tests) has no row locks and needs none with a single worker. Nothing here waits on a
@@ -30,8 +33,10 @@ from uuid import UUID
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from iotshield.contracts import PrioritizedAlert
 from iotshield.jobs.model import Schedule
 from iotshield.jobs.run import run_execution
+from iotshield.notify import Mailer, Outcome, RunCounts, compose_email, mailer_from_env, stored_run
 from iotshield.storage import (
     database_url_from_env,
     describe_location,
@@ -39,6 +44,7 @@ from iotshield.storage import (
     make_session_factory,
 )
 from iotshield.storage import jobs as store
+from iotshield.storage.jobs import Execution
 
 log = logging.getLogger("iotshield.jobs.worker")
 
@@ -60,6 +66,8 @@ class Worker:
     clock: Clock = utc_now
     heartbeat_seconds: float = HEARTBEAT_SECONDS
     stale_after: timedelta = STALE_AFTER
+    mailer: Mailer | None = None
+    dashboard_url: str | None = None  # where an email's "Open the run" link points
     session_factory: sessionmaker[Session] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -126,12 +134,56 @@ class Worker:
         finally:
             stop.set()
             beater.join()
+        finished_at = self.clock()
         with self.session_factory() as session:
             store.finish(
-                session, execution.execution_id, now=self.clock(), run_id=run_id, error=error
+                session, execution.execution_id, now=finished_at, run_id=run_id, error=error
             )
             session.commit()
         log.info("job %s %s", execution.job_id, "failed: " + error if error else "succeeded")
+        try:
+            self.notify(execution, run_id=run_id, error=error, finished_at=finished_at)
+        except Exception:  # a mail is a courtesy: the execution is already recorded
+            log.exception("could not email the outcome of job %s", execution.job_id)
+        return True
+
+    def notify(
+        self,
+        execution: Execution,
+        *,
+        run_id: UUID | None,
+        error: str | None,
+        finished_at: datetime,
+    ) -> bool:
+        """Email the execution's outcome to its job's recipients; False when nobody was sent it."""
+        if self.mailer is None:
+            return False
+        with self.session_factory() as session:
+            job = store.job_row(session, execution.job_id)
+            if job is None or job.org_id != execution.org_id or not job.notify_emails:
+                return False
+            counts: RunCounts | None = None
+            top: list[PrioritizedAlert] = []
+            if run_id is not None:
+                counts, top = stored_run(session, org_id=execution.org_id, run_id=run_id)
+        outcome = Outcome(
+            kind="job",
+            name=job.name,
+            trigger=execution.trigger,
+            requested_by=execution.requested_by,
+            finished_at=finished_at,
+            error=error,
+            run=counts,
+            top_alerts=top,
+        )
+        message = compose_email(
+            outcome,
+            sender=self.mailer.sender,
+            recipients=job.notify_emails,
+            dashboard_url=self.dashboard_url,
+        )
+        self.mailer.send(message)
+        log.info("emailed job %s to %d recipient(s)", execution.job_id, len(job.notify_emails))
         return True
 
     def _beat(self, execution_id: UUID, stop: threading.Event) -> None:
@@ -159,7 +211,15 @@ def main() -> int:
     output_dir = Path(os.environ.get("IOTSHIELD_OUTPUT_DIR", "results"))
     poll = float(os.environ.get("IOTSHIELD_WORKER_POLL_SECONDS", POLL_SECONDS))
     print(f"iotshield job worker using database: {describe_location(url)}", file=sys.stderr)
-    worker = Worker(engine=make_engine(url), output_dir=output_dir)
+    mailer = mailer_from_env()
+    if mailer is None:
+        print("job emails are off (IOTSHIELD_SMTP_HOST is unset)", file=sys.stderr)
+    worker = Worker(
+        engine=make_engine(url),
+        output_dir=output_dir,
+        mailer=mailer,
+        dashboard_url=os.environ.get("IOTSHIELD_DASHBOARD_URL", "").strip() or None,
+    )
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     signal.signal(signal.SIGINT, lambda *_: stopping.set())

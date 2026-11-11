@@ -177,9 +177,12 @@ docker compose up -d                          # postgres, both APIs, the dashboa
 | http://localhost:8080 | the dashboard |
 | http://localhost:8000/docs | the read API |
 | http://localhost:8100/docs | the Pipeline API |
+| http://localhost:8025 | MailHog: the emails runs and saved jobs send (nothing leaves the laptop) |
 
 **Sign in first.** The compose stack requires a login (ADR-0039): open the dashboard, choose
-**Register it**, and create your organization — you become its admin. Every organization sees only
+**Register it**, and create your organization — you become its admin. Usernames are **email
+addresses** (ADR-0052): every run you start from Compose emails you its outcome (untick
+*Email me the result* to skip it), and a saved job emails its recipients. Every organization sees only
 its own data. To let colleagues in, open **Organization → Users** and add them with a temporary
 password; they change it under **Account**. The APIs on :8000/:8100 enforce the same login, so
 `/docs` there is browsable but its calls answer 401 until the browser holds a session.
@@ -198,7 +201,7 @@ cannot be suspended or deleted while it is the super admin's home. More super ad
 server:
 
 ```
-docker compose run --rm runner python -m iotshield.auth.superadmin create --username root
+docker compose run --rm runner python -m iotshield.auth.superadmin create --username root@example.com
 ```
 
 `IOTSHIELD_OPEN_REGISTRATION=0 docker compose up -d` closes public registration, leaving the super

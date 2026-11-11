@@ -281,6 +281,15 @@ for two minutes after. It is 404 before the run starts, after that, and for anot
 organization's id; reusing an id that is still running, or someone else's, is a 409. The board
 lives in the API's memory, which is enough for one process (ADR-0051).
 
+`email_result` (default `true`) mails the outcome to whoever made the request, when their
+username is an address and the server has mail set up (`IOTSHIELD_SMTP_HOST`, below): the
+stored run's counts, top five alerts and a link to `/runs/<id>`, or — if the run failed while
+running (a 5xx: a pulled source's database went away, a sink failed) — the failure's message. A
+refused chain (4xx) is not mailed; the response already says why. The email is sent in the
+background after the response, so a slow relay never holds up the run; a send that fails is
+logged and changes nothing. `false` sends nothing (Compose's *Email me the result*, ADR-0052
+amendment).
+
 A 200 is a summary, not the results:
 
 ```json
@@ -433,6 +442,16 @@ Nothing here runs a job: the compose `worker` (`python -m iotshield.jobs.worker`
 fails executions whose heartbeat stopped, and runs queued ones through `api/execution.py` — the
 code `POST /runs` uses — so a job's run is an ordinary saved run named `<job> · <time> UTC`.
 
+**Job emails (ADR-0052).** (A run posted to `POST /runs` mails whoever ran it instead — see
+`email_result` there.) `notify_emails` on a job lists who is emailed each execution's
+outcome — the run's four counts, its top five alerts and a link to `/runs/<id>`, or why it
+failed. Omitted on create it is the creator (when their username is an address); omitted on
+`PUT` it is unchanged; `[]` is nobody; each entry must be an address (422 otherwise), at most 20.
+The worker sends it (and the Pipeline API a run's) through SMTP configured by `IOTSHIELD_SMTP_HOST` / `_PORT` / `_USERNAME` /
+`_PASSWORD` / `_STARTTLS` and `IOTSHIELD_MAIL_FROM`, linking to `IOTSHIELD_DASHBOARD_URL`; unset
+host = no mail. Compose points it at MailHog — read what was sent at http://127.0.0.1:8025. A
+mail that cannot be sent is logged and changes nothing.
+
 ## Where results go
 
 `sinks` is part of the spec, so the caller chooses destinations even though it cannot choose
@@ -531,8 +550,8 @@ data into UCY (`python -m iotshield.auth.seed`; create-only). Otherwise super ad
 only from the server:
 
 ```
-python -m iotshield.auth.superadmin create --username root     # prompts for the password
-python -m iotshield.auth.superadmin set-password --username root
+python -m iotshield.auth.superadmin create --username root@example.com     # prompts for the password
+python -m iotshield.auth.superadmin set-password --username root@example.com
 python -m iotshield.auth.superadmin list
 ```
 
