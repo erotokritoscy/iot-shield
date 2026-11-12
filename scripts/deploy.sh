@@ -12,7 +12,10 @@
 #      dashboard proxying to a container that no longer exists. Recreating (not restarting)
 #      is also what makes the single-file bind mount of connections.yaml show the new file.
 #      Never `down -v`: that deletes the database;
-#   4. waits for both APIs and the dashboard's proxy, and prints what the stack now serves.
+#   4. waits for both APIs and the dashboard's proxy;
+#   5. checks the dashboard serves this checkout's web/public/samples/manifest.json (the ready
+#      scenarios) and, if not, rebuilds dashboard-web with --no-cache and recreates it;
+#   6. prints what the stack now serves.
 
 # `sh deploy.sh` runs this under dash, which has no pipefail: start again under bash.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
@@ -53,6 +56,22 @@ if ! wait_for "dashboard     :8080 -> /pipeline" http://127.0.0.1:8080/pipeline/
   docker compose restart dashboard-web
   wait_for "dashboard     :8080 -> /pipeline" http://127.0.0.1:8080/pipeline/health ||
     fail "the dashboard still cannot reach the Pipeline API: docker compose logs dashboard-web"
+fi
+
+say "checking the dashboard serves this checkout's samples and scenarios"
+served_is_current() {
+  curl -fsS -m 10 http://127.0.0.1:8080/samples/manifest.json | cmp -s - web/public/samples/manifest.json
+}
+if served_is_current; then
+  echo "ok    manifest.json matches web/public/samples/"
+else
+  echo "the dashboard serves an older manifest.json; rebuilding it without the build cache"
+  docker compose build --no-cache dashboard-web
+  docker compose up -d --force-recreate dashboard-web
+  wait_for "dashboard     :8080 -> /pipeline" http://127.0.0.1:8080/pipeline/health ||
+    fail "the dashboard did not come back: docker compose logs dashboard-web"
+  served_is_current || fail "the dashboard still serves an older manifest.json than web/public/samples/"
+  echo "ok    manifest.json matches web/public/samples/"
 fi
 
 say "what is now deployed"
