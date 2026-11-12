@@ -24,6 +24,7 @@ inputs short enough to read and obvious enough to explain.
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -223,6 +224,33 @@ def stuck_meter() -> str:
     return "\n".join([header, *rows]) + "\n"
 
 
+# --- metering: five real EOA households --------------------------------------------------------
+
+_EOA_SOURCES = REPO_ROOT / "data" / "eoa"
+_EOA_COLUMNS = ("deviceId", "flow", "dataTime", "signalCsq", "isWaring")
+"""The columns of EOA's own export that the processed files still carry, in its order."""
+
+
+def eoa_water_meters() -> str:
+    """Five real EOA water meters, April 2025 to July 2026, as one file in EOA's export layout.
+
+    Built from ``data/eoa/clean_*.csv`` (one processed file per meter), changing two things and
+    leaving every reading alone. ``deviceId`` loses the ``.0`` the processed files wrote on four
+    of the five ids (``202405100909.0``), or the asset would be named that. It is kept rather than
+    taken from ``meter_id``, which is blank on every hour with no reading. And the five become
+    one file, because five uploads of one format are five sources the guard cannot tell apart,
+    which it reports as every record counted twice. Rows with no ``flow`` are kept: they are
+    real gaps, and Data health shows them under their meter.
+    """
+    lines = [",".join(_EOA_COLUMNS)]
+    for path in sorted(_EOA_SOURCES.glob("clean_*.csv")):
+        with path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                row["deviceId"] = row["deviceId"].removesuffix(".0")
+                lines.append(",".join(row.get(column) or "" for column in _EOA_COLUMNS))
+    return "\n".join(lines) + "\n"
+
+
 # --- the manifest ---------------------------------------------------------------------------
 
 SAMPLES: list[dict[str, Any]] = [
@@ -328,6 +356,16 @@ SAMPLES: list[dict[str, Any]] = [
         "source_format": "eoa-meter-csv",
         "render": stuck_meter,
     },
+    {
+        "id": "eoa_water_meters",
+        "file": "eoa_water_meters.csv",
+        "title": "EOA water meters — five households, 15 months",
+        "description": "Real hourly readings from five EOA water meters, April 2025 to July 2026, "
+        "including the gaps where a meter sent no reading.",
+        "normalizer": "meter",
+        "source_format": "eoa-meter-csv",
+        "render": eoa_water_meters,
+    },
 ]
 
 _WEIGHTED = {"name": "weighted", "params": {"bucket_minutes": 5}}
@@ -421,6 +459,21 @@ SCENARIOS: list[dict[str, Any]] = [
         # An hour, because this lane's events are hourly (see config/bench/meter.yaml).
         "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
         "expected": {"events": 672, "malformed": 0, "detections": 8, "alerts": 8},
+    },
+    {
+        "id": "eoa_water_meters",
+        "title": "EOA water meters (real data)",
+        "description": "Fifteen months of five real households' water meters. meter_baseline "
+        "reports unusual use and a stuck meter against each meter's own normal week; most alerts "
+        "are meter_quality's hourly limit of 0.075 m3, which these households often pass. Hours "
+        "with no reading, and the hour the clocks went back, are quarantined: see Data health.",
+        "samples": ["eoa_water_meters"],
+        "detectors": [
+            {"name": "meter_quality", "params": {}},
+            {"name": "meter_baseline", "params": {}},
+        ],
+        "alert_engine": {"name": "weighted", "params": {"bucket_minutes": 60}},
+        "expected": {"events": 40137, "malformed": 425, "detections": 378, "alerts": 371},
     },
     # Live pulls: the data is the source's own database, not a file here, so there is nothing to
     # promise (`expected` is None). What can be tested is that each one is well formed.

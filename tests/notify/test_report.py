@@ -123,6 +123,15 @@ def test_the_html_part_escapes_what_it_quotes() -> None:
     assert "<img" not in html and "a&amp;b" in html
 
 
+def test_a_sender_with_a_display_name_keeps_it_and_ids_by_its_domain() -> None:
+    outcome = Outcome(
+        kind="job", name="Q", trigger="schedule", requested_by=None, finished_at=FINISHED
+    )
+    message = compose_email(outcome, sender="UCY <info@example.org>", recipients=["a@example.com"])
+    assert message["From"] == "UCY <info@example.org>"
+    assert str(message["Message-ID"]).endswith("@example.org>")
+
+
 def test_it_refuses_to_address_nobody() -> None:
     outcome = Outcome(
         kind="job", name="Q", trigger="schedule", requested_by=None, finished_at=FINISHED

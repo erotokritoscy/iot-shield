@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.message import EmailMessage
-from email.utils import format_datetime, make_msgid
+from email.utils import format_datetime, make_msgid, parseaddr
 from html import escape
 from typing import Literal
 from uuid import UUID
@@ -233,7 +233,9 @@ def compose_email(
     message["From"] = sender
     message["To"] = ", ".join(recipients)
     message["Date"] = format_datetime(outcome.finished_at)
-    message["Message-ID"] = make_msgid(domain=sender.rpartition("@")[2] or None)
+    # The sender may carry a display name ("UCY <info@example.org>"); the id wants the domain.
+    domain = parseaddr(sender)[1].rpartition("@")[2]
+    message["Message-ID"] = make_msgid(domain=domain or None)
     message.set_content(_text(outcome, url))
     message.add_alternative(_html(outcome, url), subtype="html")
     return message

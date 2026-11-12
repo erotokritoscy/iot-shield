@@ -88,6 +88,14 @@
       "description": "Four weeks from one water meter; its counter freezes for 48 hours, then jumps to catch up.",
       "normalizer": "meter",
       "source_format": "eoa-meter-csv"
+    },
+    {
+      "id": "eoa_water_meters",
+      "file": "eoa_water_meters.csv",
+      "title": "EOA water meters — five households, 15 months",
+      "description": "Real hourly readings from five EOA water meters, April 2025 to July 2026, including the gaps where a meter sent no reading.",
+      "normalizer": "meter",
+      "source_format": "eoa-meter-csv"
     }
   ],
   "scenarios": [
@@ -329,6 +337,36 @@
         "malformed": 0,
         "detections": 8,
         "alerts": 8
+      }
+    },
+    {
+      "id": "eoa_water_meters",
+      "title": "EOA water meters (real data)",
+      "description": "Fifteen months of five real households' water meters. meter_baseline reports unusual use and a stuck meter against each meter's own normal week; most alerts are meter_quality's hourly limit of 0.075 m3, which these households often pass. Hours with no reading, and the hour the clocks went back, are quarantined: see Data health.",
+      "samples": [
+        "eoa_water_meters"
+      ],
+      "detectors": [
+        {
+          "name": "meter_quality",
+          "params": {}
+        },
+        {
+          "name": "meter_baseline",
+          "params": {}
+        }
+      ],
+      "alert_engine": {
+        "name": "weighted",
+        "params": {
+          "bucket_minutes": 60
+        }
+      },
+      "expected": {
+        "events": 40137,
+        "malformed": 425,
+        "detections": 378,
+        "alerts": 371
       }
     },
     {

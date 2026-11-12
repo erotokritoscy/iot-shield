@@ -759,6 +759,8 @@ data/samples/   the Compose wizard's sample library + scenarios (manifest.json),
                 scripts/make_sample_data.py; an identical copy in web/public/samples/ is served at /samples/.
                 tests/test_sample_data.py runs every file scenario and asserts the counts its manifest promises;
                 a scenario that pulls from a live database promises none and is checked for being well formed
+data/eoa/       five real EOA water meters' processed exports (clean_<meter>.csv), the source the
+                `eoa_water_meters` sample is built from — kept as exported, never edited by hand
 data/eval/      corpus bundles (manifest + gzipped readings + interval labels)
 ```
 

@@ -210,7 +210,7 @@ admin as the only way to create an organization.
 Data is added from the dashboard: **Operate → Compose & run** is a four-step wizard (data,
 detection, alerts & output, review & run). The quickest test is a **scenario** on its first step —
 compromised camera, port scan, SSH brute force, overheating pump, a quiet control that must find
-nothing, broken input, and a stuck water meter — which fills every step with sample data and the right detectors; Review
+nothing, broken input, a stuck water meter, and five real EOA water meters — which fills every step with sample data and the right detectors; Review
 shows what it is tested to produce. Or pick a sample file per source, or upload your own. Results
 appear under **Monitor → Triage**. The samples live in `data/samples/` (and are served to the
 dashboard from `web/public/samples/`); `uv run python scripts/make_sample_data.py` rebuilds them.
