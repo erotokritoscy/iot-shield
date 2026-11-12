@@ -15,6 +15,9 @@
 #      is also what makes the single-file bind mount of connections.yaml show the new file.
 #      Never `down -v`: that deletes the database;
 #   5. waits for both APIs and the dashboard's proxy, and prints what the stack now serves.
+
+# `sh deploy.sh` runs this under dash, which has no pipefail: start again under bash.
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
