@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Update a running deployment to the latest commit of its branch, then check it came up.
+# Rebuild and recreate a running deployment from the code checked out here, then check it came up.
 #
 #   scripts/deploy.sh              # on the server, from anywhere inside the checkout
 #
-# What it does, in order:
-#   1. sets aside any local change to a tracked file (a server's own connections.yaml hosts,
-#      a chmod, a CRLF) with `git stash`, so the pull cannot conflict, and puts it back after.
-#      A change that no longer fits the pulled code is left in the stash — never discarded —
-#      and the deploy goes on with the pulled version; the script prints how to look at it;
+# It does not touch git: update the checkout first (git pull, or however the server gets its
+# code). What is on disk is what gets deployed, local edits included. In order:
+#   1. shows the commit being deployed and any local changes riding along with it;
 #   2. warns if .env lacks the SensiPro/Biology passwords (never prints them);
-#   3. `git pull --ff-only`;
-#   4. rebuilds and recreates EVERY service. All of them, because nginx in dashboard-web
+#   3. rebuilds and recreates EVERY service. All of them, because nginx in dashboard-web
 #      resolves the APIs' addresses once at start: recreating an API alone leaves the
 #      dashboard proxying to a container that no longer exists. Recreating (not restarting)
 #      is also what makes the single-file bind mount of connections.yaml show the new file.
 #      Never `down -v`: that deletes the database;
-#   5. waits for both APIs and the dashboard's proxy, and prints what the stack now serves.
+#   4. waits for both APIs and the dashboard's proxy, and prints what the stack now serves.
 
 # `sh deploy.sh` runs this under dash, which has no pipefail: start again under bash.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
@@ -26,9 +23,9 @@ cd "$(git rev-parse --show-toplevel)"
 say() { printf '\n== %s\n' "$*"; }
 fail() { printf '\nFAILED: %s\n' "$*" >&2; exit 1; }
 
-say "checking the checkout ($(git branch --show-current) at $(git rev-parse --short HEAD))"
+say "deploying $(git branch --show-current) at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
 dirty=$(git status --porcelain --untracked-files=no)
-[ -z "$dirty" ] || printf 'local changes, set aside for the pull and put back after:\n%s\n' "$dirty"
+[ -z "$dirty" ] || printf 'with these local changes:\n%s\n' "$dirty"
 
 if [ -f .env ]; then
   for var in SENSIPRO_DB_PASSWORD BIOLOGY_DB_PASSWORD; do
@@ -36,33 +33,6 @@ if [ -f .env ]; then
   done
 else
   echo "warning: no .env — compose defaults apply and the SensiPro/Biology pulls will fail"
-fi
-
-say "pulling"
-stashed=0
-if [ -n "$dirty" ]; then
-  git stash push --quiet -m "deploy.sh $(date -u +%FT%TZ): local changes"
-  stashed=1
-fi
-before=$(git rev-parse HEAD)
-if ! git pull --ff-only; then
-  [ "$stashed" = 0 ] || git stash pop --quiet
-  fail "git pull failed (see above); the checkout is as it was"
-fi
-if [ "$stashed" = 1 ]; then
-  if git stash pop --quiet; then
-    echo "put the local changes back"
-  else
-    # The pulled code changed the same lines. Deploy what was pulled; the change stays stashed.
-    git reset --quiet --hard HEAD
-    echo "warning: some local changes no longer fit the pulled code, so this deploy uses the"
-    echo "         pulled version. They are kept, not lost:  git stash show -p stash@{0}"
-  fi
-fi
-if [ "$before" = "$(git rev-parse HEAD)" ]; then
-  echo "already up to date; rebuilding anyway"
-else
-  git --no-pager log --oneline "$before..HEAD"
 fi
 
 say "rebuilding and recreating every service (data is kept)"
