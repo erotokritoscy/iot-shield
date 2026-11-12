@@ -334,13 +334,13 @@
     {
       "id": "sensipro_water",
       "title": "SensiPro water meters (live data)",
-      "description": "Pulls every SensiPro water meter for July 2023 from the live database, the month its faulty meters begin failing. meter_quality reports meters that went silent or ran over the hourly limit, and meter_baseline reports stuck meters and unusual use. A large run, and each run stores its results again.",
+      "description": "Pulls every SensiPro water meter for the 30 days from 22 November 2023 from the live database, where the production data starts. meter_quality reports meters that went silent or ran over the hourly limit, and meter_baseline reports stuck meters and unusual use. A large run, and each run stores its results again.",
       "samples": [],
       "pulls": [
         {
           "connection": "sensipro",
-          "start": "2023-07-01",
-          "end": "2023-07-30",
+          "start": "2023-11-22",
+          "end": "2023-12-21",
           "params": {
             "utility": "water"
           }
@@ -367,13 +367,13 @@
     {
       "id": "sensipro_electricity",
       "title": "SensiPro electricity meters, one quarter (live data, slow)",
-      "description": "Pulls every SensiPro electricity meter for June to August 2023 from the live database: 92 days, the most one pull may cover, about a million hourly readings across some 750 meters. meter_quality reports meters that went silent or ran over the hourly limit, and meter_baseline reports stuck meters and unusual use. Expect it to take several minutes, and each run stores its results again.",
+      "description": "Pulls every SensiPro electricity meter for the 92 days from 22 November 2023 (where the production data starts) from the live database: up to a million hourly readings across some 750 meters. meter_quality reports meters that went silent or ran over the hourly limit, and meter_baseline reports stuck meters and unusual use. Expect it to take several minutes, and each run stores its results again.",
       "samples": [],
       "pulls": [
         {
           "connection": "sensipro",
-          "start": "2023-06-01",
-          "end": "2023-08-31",
+          "start": "2023-11-22",
+          "end": "2024-02-21",
           "params": {
             "utility": "electricity"
           }
