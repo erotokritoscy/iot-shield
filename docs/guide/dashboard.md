@@ -419,8 +419,8 @@ spec and inputs are still exactly the scenario's; change anything and the promis
 | Quiet network (control) | three quiet files, every detector on | 0 detections — any is a false alarm |
 | Broken input | `broken_syslog.log` | 6 events, 4 malformed (see Data health) |
 | EOA water meters (real data) | `eoa_water_meters.csv` — five households, Apr 2025 → Jul 2026, built from `data/eoa/` | 40,137 events, 425 malformed, 378 detections, 371 alerts |
-| SensiPro water meters | live pull: water, 2023-11-22 → 2023-12-21 (production's data starts 2023-11-22) | none promised |
-| SensiPro electricity meters, one quarter | live pull: electricity, 2023-11-22 → 2024-02-21 (92 days — the deliberately slow one) | none promised |
+| SensiPro water meters | live pull: water, 2024-11-27 → 2024-12-01 (`meter_baseline` skips every meter: five days is under its two weeks) | none promised |
+| SensiPro electricity meters | live pull: electricity, 2024-11-27 → 2024-12-01 (same five days) | none promised |
 | Biology network flows | live pull: 2023-07-21 → 2023-07-22 | none promised |
 
 Those numbers are not captions: `tests/test_sample_data.py` runs every scenario through the real

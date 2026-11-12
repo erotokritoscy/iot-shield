@@ -480,16 +480,16 @@ SCENARIOS: list[dict[str, Any]] = [
     {
         "id": "sensipro_water",
         "title": "SensiPro water meters (live data)",
-        "description": "Pulls every SensiPro water meter for the 30 days from 22 November "
-        "2023 from the live database, where the production data starts. meter_quality reports "
-        "meters that went silent or ran over the hourly limit, and meter_baseline reports stuck "
-        "meters and unusual use. A large run, and each run stores its results again.",
+        "description": "Pulls every SensiPro water meter for 27 November to 1 December 2024 "
+        "from the live database. meter_quality reports meters that went silent or ran over the "
+        "hourly limit. meter_baseline needs two weeks of a meter's history, so over these five "
+        "days it skips every meter and says so. Each run stores its results again.",
         "samples": [],
         "pulls": [
             {
                 "connection": "sensipro",
-                "start": "2023-11-22",
-                "end": "2023-12-21",
+                "start": "2024-11-27",
+                "end": "2024-12-01",
                 "params": {"utility": "water"},
             }
         ],
@@ -503,18 +503,18 @@ SCENARIOS: list[dict[str, Any]] = [
     },
     {
         "id": "sensipro_electricity",
-        "title": "SensiPro electricity meters, one quarter (live data, slow)",
-        "description": "Pulls every SensiPro electricity meter for the 92 days from 22 November "
-        "2023 (where the production data starts) from the live database: up to a million hourly "
-        "readings across some 750 meters. meter_quality reports meters that went silent or ran "
-        "over the hourly limit, and meter_baseline reports stuck meters and unusual use. Expect "
-        "it to take several minutes, and each run stores its results again.",
+        "title": "SensiPro electricity meters (live data)",
+        "description": "Pulls every SensiPro electricity meter for 27 November to 1 December "
+        "2024 from the live database, some 750 meters. meter_quality reports meters that went "
+        "silent or ran over the hourly limit. meter_baseline needs two weeks of a meter's "
+        "history, so over these five days it skips every meter and says so. Each run stores its "
+        "results again.",
         "samples": [],
         "pulls": [
             {
                 "connection": "sensipro",
-                "start": "2023-11-22",
-                "end": "2024-02-21",
+                "start": "2024-11-27",
+                "end": "2024-12-01",
                 "params": {"utility": "electricity"},
             }
         ],
