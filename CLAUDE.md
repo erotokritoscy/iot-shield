@@ -416,6 +416,7 @@ detector is a real measurement (ADR-0026 amendment, ADR-0027 D8).
 docker compose up -d            # postgres (127.0.0.1:5432) -> init -> read API (:8000) + Pipeline API (:8100) + job worker -> dashboard (:8080); mailhog (:8025)
 docker compose run --rm runner --config <spec.yaml> --input <file>   # batch job, profile "jobs"
 docker compose down -v          # stop and drop the Postgres volume
+scripts/deploy.sh               # on a server: pull, rebuild + recreate EVERY service (keeps data), wait, print what is served
 IOTSHIELD_DEMO_ORG=<org-id> docker compose run --rm runner   # the walkthrough, into YOUR org
 ```
 
