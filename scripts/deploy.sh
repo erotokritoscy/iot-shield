@@ -4,9 +4,10 @@
 #   scripts/deploy.sh              # on the server, from anywhere inside the checkout
 #
 # What it does, in order:
-#   1. refuses to run with uncommitted changes to tracked files (a pull would conflict) —
-#      except config/connections.yaml, which a server may hold its own hosts in; that one is
-#      stashed and re-applied around the pull, and the script stops if it no longer applies;
+#   1. sets aside any local change to a tracked file (a server's own connections.yaml hosts,
+#      a chmod, a CRLF) with `git stash`, so the pull cannot conflict, and puts it back after.
+#      A change that no longer fits the pulled code is left in the stash — never discarded —
+#      and the deploy goes on with the pulled version; the script prints how to look at it;
 #   2. warns if .env lacks the SensiPro/Biology passwords (never prints them);
 #   3. `git pull --ff-only`;
 #   4. rebuilds and recreates EVERY service. All of them, because nginx in dashboard-web
@@ -26,9 +27,8 @@ say() { printf '\n== %s\n' "$*"; }
 fail() { printf '\nFAILED: %s\n' "$*" >&2; exit 1; }
 
 say "checking the checkout ($(git branch --show-current) at $(git rev-parse --short HEAD))"
-dirty=$(git status --porcelain --untracked-files=no | grep -v ' config/connections.yaml$' || true)
-[ -z "$dirty" ] || fail "uncommitted changes to tracked files; commit or discard them first:
-$dirty"
+dirty=$(git status --porcelain --untracked-files=no)
+[ -z "$dirty" ] || printf 'local changes, set aside for the pull and put back after:\n%s\n' "$dirty"
 
 if [ -f .env ]; then
   for var in SENSIPRO_DB_PASSWORD BIOLOGY_DB_PASSWORD; do
@@ -40,16 +40,24 @@ fi
 
 say "pulling"
 stashed=0
-if ! git diff --quiet -- config/connections.yaml; then
-  git stash push --quiet -m "deploy.sh: local connections.yaml" -- config/connections.yaml
+if [ -n "$dirty" ]; then
+  git stash push --quiet -m "deploy.sh $(date -u +%FT%TZ): local changes"
   stashed=1
 fi
 before=$(git rev-parse HEAD)
-git pull --ff-only
+if ! git pull --ff-only; then
+  [ "$stashed" = 0 ] || git stash pop --quiet
+  fail "git pull failed (see above); the checkout is as it was"
+fi
 if [ "$stashed" = 1 ]; then
-  git stash pop --quiet || fail "the server's config/connections.yaml conflicts with the pulled one.
-Resolve it by hand (git status), then run this script again."
-  echo "kept this server's config/connections.yaml edits"
+  if git stash pop --quiet; then
+    echo "put the local changes back"
+  else
+    # The pulled code changed the same lines. Deploy what was pulled; the change stays stashed.
+    git reset --quiet --hard HEAD
+    echo "warning: some local changes no longer fit the pulled code, so this deploy uses the"
+    echo "         pulled version. They are kept, not lost:  git stash show -p stash@{0}"
+  fi
 fi
 if [ "$before" = "$(git rev-parse HEAD)" ]; then
   echo "already up to date; rebuilding anyway"
