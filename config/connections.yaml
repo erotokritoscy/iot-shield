@@ -25,7 +25,7 @@ connections:
     connector: biology           # ~/projects/biology: `docker compose up -d db`
     driver: mysql
     host: host.docker.internal
-    port: 3307
+    port: 3107
     database: laravel
     user: root
     password_env: BIOLOGY_DB_PASSWORD
